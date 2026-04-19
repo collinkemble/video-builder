@@ -733,9 +733,15 @@ app.get('/api/videos/:id/status', async (req, res) => {
   }
 });
 
-// GET /api/voices — list available voices
-app.get('/api/voices', (req, res) => {
-  res.json({ voices: getAvailableVoices() });
+// GET /api/voices — list available voices (with preview URLs)
+app.get('/api/voices', async (req, res) => {
+  try {
+    const voices = await getAvailableVoices();
+    res.json({ voices });
+  } catch (err) {
+    console.error('Failed to get voices:', err);
+    res.status(500).json({ error: 'Failed to load voices' });
+  }
 });
 
 // ═══════════════════════════════════════════════

@@ -121,17 +121,70 @@ async function generateVoiceover({ segments, voiceId = 'pNInz6obpgDQGcFmaJgB', o
 }
 
 /**
- * Get list of available voices from ElevenLabs
- * Pre-selected voices for the app
+ * Curated voice list — IDs and metadata.
+ * preview_url is fetched on-demand from ElevenLabs.
  */
-function getAvailableVoices() {
-  return [
-    { id: 'pNInz6obpgDQGcFmaJgB', name: 'Adam', description: 'Professional male narrator', style: 'deep' },
-    { id: 'EXAVITQu4vr4xnSDxMaL', name: 'Bella', description: 'Professional female narrator', style: 'warm' },
-    { id: 'onwK4e9ZLuTAKqWW03F9', name: 'Daniel', description: 'Warm conversational', style: 'conversational' },
-    { id: 'jsCqWAovK2LkecY7zXl4', name: 'Freya', description: 'Energetic and upbeat', style: 'energetic' },
-    { id: '21m00Tcm4TlvDq8ikWAM', name: 'Rachel', description: 'Calm and clear', style: 'calm' },
-  ];
+const CURATED_VOICES = [
+  { id: 'pNInz6obpgDQGcFmaJgB', name: 'Adam', description: 'Professional male narrator', style: 'deep' },
+  { id: 'EXAVITQu4vr4xnSDxMaL', name: 'Bella', description: 'Professional female narrator', style: 'warm' },
+  { id: 'onwK4e9ZLuTAKqWW03F9', name: 'Daniel', description: 'Warm conversational', style: 'conversational' },
+  { id: 'jsCqWAovK2LkecY7zXl4', name: 'Freya', description: 'Energetic and upbeat', style: 'energetic' },
+  { id: '21m00Tcm4TlvDq8ikWAM', name: 'Rachel', description: 'Calm and clear', style: 'calm' },
+];
+
+// Cache for preview URLs (populated on first request, lives for process lifetime)
+let cachedVoicesWithPreviews = null;
+let cacheTimestamp = 0;
+const CACHE_TTL = 60 * 60 * 1000; // 1 hour
+
+/**
+ * Get list of available voices, enriched with preview_url from ElevenLabs.
+ * Falls back to voices without preview URLs if the API call fails.
+ */
+async function getAvailableVoices() {
+  // Return cached if fresh
+  if (cachedVoicesWithPreviews && (Date.now() - cacheTimestamp < CACHE_TTL)) {
+    return cachedVoicesWithPreviews;
+  }
+
+  const apiKey = process.env.ELEVENLABS_API_KEY;
+  if (!apiKey) {
+    console.warn('[Voices] No ELEVENLABS_API_KEY — returning voices without previews');
+    return CURATED_VOICES;
+  }
+
+  try {
+    // Fetch all voices from ElevenLabs (includes premade voices)
+    const response = await fetch('https://api.elevenlabs.io/v1/voices', {
+      headers: { 'xi-api-key': apiKey },
+    });
+
+    if (!response.ok) {
+      throw new Error(`ElevenLabs voices API returned ${response.status}`);
+    }
+
+    const data = await response.json();
+    const voiceMap = {};
+    for (const v of (data.voices || [])) {
+      voiceMap[v.voice_id] = v;
+    }
+
+    // Enrich curated voices with preview URLs
+    cachedVoicesWithPreviews = CURATED_VOICES.map(cv => {
+      const elVoice = voiceMap[cv.id];
+      return {
+        ...cv,
+        preview_url: elVoice?.preview_url || null,
+      };
+    });
+
+    cacheTimestamp = Date.now();
+    console.log(`[Voices] Fetched preview URLs for ${cachedVoicesWithPreviews.filter(v => v.preview_url).length}/${CURATED_VOICES.length} voices`);
+    return cachedVoicesWithPreviews;
+  } catch (err) {
+    console.warn(`[Voices] Failed to fetch preview URLs: ${err.message}. Using voices without previews.`);
+    return CURATED_VOICES;
+  }
 }
 
 module.exports = { generateVoiceover, getAvailableVoices };

@@ -198,21 +198,16 @@ function normalizeVideoClip(inputPath, outputPath, targetDuration) {
 }
 
 /**
- * Create a video from a still image with a Ken Burns zoom/pan effect.
- * This makes b-roll feel cinematic instead of a static hold.
- *
- * The effect slowly zooms in from 100% to ~115% over the clip duration
- * while gently panning, creating natural camera-like motion.
+ * Create a video from a still image with a smooth Ken Burns zoom effect.
+ * Slowly zooms in from 100% to ~112% over the clip duration, centered.
+ * No pan — just a clean, cinematic zoom that feels like a real camera push.
  */
 function imageToVideo(imagePath, outputPath, duration) {
-  // Total frames for the animation
   const totalFrames = Math.ceil(duration * FPS);
 
-  // Ken Burns: start at a slightly zoomed-out view and slowly zoom in
-  // zoompan: zoom from 1.0 to 1.15 over the duration, with a slight pan
-  // z: zoom factor (starts at 1, increases linearly to 1.15)
-  // x,y: pan offset (slight drift to keep it natural)
-  const zoomFilter = `zoompan=z='min(1+0.15*on/${totalFrames},1.15)':x='iw/2-(iw/zoom/2)+on/${totalFrames}*10':y='ih/2-(ih/zoom/2)+on/${totalFrames}*5':d=${totalFrames}:s=${WIDTH}x${HEIGHT}:fps=${FPS}`;
+  // Smooth center zoom: z increases linearly from 1.0 to 1.12
+  // x,y keep the zoom centered on the image (no pan drift)
+  const zoomFilter = `zoompan=z='1+0.12*on/${totalFrames}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=${totalFrames}:s=${WIDTH}x${HEIGHT}:fps=${FPS}`;
 
   return runFfmpeg([
     '-y',

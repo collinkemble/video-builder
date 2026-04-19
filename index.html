@@ -281,9 +281,15 @@
           </div>
           <div>
             <label class="block text-xs font-bold mb-1" style="color: #032D60;">Voice</label>
-            <select id="edit-voice" class="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm">
-              <option value="default">Default (Adam)</option>
-            </select>
+            <div class="flex items-center gap-2">
+              <select id="edit-voice" class="flex-1 px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm">
+                <option value="default">Default (Adam)</option>
+              </select>
+              <button id="voice-preview-btn" type="button" title="Preview voice" onclick="toggleVoicePreview()" class="flex items-center justify-center w-9 h-9 rounded-lg border border-gray-300 hover:bg-gray-100 transition-colors" style="min-width: 36px;">
+                <svg id="voice-preview-play" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#032D60" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                <svg id="voice-preview-stop" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#032D60" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="display:none;"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
+              </button>
+            </div>
           </div>
           <div>
             <label class="block text-xs font-bold mb-1" style="color: #032D60;">Target Duration</label>
@@ -1476,19 +1482,88 @@ async function saveVideoSettings() {
 });
 
 // ═══════════════════════════════════════════════
-// Voices
+// Voices & Voice Preview
 // ═══════════════════════════════════════════════
+let voicePreviewUrls = {};  // voiceId → preview_url
+let voicePreviewAudio = null;  // current Audio instance
+let voicePreviewPlaying = false;
+
 async function loadVoices() {
   try {
     const resp = await fetch('/api/voices');
     const data = await resp.json();
     const select = document.getElementById('edit-voice');
     select.innerHTML = '<option value="default">Default (Adam)</option>';
+    voicePreviewUrls = {};
     (data.voices || []).forEach(v => {
       select.innerHTML += `<option value="${esc(v.id)}">${esc(v.name)} — ${esc(v.description)}</option>`;
+      if (v.preview_url) voicePreviewUrls[v.id] = v.preview_url;
     });
+    // Map "default" to Adam's preview
+    if (voicePreviewUrls['pNInz6obpgDQGcFmaJgB']) {
+      voicePreviewUrls['default'] = voicePreviewUrls['pNInz6obpgDQGcFmaJgB'];
+    }
+    updatePreviewButton();
   } catch (err) { console.log('Failed to load voices:', err.message); }
 }
+
+function updatePreviewButton() {
+  const select = document.getElementById('edit-voice');
+  const btn = document.getElementById('voice-preview-btn');
+  if (!select || !btn) return;
+  const voiceId = select.value;
+  const hasPreview = !!voicePreviewUrls[voiceId];
+  btn.style.opacity = hasPreview ? '1' : '0.35';
+  btn.style.pointerEvents = hasPreview ? 'auto' : 'none';
+  btn.title = hasPreview ? 'Preview voice' : 'No preview available';
+}
+
+function toggleVoicePreview() {
+  if (voicePreviewPlaying) {
+    stopVoicePreview();
+    return;
+  }
+  const select = document.getElementById('edit-voice');
+  const voiceId = select.value;
+  const url = voicePreviewUrls[voiceId];
+  if (!url) return;
+
+  voicePreviewAudio = new Audio(url);
+  voicePreviewAudio.volume = 0.8;
+  voicePreviewPlaying = true;
+  setPreviewIcon(true);
+
+  voicePreviewAudio.play().catch(err => {
+    console.warn('Voice preview playback failed:', err.message);
+    stopVoicePreview();
+  });
+
+  voicePreviewAudio.addEventListener('ended', () => stopVoicePreview());
+  voicePreviewAudio.addEventListener('error', () => stopVoicePreview());
+}
+
+function stopVoicePreview() {
+  if (voicePreviewAudio) {
+    voicePreviewAudio.pause();
+    voicePreviewAudio.currentTime = 0;
+    voicePreviewAudio = null;
+  }
+  voicePreviewPlaying = false;
+  setPreviewIcon(false);
+}
+
+function setPreviewIcon(playing) {
+  const playIcon = document.getElementById('voice-preview-play');
+  const stopIcon = document.getElementById('voice-preview-stop');
+  if (playIcon) playIcon.style.display = playing ? 'none' : 'block';
+  if (stopIcon) stopIcon.style.display = playing ? 'block' : 'none';
+}
+
+// Stop preview when voice changes, and update button state
+document.getElementById('edit-voice')?.addEventListener('change', () => {
+  stopVoicePreview();
+  updatePreviewButton();
+});
 
 // ═══════════════════════════════════════════════
 // New Video Dialog

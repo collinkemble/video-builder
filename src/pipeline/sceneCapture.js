@@ -13,50 +13,279 @@ const MAX_CAPTURE_SECS = 30;
 const FRAME_RATE = 15; // capture fps — balanced between smoothness and Heroku memory
 const OUTPUT_FPS = 30; // final output video fps (FFmpeg interpolates)
 
+// ════════════════════════════════════════════════════════════════
+// Channel detection helpers
+// ════════════════════════════════════════════════════════════════
+
+function normalizeChannel(channel) {
+  return (channel || '').toLowerCase().replace(/[^a-z]/g, '');
+}
+
 /**
  * Determine if a channel type should have click interactions.
- * Instagram/social scenes have native video/animation — no clicks needed.
- * Email scenes are mostly static — no clicks needed.
  */
 function shouldInteract(channel) {
-  const ch = (channel || '').toLowerCase().replace(/[^a-z]/g, '');
+  const ch = normalizeChannel(channel);
   // These channels have video/animation that plays on its own
-  if (ch.includes('instagram') || ch.includes('social') || ch.includes('facebook') || ch.includes('tiktok')) {
-    return false;
-  }
+  if (ch.includes('instagram') || ch.includes('social') || ch.includes('facebook') || ch.includes('tiktok')) return false;
   // Email is mostly static
-  if (ch.includes('email')) {
-    return false;
-  }
-  // Everything else (website, chat, imessage, sms, retail, etc.) needs clicks
+  if (ch.includes('email')) return false;
+  // Everything else (website, chat, imessage, sms, whatsapp, retail, etc.) needs clicks
   return true;
 }
 
 /**
- * Get the click interval for a channel type (ms between clicks).
+ * Classify the scene interaction model from the channel string.
+ * Returns: 'messaging' | 'website' | 'retail' | 'generic'
  */
-function getClickInterval(channel) {
-  const ch = (channel || '').toLowerCase().replace(/[^a-z]/g, '');
-  if (ch.includes('imessage') || ch.includes('sms') || ch.includes('text')) return 2000;
-  if (ch.includes('web') || ch.includes('chat') || ch.includes('agent')) return 2500;
-  if (ch.includes('retail') || ch.includes('store') || ch.includes('pos')) return 3000;
-  return 2500;
+function getSceneType(channel) {
+  const ch = normalizeChannel(channel);
+  if (ch.includes('imessage') || ch.includes('sms') || ch.includes('text') || ch.includes('whatsapp')) return 'messaging';
+  if (ch.includes('web') || ch.includes('chat') || ch.includes('agent')) return 'website';
+  if (ch.includes('retail') || ch.includes('store') || ch.includes('pos')) return 'retail';
+  return 'generic';
+}
+
+// ════════════════════════════════════════════════════════════════
+// Channel-specific interaction strategies
+// ════════════════════════════════════════════════════════════════
+
+/**
+ * MESSAGING scenes (iMessage, WhatsApp, SMS):
+ *   - Messages are #msg1..#msgN, first is already visible
+ *   - Click anywhere on document.body to advance
+ *   - N messages → N-1 clicks (one more click resets!)
+ *   - Typing indicator shows for ~1s before received messages
+ */
+async function setupMessagingInteraction(page) {
+  // Dismiss the "tap to continue" hint if present
+  await page.evaluate(() => {
+    const hint = document.querySelector('.tap-hint');
+    if (hint) hint.remove();
+  });
+
+  // Count total messages
+  const totalMessages = await page.evaluate(() => {
+    let count = 0;
+    while (document.getElementById(`msg${count + 1}`)) count++;
+    return count;
+  });
+
+  const clickLimit = Math.max(totalMessages - 1, 1);
+  const clickInterval = 2200; // 2.2s between clicks — enough for typing indicator animation
+  console.log(`[SceneCapture] Messaging: ${totalMessages} messages, will click ${clickLimit} times`);
+
+  return { clickLimit, clickInterval, clickFn: 'messaging' };
 }
 
 /**
+ * WEBSITE scenes (web chat, Agentforce):
+ *   - First: click #chatFab or #agentBanner to open the chat panel
+ *   - Then: click #chatContent or #chatInputArea to advance messages
+ *   - Count chat messages (.msg) in #chatContent to determine click limit
+ *   - Customer messages need 2 clicks (1 to type, 1 to send)
+ */
+async function setupWebsiteInteraction(page) {
+  // Count the chat messages to calculate total clicks needed
+  const chatInfo = await page.evaluate(() => {
+    const chatContent = document.getElementById('chatContent');
+    if (!chatContent) return { totalMsgs: 0, customerMsgs: 0, hasChat: false };
+
+    const msgs = chatContent.querySelectorAll('.msg');
+    let customerMsgs = 0;
+    msgs.forEach(m => {
+      if (m.classList.contains('msg-customer')) customerMsgs++;
+    });
+
+    const hasChatFab = !!document.getElementById('chatFab');
+    const hasAgentBanner = !!document.getElementById('agentBanner');
+
+    return {
+      totalMsgs: msgs.length,
+      customerMsgs,
+      hasChat: hasChatFab || hasAgentBanner,
+    };
+  });
+
+  // For website: 1 click to open chat + (totalMsgs - 1) clicks to advance
+  // Customer messages need an extra click (type + send), so add customerMsgs
+  // But first message auto-shows, so subtract 1
+  let clickLimit;
+  if (chatInfo.hasChat && chatInfo.totalMsgs > 0) {
+    // 1 click to open chat + for each subsequent message: 1 click
+    // customer messages need 2 clicks each (type animation + send)
+    clickLimit = 1 + (chatInfo.totalMsgs - 1) + chatInfo.customerMsgs;
+  } else {
+    clickLimit = 3; // fallback: a few generic clicks
+  }
+
+  const clickInterval = 2500;
+  console.log(`[SceneCapture] Website: ${chatInfo.totalMsgs} chat msgs (${chatInfo.customerMsgs} customer), ${clickLimit} total clicks`);
+
+  return { clickLimit, clickInterval, clickFn: 'website', chatInfo };
+}
+
+/**
+ * RETAIL scenes (POS, store):
+ *   - Similar click-to-advance pattern with product cards
+ *   - Generic smart click approach works here
+ */
+async function setupRetailInteraction(page) {
+  const interactiveCount = await page.evaluate(() => {
+    let count = 0;
+    document.querySelectorAll('button, [role="button"], [onclick]').forEach(el => {
+      const rect = el.getBoundingClientRect();
+      const style = window.getComputedStyle(el);
+      if (rect.width > 10 && rect.height > 10 && style.display !== 'none' && style.visibility !== 'hidden') count++;
+    });
+    return count;
+  });
+
+  const clickLimit = Math.max(interactiveCount - 1, 2);
+  const clickInterval = 3000;
+  console.log(`[SceneCapture] Retail: ${interactiveCount} interactive elements, ${clickLimit} clicks`);
+
+  return { clickLimit, clickInterval, clickFn: 'generic' };
+}
+
+
+// ════════════════════════════════════════════════════════════════
+// Click execution functions
+// ════════════════════════════════════════════════════════════════
+
+/**
+ * Messaging click: just click the body. PocketSIC messaging scenes
+ * use document.body click handler to advance the conversation.
+ */
+async function performMessagingClick(page, clickIndex) {
+  await page.evaluate(() => {
+    document.body.click();
+  });
+  console.log(`[SceneCapture] Messaging click #${clickIndex + 1} (body)`);
+}
+
+/**
+ * Website click: first click opens chat, subsequent clicks advance messages.
+ */
+async function performWebsiteClick(page, clickIndex, chatInfo) {
+  if (clickIndex === 0) {
+    // First click: open the chat panel
+    const opened = await page.evaluate(() => {
+      // Try chat FAB first, then agent banner
+      const chatFab = document.getElementById('chatFab');
+      if (chatFab) { chatFab.click(); return 'chatFab'; }
+      const agentBanner = document.getElementById('agentBanner');
+      if (agentBanner) { agentBanner.click(); return 'agentBanner'; }
+      // Try any element with "chat" or "agent" in text
+      const els = document.querySelectorAll('button, [role="button"], a, div[onclick]');
+      for (const el of els) {
+        const text = (el.textContent || '').toLowerCase();
+        if (text.includes('chat') || text.includes('agent') || text.includes('ask')) {
+          el.click();
+          return `element: "${text.substring(0, 30)}"`;
+        }
+      }
+      return null;
+    });
+    console.log(`[SceneCapture] Website click #1: opened chat via ${opened}`);
+  } else {
+    // Subsequent clicks: advance the chat conversation
+    const clicked = await page.evaluate(() => {
+      // Click the chat content area or input area to advance
+      const chatContent = document.getElementById('chatContent');
+      if (chatContent) { chatContent.click(); return 'chatContent'; }
+      const chatInput = document.getElementById('chatInputArea');
+      if (chatInput) { chatInput.click(); return 'chatInputArea'; }
+      // Fallback: click the chat panel itself
+      const chatPanel = document.getElementById('chatPanel');
+      if (chatPanel) { chatPanel.click(); return 'chatPanel'; }
+      return null;
+    });
+    console.log(`[SceneCapture] Website click #${clickIndex + 1}: advance via ${clicked}`);
+  }
+}
+
+/**
+ * Generic smart click: find the best clickable element and click it.
+ * Used for retail and unknown scene types.
+ */
+async function performGenericClick(page, clickIndex) {
+  const clicked = await page.evaluate((idx) => {
+    const skipTexts = ['install', 'dismiss', '✕', 'sign out', 'sign in', 'login', 'log in'];
+    const skipClasses = ['pwa-install', 'pwa-dismiss', 'pwa-banner'];
+
+    function shouldSkip(el) {
+      const text = (el.textContent || '').trim().toLowerCase();
+      const cls = (el.className || '').toString().toLowerCase();
+      if (skipTexts.some(s => text === s)) return true;
+      if (skipClasses.some(s => cls.includes(s))) return true;
+      if (el.tagName === 'A' && el.href && !el.href.startsWith(window.location.origin)) return true;
+      return false;
+    }
+
+    function isVisible(el) {
+      const rect = el.getBoundingClientRect();
+      const style = window.getComputedStyle(el);
+      return rect.width > 10 && rect.height > 10 &&
+        style.display !== 'none' && style.visibility !== 'hidden' &&
+        parseFloat(style.opacity) > 0.1 &&
+        rect.top >= 0 && rect.top < window.innerHeight;
+    }
+
+    const candidates = [];
+    document.querySelectorAll('button, a, [onclick], [role="button"], [tabindex="0"]').forEach(el => {
+      if (!isVisible(el) || shouldSkip(el) || el.disabled) return;
+      const text = (el.textContent || '').trim().toLowerCase();
+      const cls = (el.className || '').toString().toLowerCase();
+      const rect = el.getBoundingClientRect();
+
+      let score = 0;
+      if (/send|reply|next|continue|submit|tap|click|start|begin|go|proceed|confirm|accept|ok|yes|add|open/i.test(text)) score += 10;
+      if (/send|reply|next|continue|submit|action|cta|primary|chat|message/i.test(cls)) score += 8;
+      if (el.tagName === 'BUTTON') score += 3;
+      if (rect.top > window.innerHeight * 0.5) score += 2;
+      if (rect.width > 100 && rect.height > 30) score += 2;
+      if (!el.dataset._vbClicked) score += 5;
+
+      candidates.push({ el, score, text: text.substring(0, 30), tag: el.tagName });
+    });
+
+    // Also check cursor:pointer divs/spans
+    document.querySelectorAll('div, span, img, svg').forEach(el => {
+      if (!isVisible(el) || shouldSkip(el)) return;
+      const style = window.getComputedStyle(el);
+      if (style.cursor !== 'pointer') return;
+      if (el.closest('button, a, [role="button"]')) return;
+      const text = (el.textContent || '').trim().toLowerCase();
+      let score = 0;
+      if (/send|reply|next|continue|tap|click/i.test(text)) score += 8;
+      if (!el.dataset._vbClicked) score += 5;
+      candidates.push({ el, score, text: text.substring(0, 30), tag: el.tagName });
+    });
+
+    if (candidates.length === 0) return null;
+    candidates.sort((a, b) => b.score - a.score);
+    let target = candidates.find(c => !c.el.dataset._vbClicked) || candidates[idx % candidates.length];
+    if (target) {
+      target.el.dataset._vbClicked = 'true';
+      target.el.click();
+      return { text: target.text, tag: target.tag, score: target.score };
+    }
+    return null;
+  }, clickIndex);
+
+  if (clicked) {
+    console.log(`[SceneCapture] Generic click #${clickIndex + 1}: <${clicked.tag}> "${clicked.text}" (score: ${clicked.score})`);
+  }
+}
+
+
+// ════════════════════════════════════════════════════════════════
+// Main scene capture
+// ════════════════════════════════════════════════════════════════
+
+/**
  * Capture a single PocketSIC scene as a VIDEO CLIP with interactions.
- *
- * Uses Chrome DevTools Protocol (CDP) to take rapid screenshots while the
- * scene plays (with simulated clicks for interactive scenes), then stitches
- * them into an MP4 with FFmpeg.
- *
- * @param {object} params
- * @param {number} params.sceneId - PocketSIC scene ID
- * @param {string} params.channel - Channel type
- * @param {number} params.duration - Target capture duration in seconds
- * @param {string} params.outputDir - Directory to save captures
- * @param {object} params.browser - Puppeteer browser instance (reuse for batch)
- * @returns {Promise<string>} Path to captured MP4 clip
  */
 async function captureScene({ sceneId, channel, duration, outputDir, browser }) {
   const ownBrowser = !browser;
@@ -85,7 +314,6 @@ async function captureScene({ sceneId, channel, duration, outputDir, browser }) 
 
     // ── Block external navigation (PocketSIC CTAs link to real websites) ──
     await page.evaluate(() => {
-      // Prevent all link clicks from navigating away
       document.addEventListener('click', (e) => {
         const link = e.target.closest('a[href]');
         if (link && link.href && !link.href.startsWith(window.location.origin)) {
@@ -93,87 +321,74 @@ async function captureScene({ sceneId, channel, duration, outputDir, browser }) 
           e.stopPropagation();
         }
       }, true);
-      // Also block window.open and form submissions
       window.open = () => null;
     });
 
     // ── Dismiss PWA install banner if present ──
     try {
-      const dismissBtn = await page.$('.pwa-dismiss-btn, button[class*="dismiss"], button[class*="Dismiss"]');
-      if (dismissBtn) {
-        await dismissBtn.click();
-        console.log(`[SceneCapture] Dismissed PWA banner`);
-        await new Promise(r => setTimeout(r, 500));
-      }
+      await page.evaluate(() => {
+        const pwa = document.querySelector('.pwa-install-banner, .pwa-banner, [class*="pwa-install"], [class*="pwa-dismiss"]');
+        if (pwa) pwa.remove();
+        // Also try the dismiss button
+        const dismissBtn = document.querySelector('.pwa-dismiss-btn, button[class*="dismiss"], button[class*="Dismiss"]');
+        if (dismissBtn) dismissBtn.click();
+      });
+      await new Promise(r => setTimeout(r, 300));
     } catch { /* no banner */ }
 
-    // ── Set up interaction scheduler ──
+    // ── Set up channel-specific interaction strategy ──
     const interactive = shouldInteract(channel);
     let interactionTimer = null;
     let clickCount = 0;
 
     if (interactive) {
-      const intervalMs = getClickInterval(channel);
+      const sceneType = getSceneType(channel);
+      let strategy;
 
-      // Count the total interactive elements on the page to know when to stop.
-      // For messaging scenes: N messages means N-1 clicks (first is already shown).
-      // For web/chat scenes: 1 click to open chat + (N-1) message clicks.
-      // Clicking one too many times restarts the scene!
-      const maxClicks = await page.evaluate(() => {
-        // Count visible buttons, links, and clickable elements (excluding PWA/nav)
-        const skipTexts = ['install', 'dismiss', '✕', 'sign out', 'sign in', 'login'];
-        const skipClasses = ['pwa-install', 'pwa-dismiss', 'pwa-banner'];
-        let count = 0;
-        const seen = new Set();
+      switch (sceneType) {
+        case 'messaging':
+          strategy = await setupMessagingInteraction(page);
+          break;
+        case 'website':
+          strategy = await setupWebsiteInteraction(page);
+          break;
+        case 'retail':
+          strategy = await setupRetailInteraction(page);
+          break;
+        default:
+          strategy = { clickLimit: 4, clickInterval: 2500, clickFn: 'generic' };
+      }
 
-        document.querySelectorAll('button, a, [onclick], [role="button"], [tabindex="0"]').forEach(el => {
-          const rect = el.getBoundingClientRect();
-          const style = window.getComputedStyle(el);
-          if (rect.width < 10 || rect.height < 10) return;
-          if (style.display === 'none' || style.visibility === 'hidden') return;
-          if (parseFloat(style.opacity) < 0.1) return;
+      const { clickLimit, clickInterval, clickFn, chatInfo } = strategy;
 
-          const text = (el.textContent || '').trim().toLowerCase();
-          const cls = (el.className || '').toString().toLowerCase();
-          if (skipTexts.some(s => text === s)) return;
-          if (skipClasses.some(s => cls.includes(s))) return;
-          // Skip external links
-          if (el.tagName === 'A' && el.href && !el.href.startsWith(window.location.origin)) return;
-
-          // Deduplicate by position
-          const key = `${Math.round(rect.x)},${Math.round(rect.y)}`;
-          if (seen.has(key)) return;
-          seen.add(key);
-
-          count++;
-        });
-
-        return count;
-      });
-
-      // N-1 clicks: the first state is already showing, each click advances to next
-      const clickLimit = Math.max(maxClicks - 1, 1);
-      console.log(`[SceneCapture] Interactive mode: ${maxClicks} elements found, will click ${clickLimit} times every ${intervalMs}ms`);
-
-      // Schedule clicks after initial delay
+      // Schedule clicks after initial delay (let the initial state render + record a bit)
       const startInteractions = () => {
         interactionTimer = setInterval(async () => {
           if (clickCount >= clickLimit) {
-            // Reached the limit — stop clicking to avoid restarting the scene
             clearInterval(interactionTimer);
             interactionTimer = null;
-            console.log(`[SceneCapture] Reached click limit (${clickLimit}). Stopping interactions.`);
+            console.log(`[SceneCapture] Reached click limit (${clickLimit}). Stopping.`);
             return;
           }
           try {
-            await performSmartClick(page, clickCount);
+            switch (clickFn) {
+              case 'messaging':
+                await performMessagingClick(page, clickCount);
+                break;
+              case 'website':
+                await performWebsiteClick(page, clickCount, chatInfo);
+                break;
+              default:
+                await performGenericClick(page, clickCount);
+            }
             clickCount++;
           } catch (e) {
-            // Interaction errors are non-fatal
+            // Interaction errors are non-fatal — page may have navigated or element gone
           }
-        }, intervalMs);
+        }, clickInterval);
       };
 
+      // Start interactions after 2 seconds (so the initial state is captured first)
       setTimeout(startInteractions, 2000);
     } else {
       console.log(`[SceneCapture] Passive mode for channel "${channel}" — no clicks, recording native animations`);
@@ -196,12 +411,10 @@ async function captureScene({ sceneId, channel, duration, outputDir, browser }) 
         });
         capturedFrames++;
       } catch (screenshotErr) {
-        // Page may have crashed — stop capturing but use whatever frames we have
         console.warn(`[SceneCapture] Screenshot failed at frame ${i}: ${screenshotErr.message}. Using ${capturedFrames} captured frames.`);
         break;
       }
 
-      // Wait the frame interval (minus a small offset for screenshot overhead)
       if (i < totalFrames - 1) {
         await new Promise(r => setTimeout(r, intervalMs * 0.8));
       }
@@ -217,7 +430,6 @@ async function captureScene({ sceneId, channel, duration, outputDir, browser }) 
     }
 
     // ── Stitch frames into MP4 with FFmpeg ──
-    // Use actual captured duration if we got fewer frames than planned
     const actualDuration = capturedFrames / FRAME_RATE;
     const outputPath = path.join(outputDir || os.tmpdir(), `scene_${sceneId}_${channel}.mp4`);
     await stitchFramesToVideo(frameDir, outputPath, actualDuration);
@@ -236,120 +448,11 @@ async function captureScene({ sceneId, channel, duration, outputDir, browser }) 
   }
 }
 
-/**
- * Smart click — find the best interactive element on the page and click it.
- *
- * PocketSIC scenes are custom HTML pages without standardized selectors.
- * This function scans the DOM for visible, clickable elements and picks the
- * best one to click based on:
- *   1. Buttons and links that look like progression controls (send, next, reply, etc.)
- *   2. Elements with click handlers or cursor:pointer styling
- *   3. Skip PWA buttons, navigation chrome, and external links
- */
-async function performSmartClick(page, clickIndex) {
-  const clicked = await page.evaluate((idx) => {
-    // Skip list — elements we should never click
-    const skipTexts = ['install', 'dismiss', '✕', 'sign out', 'sign in', 'login', 'log in'];
-    const skipClasses = ['pwa-install', 'pwa-dismiss', 'pwa-banner'];
 
-    function shouldSkip(el) {
-      const text = (el.textContent || '').trim().toLowerCase();
-      const cls = (el.className || '').toString().toLowerCase();
-      if (skipTexts.some(s => text === s)) return true;
-      if (skipClasses.some(s => cls.includes(s))) return true;
-      // Skip external links
-      if (el.tagName === 'A' && el.href && !el.href.startsWith(window.location.origin)) return true;
-      return false;
-    }
+// ════════════════════════════════════════════════════════════════
+// FFmpeg stitching & utilities
+// ════════════════════════════════════════════════════════════════
 
-    function isVisible(el) {
-      const rect = el.getBoundingClientRect();
-      const style = window.getComputedStyle(el);
-      return rect.width > 10 && rect.height > 10 &&
-        style.display !== 'none' && style.visibility !== 'hidden' &&
-        parseFloat(style.opacity) > 0.1 &&
-        rect.top >= 0 && rect.top < window.innerHeight;
-    }
-
-    // Gather all clickable candidates
-    const candidates = [];
-    const allElements = document.querySelectorAll('button, a, [onclick], [role="button"], [tabindex="0"]');
-
-    allElements.forEach(el => {
-      if (!isVisible(el) || shouldSkip(el)) return;
-      if (el.disabled) return;
-
-      const text = (el.textContent || '').trim().toLowerCase();
-      const cls = (el.className || '').toString().toLowerCase();
-      const rect = el.getBoundingClientRect();
-
-      // Score — higher = more likely to be the right thing to click
-      let score = 0;
-
-      // Progression keywords get high scores
-      if (/send|reply|next|continue|submit|type|tap|click|start|begin|go|proceed|confirm|accept|ok|yes|add|open/i.test(text)) score += 10;
-      if (/send|reply|next|continue|submit|action|cta|primary|chat|message/i.test(cls)) score += 8;
-
-      // Buttons get preference over links
-      if (el.tagName === 'BUTTON') score += 3;
-
-      // Elements in the lower half of the screen are more likely CTAs
-      if (rect.top > window.innerHeight * 0.5) score += 2;
-
-      // Larger elements are more likely primary CTAs
-      if (rect.width > 100 && rect.height > 30) score += 2;
-
-      // Elements that haven't been clicked before (use data attribute to track)
-      if (!el.dataset._vbClicked) score += 5;
-
-      candidates.push({ el, score, text: text.substring(0, 30), tag: el.tagName });
-    });
-
-    // Also look for elements with cursor:pointer that aren't buttons/links
-    // (PocketSIC might use divs/spans as clickable elements)
-    document.querySelectorAll('div, span, img, svg').forEach(el => {
-      if (!isVisible(el) || shouldSkip(el)) return;
-      const style = window.getComputedStyle(el);
-      if (style.cursor !== 'pointer') return;
-      // Skip if it's inside an already-found button/link
-      if (el.closest('button, a, [role="button"]')) return;
-
-      const rect = el.getBoundingClientRect();
-      const text = (el.textContent || '').trim().toLowerCase();
-
-      let score = 0;
-      if (/send|reply|next|continue|tap|click/i.test(text)) score += 8;
-      if (rect.width > 30 && rect.height > 30) score += 2;
-      if (!el.dataset._vbClicked) score += 5;
-
-      candidates.push({ el, score, text: text.substring(0, 30), tag: el.tagName });
-    });
-
-    if (candidates.length === 0) return null;
-
-    // Sort by score (highest first), then click the best one
-    candidates.sort((a, b) => b.score - a.score);
-
-    // Pick the best unclicked candidate, or cycle through if all clicked
-    let target = candidates.find(c => !c.el.dataset._vbClicked) || candidates[idx % candidates.length];
-
-    if (target) {
-      target.el.dataset._vbClicked = 'true';
-      target.el.click();
-      return { text: target.text, tag: target.tag, score: target.score };
-    }
-
-    return null;
-  }, clickIndex);
-
-  if (clicked) {
-    console.log(`[SceneCapture] Smart click #${clickIndex + 1}: <${clicked.tag}> "${clicked.text}" (score: ${clicked.score})`);
-  }
-}
-
-/**
- * Stitch a directory of JPEG frames into an MP4 video.
- */
 function stitchFramesToVideo(frameDir, outputPath, duration) {
   return new Promise((resolve, reject) => {
     const ffmpegPath = findFfmpegPath();
@@ -392,7 +495,7 @@ function stitchFramesToVideo(frameDir, outputPath, duration) {
 }
 
 /**
- * Also export a static capture for fallback / thumbnail
+ * Static capture for fallback / thumbnail
  */
 async function captureSceneStatic({ sceneId, channel, outputDir, browser }) {
   const ownBrowser = !browser;
@@ -416,17 +519,12 @@ async function captureSceneStatic({ sceneId, channel, outputDir, browser }) {
 
 /**
  * Capture all scenes for a video (batch)
- * @param {Array} scenes - Array of { sceneId, channel, duration }
- * @param {string} outputDir - Directory for captures
- * @param {function} onProgress - Progress callback (completed, total)
- * @returns {Promise<Array>} Array of { sceneId, channel, clipPath }
  */
 async function captureAllScenes(scenes, outputDir, onProgress) {
   let browser = await launchBrowser();
   const results = [];
 
   try {
-    // Capture serially to avoid memory issues on Heroku
     for (let i = 0; i < scenes.length; i++) {
       const scene = scenes[i];
       console.log(`Capturing scene ${i + 1}/${scenes.length}: ${scene.sceneId} (${scene.channel})`);
@@ -447,9 +545,9 @@ async function captureAllScenes(scenes, outputDir, onProgress) {
           imagePath: clipPath,
         });
       } catch (err) {
-        // If Chrome crashed ("Connection closed"), relaunch and retry this scene once
+        // If Chrome crashed, relaunch and retry once
         if (err.message.includes('Connection closed') || err.message.includes('Target closed') || err.message.includes('Session closed')) {
-          console.warn(`[SceneCapture] Browser crashed on scene ${scene.sceneId}. Relaunching Chrome and retrying...`);
+          console.warn(`[SceneCapture] Browser crashed on scene ${scene.sceneId}. Relaunching and retrying...`);
           try { await browser.close(); } catch { /* already dead */ }
           browser = await launchBrowser();
 
@@ -530,8 +628,6 @@ async function launchBrowser() {
       '--disable-setuid-sandbox',
       '--disable-gpu',
       '--disable-dev-shm-usage',
-      // Note: removed --single-process — it causes entire browser to die on OOM
-      // instead of just the renderer tab. Multi-process is more resilient on Heroku.
       '--disable-extensions',
       '--disable-background-networking',
       '--disable-default-apps',

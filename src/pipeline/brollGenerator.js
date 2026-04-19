@@ -24,7 +24,9 @@ CRITICAL RULES YOU MUST FOLLOW:
 3. DO NOT generate images of people looking at screens, typing on keyboards, or using touchscreens in close-up.
 4. INSTEAD focus on: people's faces and emotions, hands gesturing, walking, shopping in stores, outdoor environments, coffee shops, cityscapes, nature, product packaging, storefronts, lifestyle moments.
 5. No text overlays, no logos, no UI mockups.
-6. Slow cinematic motion only — no rapid movement.`;
+6. Slow cinematic motion only — no rapid movement.
+7. ABSOLUTELY NO morphing between people — if a person appears, they must remain the SAME person throughout the entire clip. Do NOT transition one person's face or body into a different person. Keep consistent identity for all people shown.
+8. If showing people, show only ONE person per shot OR a consistent group. Never change who they are mid-clip.`;
 
 /**
  * Poll a Veo video operation until done.

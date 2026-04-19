@@ -63,13 +63,21 @@ async function composeVideo({
   if (onProgress) onProgress(10);
 
   // ── Step 2: Normalize each segment into 1920x1080 clips ──
+  // Log full timeline for debugging
+  console.log(`[Compositor] Timeline (${timelineEntries.length} entries):`);
+  timelineEntries.forEach(e => {
+    console.log(`  [${e.order}] ${e.type} | ${e.duration}s | video=${e.isVideo} | ${path.basename(e.sourcePath)}`);
+  });
+
   const normalizedClips = [];
   for (let i = 0; i < timelineEntries.length; i++) {
     const entry = timelineEntries[i];
     const clipPath = path.join(workDir, `clip_${String(i).padStart(3, '0')}.mp4`);
 
+    console.log(`[Compositor] Normalizing clip ${i}: type=${entry.type}, duration=${entry.duration}s, isVideo=${entry.isVideo}`);
+
     if (entry.isVideo) {
-      // Scene capture clip — scale/pad to 1920x1080 and trim/pad to target duration
+      // Video clip — scale/pad to 1920x1080 and trim/loop to target duration
       await normalizeVideoClip(entry.sourcePath, clipPath, entry.duration);
     } else {
       // B-roll still image — create a video of the image held for the duration
@@ -184,12 +192,13 @@ function buildTimeline(segments, timestamps, sceneImages, brollImages) {
     let duration = ts ? (ts.endTime - ts.startTime) : (seg.estimatedDuration || 10);
     if (duration < 1) duration = 1;
 
-    // B-roll video clips should never be trimmed shorter than 8 seconds.
-    // The narration may be short, but a 3-second clip looks jarring and repetitive.
-    // The audio overlay step uses the LONGER of video vs audio, so extra video won't cause issues.
-    const isBroll = seg.type === 'intro' || seg.type === 'transition' || seg.type === 'outro';
-    if (isBroll && isVideo && duration < 8) {
-      console.log(`[Compositor] Extending b-roll segment ${seg.order} (${seg.type}) from ${duration}s to 8s minimum`);
+    // B-roll segments (intro/transition/outro) should never be shorter than 8 seconds.
+    // Short narration (3-4s) shouldn't mean a 3-second visual — it looks jarring.
+    // This applies to BOTH video clips AND still images (imageToVideo).
+    const isBroll = seg.type === 'intro' || seg.type === 'transition' || seg.type === 'outro'
+                 || seg.visualType === 'broll';
+    if (isBroll && duration < 8) {
+      console.log(`[Compositor] Extending b-roll segment ${seg.order} (${seg.type}) from ${duration.toFixed(1)}s to 8s minimum`);
       duration = 8;
     }
 

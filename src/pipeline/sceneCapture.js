@@ -32,7 +32,7 @@ async function captureScene({ sceneId, channel, outputDir, browser }) {
     await page.goto(sceneUrl, { waitUntil: 'networkidle0', timeout: 30000 });
 
     // Wait for content to render
-    await page.waitForTimeout(2000);
+    await new Promise(r => setTimeout(r, 2000));
 
     // Take screenshot
     const filename = `scene_${sceneId}_${channel}.png`;

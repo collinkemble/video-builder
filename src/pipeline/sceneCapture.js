@@ -29,7 +29,9 @@ async function captureScene({ sceneId, channel, outputDir, browser }) {
 
     // Navigate to scene
     const sceneUrl = `${POCKETSIC_BASE}/scene/${sceneId}`;
-    await page.goto(sceneUrl, { waitUntil: 'networkidle0', timeout: 30000 });
+    console.log(`[SceneCapture] Navigating to: ${sceneUrl}`);
+    const response = await page.goto(sceneUrl, { waitUntil: 'networkidle0', timeout: 30000 });
+    console.log(`[SceneCapture] Page status: ${response ? response.status() : 'no response'}`);
 
     // Wait for content to render
     await new Promise(r => setTimeout(r, 2000));
@@ -43,6 +45,13 @@ async function captureScene({ sceneId, channel, outputDir, browser }) {
       type: 'png',
       fullPage: false,
     });
+
+    // Verify file was created
+    if (!fs.existsSync(outputPath)) {
+      throw new Error(`Screenshot not saved at ${outputPath}`);
+    }
+    const stats = fs.statSync(outputPath);
+    console.log(`[SceneCapture] Captured: ${outputPath} (${(stats.size / 1024).toFixed(1)}KB)`);
 
     return outputPath;
   } finally {

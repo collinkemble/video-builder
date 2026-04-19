@@ -40,6 +40,17 @@ async function composeVideo({
   // ── Step 1: Build per-segment image list with durations ──
   const timelineEntries = buildTimeline(segments, timestamps, sceneImages, brollImages);
 
+  if (timelineEntries.length === 0) {
+    throw new Error('No images available for video composition. Scene capture may have failed — check that PocketSIC scenes are accessible.');
+  }
+
+  // Verify all image files actually exist
+  for (const entry of timelineEntries) {
+    if (!fs.existsSync(entry.imagePath)) {
+      throw new Error(`Image file missing for segment ${entry.order}: ${entry.imagePath}`);
+    }
+  }
+
   // ── Step 2: Create concat demuxer file ──
   // Each image is shown for its calculated duration
   const concatFilePath = path.join(workDir, 'concat.txt');
@@ -48,11 +59,10 @@ async function composeVideo({
     return `file '${safePath}'\nduration ${entry.duration.toFixed(3)}`;
   });
   // ffmpeg concat requires the last file repeated to avoid truncation
-  if (timelineEntries.length > 0) {
-    const lastEntry = timelineEntries[timelineEntries.length - 1];
-    concatLines.push(`file '${lastEntry.imagePath.replace(/'/g, "'\\''")}'`);
-  }
+  const lastEntry = timelineEntries[timelineEntries.length - 1];
+  concatLines.push(`file '${lastEntry.imagePath.replace(/'/g, "'\\''")}'`);
   fs.writeFileSync(concatFilePath, concatLines.join('\n'));
+  console.log(`[Compositor] concat.txt (${timelineEntries.length} entries):\n${fs.readFileSync(concatFilePath, 'utf-8').substring(0, 500)}`);
 
   // ── Step 3: Generate silent video from images ──
   const silentVideoPath = path.join(workDir, 'silent.mp4');

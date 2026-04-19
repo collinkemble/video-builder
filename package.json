@@ -6,8 +6,7 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node server.js",
-    "migrate": "node src/db/migrate.js",
-    "heroku-postbuild": "mkdir -p ./.cache && cp -r /app/.cache/puppeteer ./.cache/ 2>/dev/null || true"
+    "migrate": "node src/db/migrate.js"
   },
   "keywords": [
     "salesforce",
@@ -28,6 +27,6 @@
     "jsonwebtoken": "^9.0.2",
     "multer": "^1.4.5-lts.1",
     "mysql2": "^3.11.0",
-    "puppeteer": "^23.0.0"
+    "puppeteer-core": "^23.0.0"
   }
 }

@@ -1,7 +1,8 @@
-const puppeteer = require('puppeteer');
+const puppeteer = require('puppeteer-core');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const { execSync } = require('child_process');
 
 const POCKETSIC_BASE = process.env.POCKETSIC_BASE_URL || 'https://pocketsic.aubreydemo.com';
 
@@ -90,10 +91,44 @@ async function captureAllScenes(scenes, outputDir, onProgress) {
 }
 
 /**
+ * Find the system-installed Chrome/Chromium executable.
+ * On Heroku, the google-chrome buildpack puts it at /app/.apt/usr/bin/google-chrome
+ * or it may be on PATH as google-chrome-stable / google-chrome / chromium-browser.
+ */
+function findChromePath() {
+  // Check GOOGLE_CHROME_BIN env var (set by Heroku buildpack)
+  if (process.env.GOOGLE_CHROME_BIN) return process.env.GOOGLE_CHROME_BIN;
+  if (process.env.CHROME_BIN) return process.env.CHROME_BIN;
+
+  // Check common Heroku paths
+  const candidates = [
+    '/app/.apt/usr/bin/google-chrome',
+    '/app/.apt/usr/bin/google-chrome-stable',
+    '/app/.apt/usr/bin/chromium-browser',
+  ];
+
+  for (const p of candidates) {
+    if (fs.existsSync(p)) return p;
+  }
+
+  // Try which
+  try {
+    const result = execSync('which google-chrome-stable || which google-chrome || which chromium-browser', { encoding: 'utf-8' }).trim();
+    if (result) return result;
+  } catch { /* not found via which */ }
+
+  throw new Error('Chrome not found. Ensure the Google Chrome buildpack is installed on Heroku.');
+}
+
+/**
  * Launch a headless Chrome browser configured for Heroku
  */
 async function launchBrowser() {
+  const executablePath = findChromePath();
+  console.log(`Launching Chrome from: ${executablePath}`);
+
   return puppeteer.launch({
+    executablePath,
     headless: 'new',
     args: [
       '--no-sandbox',

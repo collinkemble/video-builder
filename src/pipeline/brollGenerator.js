@@ -41,11 +41,8 @@ async function generateBrollVideo({ description, brandName, outputDir }) {
 
   const prompt = `Professional cinematic b-roll footage for a ${brandName || 'brand'} customer experience video: ${description}.\n${VIDEO_PROMPT_RULES}`;
 
-  // Veo models in priority order (lite is cheapest, fast is faster, standard is highest quality)
-  // Model names per Google docs: veo-3.1-lite, veo-3.1-fast, veo-3.1-generate-preview
+  // Only veo-3.1-generate-preview works on v1beta — lite/fast return 404
   const veoModels = [
-    'veo-3.1-lite',
-    'veo-3.1-fast',
     'veo-3.1-generate-preview',
   ];
 
@@ -59,7 +56,7 @@ async function generateBrollVideo({ description, brandName, outputDir }) {
         config: {
           aspectRatio: '16:9',
           resolution: '720p',
-          durationSeconds: '6',
+          durationSeconds: 6,
           numberOfVideos: 1,
           personGeneration: 'allow_all',
         },

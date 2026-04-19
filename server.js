@@ -1098,7 +1098,7 @@ async function checkVeoCapability() {
   const { GoogleGenAI } = require('@google/genai');
   const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
-  const veoModels = ['veo-3.1-lite', 'veo-3.1-fast', 'veo-3.1-generate-preview'];
+  const veoModels = ['veo-3.1-generate-preview'];
 
   console.log('[Startup Veo Check] Testing Veo video generation capability...');
 
@@ -1112,7 +1112,7 @@ async function checkVeoCapability() {
         config: {
           aspectRatio: '16:9',
           resolution: '720p',
-          durationSeconds: '5',
+          durationSeconds: 5,
           numberOfVideos: 1,
         },
       });

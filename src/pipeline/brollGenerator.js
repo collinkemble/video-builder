@@ -50,19 +50,22 @@ Warm, inviting lighting. No text or logos.`;
     }
 
     // Fallback: generate a simple gradient placeholder
-    return generatePlaceholderImage({ description, brandName, outputDir });
+    return await generatePlaceholderImage({ description, brandName, outputDir });
   } catch (err) {
     console.warn(`B-roll generation failed: ${err.message}. Using placeholder.`);
-    return generatePlaceholderImage({ description, brandName, outputDir });
+    return await generatePlaceholderImage({ description, brandName, outputDir });
   }
 }
 
 /**
- * Generate a placeholder image when AI image generation fails
- * Creates a simple branded gradient image with text
+ * Generate a placeholder image when AI image generation fails.
+ * Renders an SVG as a PNG using Puppeteer (headless Chrome) since FFmpeg
+ * doesn't have an SVG decoder.
  */
-function generatePlaceholderImage({ description, brandName, outputDir }) {
-  // We'll create a simple SVG and save it — FFmpeg can handle SVG input
+async function generatePlaceholderImage({ description, brandName, outputDir }) {
+  const puppeteer = require('puppeteer-core');
+  const { execSync } = require('child_process');
+
   const svg = `<svg width="1920" height="1080" xmlns="http://www.w3.org/2000/svg">
     <defs>
       <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
@@ -75,9 +78,35 @@ function generatePlaceholderImage({ description, brandName, outputDir }) {
     <text x="960" y="580" text-anchor="middle" fill="rgba(255,255,255,0.6)" font-family="Arial" font-size="24">${escapeXml(truncate(description || '', 80))}</text>
   </svg>`;
 
-  const filename = `broll_placeholder_${Date.now()}.svg`;
+  const filename = `broll_placeholder_${Date.now()}.png`;
   const outputPath = path.join(outputDir || os.tmpdir(), filename);
-  fs.writeFileSync(outputPath, svg);
+
+  // Find Chrome (same logic as sceneCapture)
+  function findChrome() {
+    if (process.env.GOOGLE_CHROME_BIN) return process.env.GOOGLE_CHROME_BIN;
+    if (process.env.CHROME_BIN) return process.env.CHROME_BIN;
+    const candidates = ['/app/.chrome-for-testing/chrome-linux64/chrome', '/app/.apt/usr/bin/google-chrome'];
+    for (const p of candidates) { if (fs.existsSync(p)) return p; }
+    try { return execSync('which google-chrome-stable || which google-chrome || which chromium-browser', { encoding: 'utf-8' }).trim(); } catch {}
+    throw new Error('Chrome not found for placeholder generation');
+  }
+
+  const browser = await puppeteer.launch({
+    executablePath: findChrome(),
+    headless: 'new',
+    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-gpu', '--disable-dev-shm-usage'],
+  });
+
+  try {
+    const page = await browser.newPage();
+    await page.setViewport({ width: 1920, height: 1080 });
+    await page.setContent(`<!DOCTYPE html><html><body style="margin:0;padding:0;">${svg}</body></html>`, { waitUntil: 'load' });
+    await page.screenshot({ path: outputPath, type: 'png' });
+    await page.close();
+  } finally {
+    await browser.close();
+  }
+
   return outputPath;
 }
 

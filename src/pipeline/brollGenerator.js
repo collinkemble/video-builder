@@ -24,8 +24,9 @@ function getGenAI() {
 async function generateBrollImage({ description, brandName, outputDir }) {
   const ai = getGenAI();
 
-  const prompt = `Professional, cinematic b-roll image for a ${brandName || 'brand'} customer experience video: ${description}.
-Style: Clean, modern, high-quality stock photography look. Warm, inviting lighting. No text or logos.`;
+  const prompt = `Professional, cinematic b-roll photograph for a ${brandName || 'brand'} customer experience video: ${description}.
+Style: Clean, modern, high-quality stock photography. Warm, inviting lighting. Shallow depth of field.
+IMPORTANT RULES: No text, no logos, no UI elements, no device screens, no phone screens, no laptop screens, no computer monitors. Never show what is on a screen. It is okay to show a person holding or using a device from a distance, but NEVER from the vantage point of seeing what is displayed on the screen. Focus on people, environments, emotions, and lifestyle moments.`;
 
   // Try multiple model names in order of preference
   const modelNames = [

@@ -114,16 +114,62 @@ async function captureScene({ sceneId, channel, duration, outputDir, browser }) 
 
     if (interactive) {
       const intervalMs = getClickInterval(channel);
-      console.log(`[SceneCapture] Interactive mode for channel "${channel}" — clicking every ${intervalMs}ms`);
 
-      // Schedule first click after initial delay
+      // Count the total interactive elements on the page to know when to stop.
+      // For messaging scenes: N messages means N-1 clicks (first is already shown).
+      // For web/chat scenes: 1 click to open chat + (N-1) message clicks.
+      // Clicking one too many times restarts the scene!
+      const maxClicks = await page.evaluate(() => {
+        // Count visible buttons, links, and clickable elements (excluding PWA/nav)
+        const skipTexts = ['install', 'dismiss', '✕', 'sign out', 'sign in', 'login'];
+        const skipClasses = ['pwa-install', 'pwa-dismiss', 'pwa-banner'];
+        let count = 0;
+        const seen = new Set();
+
+        document.querySelectorAll('button, a, [onclick], [role="button"], [tabindex="0"]').forEach(el => {
+          const rect = el.getBoundingClientRect();
+          const style = window.getComputedStyle(el);
+          if (rect.width < 10 || rect.height < 10) return;
+          if (style.display === 'none' || style.visibility === 'hidden') return;
+          if (parseFloat(style.opacity) < 0.1) return;
+
+          const text = (el.textContent || '').trim().toLowerCase();
+          const cls = (el.className || '').toString().toLowerCase();
+          if (skipTexts.some(s => text === s)) return;
+          if (skipClasses.some(s => cls.includes(s))) return;
+          // Skip external links
+          if (el.tagName === 'A' && el.href && !el.href.startsWith(window.location.origin)) return;
+
+          // Deduplicate by position
+          const key = `${Math.round(rect.x)},${Math.round(rect.y)}`;
+          if (seen.has(key)) return;
+          seen.add(key);
+
+          count++;
+        });
+
+        return count;
+      });
+
+      // N-1 clicks: the first state is already showing, each click advances to next
+      const clickLimit = Math.max(maxClicks - 1, 1);
+      console.log(`[SceneCapture] Interactive mode: ${maxClicks} elements found, will click ${clickLimit} times every ${intervalMs}ms`);
+
+      // Schedule clicks after initial delay
       const startInteractions = () => {
         interactionTimer = setInterval(async () => {
+          if (clickCount >= clickLimit) {
+            // Reached the limit — stop clicking to avoid restarting the scene
+            clearInterval(interactionTimer);
+            interactionTimer = null;
+            console.log(`[SceneCapture] Reached click limit (${clickLimit}). Stopping interactions.`);
+            return;
+          }
           try {
             await performSmartClick(page, clickCount);
             clickCount++;
           } catch (e) {
-            // Interaction errors are non-fatal — page may have changed
+            // Interaction errors are non-fatal
           }
         }, intervalMs);
       };

@@ -10,14 +10,149 @@ const POCKETSIC_BASE = process.env.POCKETSIC_BASE_URL || 'https://pocketsic.aubr
 // is the ideal, but we enforce a min/max to keep captures reasonable.
 const MIN_CAPTURE_SECS = 5;
 const MAX_CAPTURE_SECS = 30;
-const FRAME_RATE = 10; // capture frames per second (low to save CPU/memory on Heroku)
+const FRAME_RATE = 24; // capture frames per second — smooth video capture
 const OUTPUT_FPS = 30; // final output video fps
 
 /**
- * Capture a single PocketSIC scene as a VIDEO CLIP.
+ * Channel-specific interaction patterns for PocketSIC scenes.
+ * Each pattern defines how to progress the story during recording.
+ *
+ * The interaction scheduler clicks elements at timed intervals to simulate
+ * a user naturally progressing through the demo.
+ */
+const INTERACTION_PATTERNS = {
+  // Chat / agentic chat — click send or next-message buttons
+  website: {
+    // Selectors to try clicking (in priority order)
+    selectors: [
+      'button[class*="send"]',
+      'button[aria-label*="send" i]',
+      'button[aria-label*="Send" i]',
+      '[class*="chat"] button',
+      '[class*="Chat"] button',
+      'button[class*="next"]',
+      'button[class*="reply"]',
+      '.chat-input button',
+      '.message-input button',
+      // Generic clickable progression elements
+      'button:not([disabled])',
+    ],
+    // How often to click (ms) — gives time for animations/responses
+    intervalMs: 2500,
+    // Initial delay before first click
+    initialDelayMs: 2000,
+  },
+
+  // iMessage style — tap message bubbles or send buttons
+  imessage: {
+    selectors: [
+      'button[class*="send"]',
+      'button[aria-label*="send" i]',
+      '[class*="message"] button',
+      '[class*="iMessage"] button',
+      '[class*="imessage"] button',
+      'button[class*="next"]',
+      'button:not([disabled])',
+    ],
+    intervalMs: 2000,
+    initialDelayMs: 1500,
+  },
+
+  // SMS / text messages
+  sms: {
+    selectors: [
+      'button[class*="send"]',
+      'button[aria-label*="send" i]',
+      '[class*="message"] button',
+      'button[class*="next"]',
+      'button:not([disabled])',
+    ],
+    intervalMs: 2000,
+    initialDelayMs: 1500,
+  },
+
+  // Retail cloud / POS — tap through screens
+  retail: {
+    selectors: [
+      'button[class*="next"]',
+      'button[class*="continue"]',
+      'button[class*="proceed"]',
+      'button[class*="action"]',
+      '[class*="retail"] button',
+      '[class*="pos"] button',
+      'button:not([disabled])',
+    ],
+    intervalMs: 3000,
+    initialDelayMs: 2000,
+  },
+
+  // Email — mostly static, light interaction
+  email: {
+    selectors: [
+      'button[class*="open"]',
+      'button[class*="next"]',
+      'a[class*="cta"]',
+      'button:not([disabled])',
+    ],
+    intervalMs: 4000,
+    initialDelayMs: 2000,
+  },
+
+  // Instagram / social — let video play, occasional taps
+  instagram: {
+    selectors: [],  // No clicks — let native video/animations play
+    intervalMs: 0,
+    initialDelayMs: 0,
+  },
+
+  // Default — gentle clicks on available buttons
+  default: {
+    selectors: [
+      'button[class*="next"]',
+      'button[class*="send"]',
+      'button[class*="continue"]',
+      'button[class*="action"]',
+      'button:not([disabled])',
+    ],
+    intervalMs: 3000,
+    initialDelayMs: 2000,
+  },
+};
+
+/**
+ * Get the interaction pattern for a channel type.
+ */
+function getInteractionPattern(channel) {
+  const ch = (channel || '').toLowerCase().replace(/[^a-z]/g, '');
+
+  if (ch.includes('instagram') || ch.includes('social') || ch.includes('facebook') || ch.includes('tiktok')) {
+    return INTERACTION_PATTERNS.instagram;
+  }
+  if (ch.includes('imessage') || ch.includes('apple')) {
+    return INTERACTION_PATTERNS.imessage;
+  }
+  if (ch.includes('sms') || ch.includes('text')) {
+    return INTERACTION_PATTERNS.sms;
+  }
+  if (ch.includes('retail') || ch.includes('store') || ch.includes('pos') || ch.includes('instore')) {
+    return INTERACTION_PATTERNS.retail;
+  }
+  if (ch.includes('email')) {
+    return INTERACTION_PATTERNS.email;
+  }
+  if (ch.includes('web') || ch.includes('chat') || ch.includes('agent') || ch.includes('service')) {
+    return INTERACTION_PATTERNS.website;
+  }
+
+  return INTERACTION_PATTERNS.default;
+}
+
+/**
+ * Capture a single PocketSIC scene as a VIDEO CLIP with interactions.
  *
  * Uses Chrome DevTools Protocol (CDP) to take rapid screenshots while the
- * scene plays, then stitches them into an MP4 with FFmpeg.
+ * scene plays (with simulated clicks for interactive scenes), then stitches
+ * them into an MP4 with FFmpeg.
  *
  * @param {object} params
  * @param {number} params.sceneId - PocketSIC scene ID
@@ -45,12 +180,38 @@ async function captureScene({ sceneId, channel, duration, outputDir, browser }) 
 
     // Navigate to scene
     const sceneUrl = `${POCKETSIC_BASE}/scene/${sceneId}`;
-    console.log(`[SceneCapture] Navigating to: ${sceneUrl} (recording ${captureDuration}s)`);
+    console.log(`[SceneCapture] Navigating to: ${sceneUrl} (recording ${captureDuration}s, channel: ${channel})`);
     const response = await page.goto(sceneUrl, { waitUntil: 'networkidle0', timeout: 30000 });
     console.log(`[SceneCapture] Page status: ${response ? response.status() : 'no response'}`);
 
     // Let the page fully render before starting capture
     await new Promise(r => setTimeout(r, 1500));
+
+    // ── Set up interaction scheduler ──
+    const pattern = getInteractionPattern(channel);
+    let interactionTimer = null;
+    let clickCount = 0;
+
+    if (pattern.selectors.length > 0 && pattern.intervalMs > 0) {
+      console.log(`[SceneCapture] Interactive mode for channel "${channel}" — clicking every ${pattern.intervalMs}ms`);
+
+      // Schedule first click after initial delay
+      const startInteractions = () => {
+        interactionTimer = setInterval(async () => {
+          try {
+            await performInteraction(page, pattern.selectors, clickCount);
+            clickCount++;
+          } catch (e) {
+            // Interaction errors are non-fatal — page may have changed
+            console.log(`[SceneCapture] Interaction click ${clickCount} skipped: ${e.message}`);
+          }
+        }, pattern.intervalMs);
+      };
+
+      setTimeout(startInteractions, pattern.initialDelayMs);
+    } else {
+      console.log(`[SceneCapture] Passive mode for channel "${channel}" — no clicks, recording native animations`);
+    }
 
     // ── Capture frames via rapid screenshots ──
     const totalFrames = Math.ceil(captureDuration * FRAME_RATE);
@@ -62,17 +223,20 @@ async function captureScene({ sceneId, channel, duration, outputDir, browser }) 
       await page.screenshot({
         path: framePath,
         type: 'jpeg',
-        quality: 85,
+        quality: 90,
         fullPage: false,
       });
 
-      // Wait the frame interval (minus a small offset for screenshot time)
+      // Wait the frame interval (minus a small offset for screenshot overhead)
       if (i < totalFrames - 1) {
-        await new Promise(r => setTimeout(r, intervalMs * 0.8));
+        await new Promise(r => setTimeout(r, intervalMs * 0.75));
       }
     }
 
-    console.log(`[SceneCapture] Captured ${totalFrames} frames in ${frameDir}`);
+    // Stop interactions
+    if (interactionTimer) clearInterval(interactionTimer);
+
+    console.log(`[SceneCapture] Captured ${totalFrames} frames (${clickCount} interactions performed)`);
 
     // ── Stitch frames into MP4 with FFmpeg ──
     const outputPath = path.join(outputDir || os.tmpdir(), `scene_${sceneId}_${channel}.mp4`);
@@ -89,6 +253,42 @@ async function captureScene({ sceneId, channel, duration, outputDir, browser }) 
   } finally {
     await page.close();
     if (ownBrowser) await browser.close();
+  }
+}
+
+/**
+ * Perform a single interaction click on the page.
+ * Tries each selector in order until one succeeds.
+ */
+async function performInteraction(page, selectors, clickIndex) {
+  for (const selector of selectors) {
+    try {
+      // Find all matching visible elements
+      const elements = await page.$$(selector);
+
+      for (const el of elements) {
+        const isVisible = await el.evaluate(node => {
+          const rect = node.getBoundingClientRect();
+          const style = window.getComputedStyle(node);
+          return rect.width > 0 && rect.height > 0 &&
+            style.visibility !== 'hidden' &&
+            style.display !== 'none' &&
+            style.opacity !== '0';
+        });
+
+        if (isVisible) {
+          // Scroll into view and click
+          await el.evaluate(node => node.scrollIntoView({ behavior: 'smooth', block: 'center' }));
+          await new Promise(r => setTimeout(r, 200));
+          await el.click();
+          console.log(`[SceneCapture] Clicked: ${selector} (interaction #${clickIndex + 1})`);
+          return; // One click per interval
+        }
+      }
+    } catch {
+      // Selector didn't match or element disappeared — try next
+      continue;
+    }
   }
 }
 

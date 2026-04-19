@@ -30,7 +30,7 @@ Style: Clean, modern, high-quality stock photography look. Warm, inviting lighti
   try {
     console.log(`[B-Roll] Generating image: "${description.substring(0, 60)}..."`);
     const response = await ai.models.generateContent({
-      model: 'gemini-2.0-flash-exp',
+      model: 'gemini-2.0-flash-exp-image-generation',
       contents: prompt,
       config: {
         responseModalities: ['TEXT', 'IMAGE'],

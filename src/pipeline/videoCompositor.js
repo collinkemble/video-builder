@@ -167,7 +167,14 @@ function buildTimeline(segments, timestamps, sceneImages, brollImages) {
     });
   }
 
-  return entries.sort((a, b) => a.order - b.order);
+  const sorted = entries.sort((a, b) => a.order - b.order);
+
+  // Add 2 seconds of padding to the last segment to prevent narration cutoff
+  if (sorted.length > 0) {
+    sorted[sorted.length - 1].duration += 2;
+  }
+
+  return sorted;
 }
 
 /**
@@ -222,32 +229,62 @@ function concatClips(concatFilePath, outputPath, onProgress) {
 }
 
 /**
+ * Get duration of an audio file in seconds.
+ */
+function getAudioDuration(audioPath) {
+  return new Promise((resolve, reject) => {
+    ffmpeg.ffprobe(audioPath, (err, metadata) => {
+      if (err) return reject(err);
+      const duration = metadata.format?.duration || 0;
+      resolve(parseFloat(duration));
+    });
+  });
+}
+
+/**
  * Overlay voiceover audio onto a video.
+ * Uses the LONGER of the two streams so narration never gets cut off.
+ * If audio is longer than video, the last video frame freezes until audio finishes.
  */
 function overlayAudio(videoPath, audioPath, outputPath, onProgress) {
-  return new Promise((resolve, reject) => {
-    const cmd = ffmpeg()
-      .input(videoPath)
-      .input(audioPath)
-      .outputOptions([
-        '-c:v', 'copy',
-        '-c:a', 'aac',
-        '-b:a', '192k',
-        '-map', '0:v:0',
-        '-map', '1:a:0',
-        '-shortest',
-        '-movflags', '+faststart',
-      ])
-      .output(outputPath)
-      .on('start', (cmd) => console.log(`[FFmpeg] Audio overlay: ${cmd.substring(0, 120)}...`))
-      .on('progress', (progress) => {
-        if (onProgress && progress.percent) {
-          onProgress(70 + Math.min(progress.percent * 0.2, 20));
-        }
-      })
-      .on('error', (err) => reject(new Error(`FFmpeg audio overlay failed: ${err.message}`)))
-      .on('end', () => resolve());
-    cmd.run();
+  return new Promise(async (resolve, reject) => {
+    try {
+      // Get audio duration to ensure video covers the full narration
+      const audioDur = await getAudioDuration(audioPath);
+      const videoDur = await getVideoDuration(videoPath);
+      console.log(`[FFmpeg] Audio overlay: video=${videoDur.toFixed(1)}s, audio=${audioDur.toFixed(1)}s`);
+
+      // Pad with 1 second of silence after narration so it doesn't feel abrupt
+      const targetDuration = Math.max(videoDur, audioDur + 1.0);
+
+      const cmd = ffmpeg()
+        .input(videoPath)
+        .input(audioPath)
+        .outputOptions([
+          '-c:v', 'libx264',
+          '-preset', 'ultrafast',
+          '-crf', '23',
+          '-c:a', 'aac',
+          '-b:a', '192k',
+          '-map', '0:v:0',
+          '-map', '1:a:0',
+          // Use -t to set exact duration — no -shortest so audio isn't cut off
+          '-t', String(Math.ceil(targetDuration)),
+          '-movflags', '+faststart',
+        ])
+        .output(outputPath)
+        .on('start', (cmd) => console.log(`[FFmpeg] Audio overlay: ${cmd.substring(0, 120)}...`))
+        .on('progress', (progress) => {
+          if (onProgress && progress.percent) {
+            onProgress(70 + Math.min(progress.percent * 0.2, 20));
+          }
+        })
+        .on('error', (err) => reject(new Error(`FFmpeg audio overlay failed: ${err.message}`)))
+        .on('end', () => resolve());
+      cmd.run();
+    } catch (err) {
+      reject(err);
+    }
   });
 }
 

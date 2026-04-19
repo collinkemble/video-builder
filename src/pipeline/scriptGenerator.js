@@ -126,6 +126,13 @@ Segment types:
 - "transition" — Brief bridge between scenes, uses b-roll
 - "outro" — Closing, always last, uses b-roll
 
+B-ROLL / TRANSITION PLACEMENT RULES (CRITICAL):
+- Do NOT put a transition/b-roll between scenes that happen immediately after each other in the customer journey. For example: customer sees an Instagram ad and clicks through to the website — these happen back-to-back with no time gap, so NO transition between them.
+- DO put a transition/b-roll between scenes where time passes. For example: customer purchases on the website, and LATER goes to a physical retail store — there is a passage of time here, so include a b-roll transition.
+- The b-roll should visually represent the passage of time or change in context (e.g., "Customer leaving home and heading to the store", "Time passes as the order is being prepared").
+- When in doubt, if two scenes are part of the same immediate interaction flow (same session, same moment), do NOT add b-roll between them.
+- Typically a 3-minute video should have at most 2-3 b-roll transitions (intro, maybe 1-2 time-passage moments, outro).
+
 IMPORTANT: Every PocketSIC scene MUST appear exactly once as a "scene" type segment. Include the scene's sceneId and channel.`;
 
   const response = await ai.models.generateContent({

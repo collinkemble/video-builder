@@ -708,7 +708,7 @@ app.get('/api/pocketsic/projects', async (req, res) => {
   }
 });
 
-// GET /api/pocketsic/projects/:id — fetch single project with scenes
+// GET /api/pocketsic/projects/:id — fetch single project with metadata
 app.get('/api/pocketsic/projects/:id', async (req, res) => {
   try {
     const email = req.query.email;
@@ -729,6 +729,30 @@ app.get('/api/pocketsic/projects/:id', async (req, res) => {
   } catch (err) {
     console.error('PocketSIC proxy failed:', err);
     res.status(500).json({ error: 'Failed to fetch PocketSIC project' });
+  }
+});
+
+// GET /api/pocketsic/projects/:id/scenes — fetch scenes for a project
+app.get('/api/pocketsic/projects/:id/scenes', async (req, res) => {
+  try {
+    const email = req.query.email;
+    if (!email) return res.status(400).json({ error: 'Email required' });
+    if (!POCKETSIC_API_KEY) return res.status(500).json({ error: 'PocketSIC API key not configured on server.' });
+
+    const pResp = await fetch(`${POCKETSIC_BASE_URL}/api/projects/${req.params.id}/scenes?email=${encodeURIComponent(email)}`, {
+      headers: { 'X-API-Key': POCKETSIC_API_KEY },
+    });
+
+    if (!pResp.ok) {
+      const errText = await pResp.text();
+      return res.status(pResp.status).json({ error: `PocketSIC error: ${errText}` });
+    }
+
+    const data = await pResp.json();
+    res.json(data);
+  } catch (err) {
+    console.error('PocketSIC scenes proxy failed:', err);
+    res.status(500).json({ error: 'Failed to fetch PocketSIC scenes' });
   }
 });
 

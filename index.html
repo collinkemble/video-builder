@@ -1412,16 +1412,39 @@ async function createNewVideo() {
   const email = document.getElementById('user-email').textContent;
 
   try {
-    // If project selected, fetch its scene data
+    // If project selected, fetch project metadata + scenes
     let sceneData = null;
     if (projectId) {
-      const projResp = await fetch(`/api/pocketsic/projects/${projectId}?email=${encodeURIComponent(email)}`);
-      if (projResp.ok) {
-        const projData = await projResp.json();
-        const item = projData.item || projData;
-        const data = typeof item.data === 'string' ? JSON.parse(item.data) : (item.data || {});
-        sceneData = data;
-      }
+      // Fetch project metadata and scenes in parallel
+      const [projResp, scenesResp] = await Promise.all([
+        fetch(`/api/pocketsic/projects/${projectId}?email=${encodeURIComponent(email)}`),
+        fetch(`/api/pocketsic/projects/${projectId}/scenes?email=${encodeURIComponent(email)}`),
+      ]);
+
+      const project = projResp.ok ? ((await projResp.json()).project || {}) : {};
+      const scenesArr = scenesResp.ok ? ((await scenesResp.json()).scenes || []) : [];
+
+      // Build sceneData in the format the pipeline expects
+      const bp = project.brand_profile || {};
+      sceneData = {
+        brand_name: project.brand_name || bp.name || '',
+        brand_description: project.brand_description || bp.description || '',
+        persona_name: project.persona_name || bp.personaName || '',
+        persona_description: project.persona || bp.persona || '',
+        synopsis: project.demo_story_synopsis || bp.demoStorySynopsis || '',
+        cx_summary: project.cx_summary || bp.cxSummary || '',
+        scenes: scenesArr.map(s => ({
+          id: s.id,
+          sceneId: s.id,
+          channel: s.channel || '',
+          channel_type: s.channel || '',
+          name: s.name || '',
+          content_summary: s.name || '',
+          description: s.name || '',
+          config: s.config || {},
+          status: s.status || 'draft',
+        })),
+      };
     }
 
     // If script selected, fetch its full data
@@ -1434,8 +1457,9 @@ async function createNewVideo() {
       }
     }
 
-    // Use script brand name if no brand name entered
-    const effectiveBrand = brandName || scriptBrand || null;
+    // Use project/script brand name if no brand name entered
+    const projectBrand = sceneData ? sceneData.brand_name : '';
+    const effectiveBrand = brandName || projectBrand || scriptBrand || null;
 
     const resp = await fetch('/api/videos', {
       method: 'POST',

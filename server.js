@@ -10,6 +10,7 @@ const { migrate } = require('./src/db/migrate');
 const { runPipeline, getPipelineStatus } = require('./src/pipeline/orchestrator');
 const { generateScript } = require('./src/pipeline/scriptGenerator');
 const { getAvailableVoices } = require('./src/pipeline/voiceoverGenerator');
+const { deleteVideoAssets } = require('./src/utils/r2');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -586,23 +587,30 @@ app.put('/api/videos/:id', async (req, res) => {
   }
 });
 
-// DELETE /api/videos/:id — delete a video
+// DELETE /api/videos/:id — delete a video and all its R2 assets
 app.delete('/api/videos/:id', async (req, res) => {
   try {
     const email = req.query.email;
     if (!email) return res.status(400).json({ error: 'Email required' });
 
     const user = await getOrCreateUser(email);
-    const result = await query(
-      'DELETE FROM videos WHERE id = ? AND user_id = ?',
-      [req.params.id, user.id]
-    );
 
-    if (result.affectedRows === 0) {
+    // Verify ownership before deleting
+    const [video] = await query('SELECT id FROM videos WHERE id = ? AND user_id = ?', [req.params.id, user.id]);
+    if (!video) {
       return res.status(404).json({ error: 'Video not found' });
     }
 
-    // TODO: Clean up R2 files for this video
+    // Delete video jobs first (foreign key)
+    await query('DELETE FROM video_jobs WHERE video_id = ?', [req.params.id]);
+
+    // Delete the video record
+    await query('DELETE FROM videos WHERE id = ? AND user_id = ?', [req.params.id, user.id]);
+
+    // Clean up R2 assets in background (don't block the response)
+    deleteVideoAssets(user.id, req.params.id).catch(err => {
+      console.error(`Failed to clean up R2 assets for video ${req.params.id}:`, err.message);
+    });
 
     res.json({ success: true });
   } catch (err) {
@@ -684,8 +692,13 @@ app.post('/api/videos/:id/generate', async (req, res) => {
     }
 
     // Reset status and clear previous jobs
-    await query('UPDATE videos SET status = ?, error = NULL WHERE id = ?', ['draft', req.params.id]);
+    await query('UPDATE videos SET status = ?, error = NULL, video_url = NULL, thumbnail_url = NULL, voiceover_url = NULL WHERE id = ?', ['draft', req.params.id]);
     await query('DELETE FROM video_jobs WHERE video_id = ?', [req.params.id]);
+
+    // Clean up old R2 assets in background before regenerating
+    deleteVideoAssets(user.id, req.params.id).catch(err => {
+      console.warn(`Failed to clean up old R2 assets for video ${req.params.id}:`, err.message);
+    });
 
     // Start pipeline in background (don't await)
     res.json({ success: true, message: 'Pipeline started. Poll /api/videos/:id/status for progress.' });

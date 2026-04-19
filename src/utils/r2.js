@@ -1,4 +1,4 @@
-const { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand } = require('@aws-sdk/client-s3');
+const { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand, ListObjectsV2Command } = require('@aws-sdk/client-s3');
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 const fs = require('fs');
 const path = require('path');
@@ -121,9 +121,53 @@ async function uploadVideoAssets(userId, videoId, files) {
   return result;
 }
 
+/**
+ * Delete all R2 assets for a video (video, thumbnail, voiceover, and any other files under the prefix).
+ * @param {number} userId
+ * @param {number} videoId
+ * @returns {Promise<number>} Number of files deleted
+ */
+async function deleteVideoAssets(userId, videoId) {
+  const client = getS3Client();
+  const prefix = `videos/${userId}/${videoId}/`;
+
+  let deleted = 0;
+  let continuationToken;
+
+  // List and delete all objects under the video prefix
+  do {
+    const listResult = await client.send(new ListObjectsV2Command({
+      Bucket: BUCKET,
+      Prefix: prefix,
+      ContinuationToken: continuationToken,
+    }));
+
+    const objects = listResult.Contents || [];
+
+    for (const obj of objects) {
+      try {
+        await client.send(new DeleteObjectCommand({
+          Bucket: BUCKET,
+          Key: obj.Key,
+        }));
+        deleted++;
+        console.log(`[R2] Deleted: ${obj.Key}`);
+      } catch (err) {
+        console.warn(`[R2] Failed to delete ${obj.Key}: ${err.message}`);
+      }
+    }
+
+    continuationToken = listResult.IsTruncated ? listResult.NextContinuationToken : undefined;
+  } while (continuationToken);
+
+  console.log(`[R2] Cleaned up ${deleted} files for video ${userId}/${videoId}`);
+  return deleted;
+}
+
 module.exports = {
   uploadFile,
   getPresignedUrl,
   deleteFile,
   uploadVideoAssets,
+  deleteVideoAssets,
 };

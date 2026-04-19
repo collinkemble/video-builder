@@ -2,6 +2,30 @@ const ffmpeg = require('fluent-ffmpeg');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const { execSync } = require('child_process');
+
+// ── Find and configure FFmpeg path ──
+function findFfmpegPath() {
+  // Check FFMPEG_PATH env var
+  if (process.env.FFMPEG_PATH && fs.existsSync(process.env.FFMPEG_PATH)) return process.env.FFMPEG_PATH;
+  // Check common Heroku buildpack paths
+  const candidates = ['/app/vendor/ffmpeg/ffmpeg', '/app/.heroku/vendor/ffmpeg/bin/ffmpeg', '/usr/local/bin/ffmpeg', '/usr/bin/ffmpeg'];
+  for (const p of candidates) { if (fs.existsSync(p)) return p; }
+  try { return execSync('which ffmpeg', { encoding: 'utf-8' }).trim(); } catch { /* not found */ }
+  return 'ffmpeg'; // hope it's on PATH
+}
+
+const FFMPEG_PATH = findFfmpegPath();
+console.log(`[Compositor] FFmpeg path: ${FFMPEG_PATH}`);
+ffmpeg.setFfmpegPath(FFMPEG_PATH);
+
+// Check available encoders
+let USE_LIBX264 = true;
+try {
+  const encoders = execSync(`${FFMPEG_PATH} -encoders 2>/dev/null`, { encoding: 'utf-8' });
+  USE_LIBX264 = encoders.includes('libx264');
+  if (!USE_LIBX264) console.warn('[Compositor] libx264 not available, falling back to mpeg4');
+} catch { /* assume available */ }
 
 /**
  * Compose a final video from scene captures, b-roll images, and voiceover audio.
@@ -151,29 +175,49 @@ function buildTimeline(segments, timestamps, sceneImages, brollImages) {
  */
 function createSilentVideo(concatFilePath, outputPath, onProgress) {
   return new Promise((resolve, reject) => {
-    const cmd = ffmpeg()
-      .input(concatFilePath)
-      .inputOptions(['-f', 'concat', '-safe', '0'])
-      .outputOptions([
-        '-vf', 'scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,format=yuv420p',
-        '-c:v', 'libx264',
-        '-preset', 'medium',
-        '-crf', '23',
-        '-r', '30',
-        '-pix_fmt', 'yuv420p',
-        '-movflags', '+faststart',
-      ])
-      .output(outputPath)
-      .on('start', (cmd) => console.log(`[FFmpeg] Silent video: ${cmd.substring(0, 120)}...`))
-      .on('progress', (progress) => {
-        if (onProgress && progress.percent) {
-          onProgress(Math.min(progress.percent * 0.6, 60)); // 0-60% for this step
-        }
-      })
-      .on('error', (err) => reject(new Error(`FFmpeg silent video failed: ${err.message}`)))
-      .on('end', () => resolve());
+    const videoCodecArgs = USE_LIBX264
+      ? ['-c:v', 'libx264', '-preset', 'medium', '-crf', '23']
+      : ['-c:v', 'mpeg4', '-q:v', '5'];
 
-    cmd.run();
+    const args = [
+      '-y',
+      '-f', 'concat', '-safe', '0', '-i', concatFilePath,
+      '-vf', 'scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,format=yuv420p',
+      ...videoCodecArgs,
+      '-r', '30',
+      '-pix_fmt', 'yuv420p',
+      '-movflags', '+faststart',
+      outputPath,
+    ];
+
+    console.log(`[FFmpeg] Running: ${FFMPEG_PATH} ${args.join(' ')}`);
+
+    const { spawn } = require('child_process');
+    const proc = spawn(FFMPEG_PATH, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+
+    let stderr = '';
+    proc.stderr.on('data', (chunk) => {
+      const line = chunk.toString();
+      stderr += line;
+      // Parse progress from FFmpeg output
+      const match = line.match(/time=(\d+:\d+:\d+\.\d+)/);
+      if (match && onProgress) {
+        onProgress(30); // rough progress indicator
+      }
+    });
+
+    proc.on('close', (code) => {
+      if (code === 0) {
+        resolve();
+      } else {
+        console.error(`[FFmpeg] Exit code ${code}. Stderr:\n${stderr}`);
+        reject(new Error(`FFmpeg silent video failed (exit code ${code}): ${stderr.slice(-500)}`));
+      }
+    });
+
+    proc.on('error', (err) => {
+      reject(new Error(`FFmpeg spawn error: ${err.message}`));
+    });
   });
 }
 

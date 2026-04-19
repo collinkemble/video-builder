@@ -365,6 +365,7 @@
         <div class="flex items-center justify-between mb-4">
           <p class="font-bold" style="font-size: 15px; color: #032D60;">Narration Script</p>
           <div class="flex items-center gap-2">
+            <button id="add-segment-btn" onclick="showAddSegmentDialog()" class="hidden cursor-pointer" style="background: #0176D3; color: white; font-size: 12px; font-weight: 700; padding: 5px 12px; border-radius: 8px; border: none;">+ Add Section</button>
             <button id="save-script-btn" onclick="saveNarrationScript()" class="hidden cursor-pointer" style="background: #16A34A; color: white; font-size: 12px; font-weight: 700; padding: 5px 12px; border-radius: 8px; border: none;">💾 Save Script</button>
             <button id="gen-script-btn" onclick="generateScriptOnly()" class="cursor-pointer" style="background: #7C3AED; color: white; font-size: 12px; font-weight: 700; padding: 5px 12px; border-radius: 8px; border: none;">📝 Generate Script</button>
           </div>
@@ -373,6 +374,52 @@
           <p style="color: #999; font-size: 14px;">No narration script yet. Import scenes from a PocketSIC project to auto-generate one.</p>
         </div>
         <div id="script-segments" class="hidden"></div>
+      </div>
+
+      <!-- Add Segment Dialog -->
+      <div id="add-segment-dialog" class="hidden" style="position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 999; display: flex; align-items: center; justify-content: center;">
+        <div style="background: white; border-radius: 16px; padding: 28px; width: 420px; max-width: 90vw; box-shadow: 0 20px 60px rgba(0,0,0,0.2);">
+          <p class="font-bold mb-4" style="font-size: 16px; color: #032D60;">Add Section</p>
+          <div class="mb-3">
+            <label style="font-size: 12px; font-weight: 600; color: #555; display: block; margin-bottom: 4px;">Section Type</label>
+            <select id="add-seg-type" onchange="onAddSegTypeChange()" style="width: 100%; padding: 8px 10px; border: 1px solid #e5e7eb; border-radius: 8px; font-size: 14px;">
+              <option value="intro">Intro</option>
+              <option value="transition" selected>Transition (B-Roll)</option>
+              <option value="scene">Scene (PocketSIC)</option>
+              <option value="outro">Outro</option>
+            </select>
+          </div>
+          <div id="add-seg-channel-row" class="mb-3 hidden">
+            <label style="font-size: 12px; font-weight: 600; color: #555; display: block; margin-bottom: 4px;">Channel Name</label>
+            <input id="add-seg-channel" type="text" placeholder="e.g. site, insta, email" style="width: 100%; padding: 8px 10px; border: 1px solid #e5e7eb; border-radius: 8px; font-size: 14px; box-sizing: border-box;">
+          </div>
+          <div id="add-seg-sceneid-row" class="mb-3 hidden">
+            <label style="font-size: 12px; font-weight: 600; color: #555; display: block; margin-bottom: 4px;">Scene ID</label>
+            <input id="add-seg-sceneid" type="number" placeholder="e.g. 1" style="width: 100%; padding: 8px 10px; border: 1px solid #e5e7eb; border-radius: 8px; font-size: 14px; box-sizing: border-box;">
+          </div>
+          <div id="add-seg-broll-row" class="mb-3">
+            <label style="font-size: 12px; font-weight: 600; color: #555; display: block; margin-bottom: 4px;">B-Roll Description</label>
+            <input id="add-seg-broll" type="text" placeholder="e.g. Customer walking through a shopping district" style="width: 100%; padding: 8px 10px; border: 1px solid #e5e7eb; border-radius: 8px; font-size: 14px; box-sizing: border-box;">
+          </div>
+          <div class="mb-3">
+            <label style="font-size: 12px; font-weight: 600; color: #555; display: block; margin-bottom: 4px;">Narration</label>
+            <textarea id="add-seg-narration" rows="3" placeholder="What should the narrator say during this section?" style="width: 100%; padding: 8px 10px; border: 1px solid #e5e7eb; border-radius: 8px; font-size: 14px; font-family: inherit; resize: vertical; box-sizing: border-box;"></textarea>
+          </div>
+          <div class="mb-3">
+            <label style="font-size: 12px; font-weight: 600; color: #555; display: block; margin-bottom: 4px;">Duration (seconds)</label>
+            <input id="add-seg-duration" type="number" value="10" min="4" max="30" style="width: 80px; padding: 8px 10px; border: 1px solid #e5e7eb; border-radius: 8px; font-size: 14px;">
+          </div>
+          <div id="add-seg-insert-row" class="mb-4">
+            <label style="font-size: 12px; font-weight: 600; color: #555; display: block; margin-bottom: 4px;">Insert Position</label>
+            <select id="add-seg-position" style="width: 100%; padding: 8px 10px; border: 1px solid #e5e7eb; border-radius: 8px; font-size: 14px;">
+              <option value="end">At the end</option>
+            </select>
+          </div>
+          <div class="flex gap-2 justify-end">
+            <button onclick="hideAddSegmentDialog()" class="cursor-pointer" style="background: #f3f4f6; color: #333; font-size: 13px; font-weight: 600; padding: 8px 16px; border-radius: 8px; border: none;">Cancel</button>
+            <button onclick="addSegment()" class="cursor-pointer" style="background: #0176D3; color: white; font-size: 13px; font-weight: 600; padding: 8px 16px; border-radius: 8px; border: none;">Add Section</button>
+          </div>
+        </div>
       </div>
 
       <!-- Metadata -->
@@ -1222,17 +1269,20 @@ function renderScriptWriterCard(video) {
 function renderScript(script) {
   const container = document.getElementById('script-segments');
   const empty = document.getElementById('script-empty');
+  const addBtn = document.getElementById('add-segment-btn');
 
   const data = typeof script === 'string' ? JSON.parse(script || 'null') : script;
   if (!data || !data.segments || data.segments.length === 0) {
     container.classList.add('hidden');
     empty.classList.remove('hidden');
+    addBtn.classList.add('hidden');
     document.getElementById('save-script-btn').classList.add('hidden');
     return;
   }
 
   empty.classList.add('hidden');
   container.classList.remove('hidden');
+  addBtn.classList.remove('hidden');
 
   // Update button text since script exists
   document.getElementById('gen-script-btn').textContent = '🔄 Regenerate Script';
@@ -1240,15 +1290,21 @@ function renderScript(script) {
   // Store the script data for editing
   window._currentScript = data;
 
+  const total = data.segments.length;
   container.innerHTML = data.segments.map((seg, i) => {
     const typeColors = { intro: '#0176D3', scene: '#032D60', transition: '#6B7280', outro: '#0176D3' };
     const typeColor = typeColors[seg.type] || '#888';
+    const typeLabel = seg.type === 'scene' ? `scene${seg.channel ? ' — ' + esc(seg.channel) : ''}` : seg.type;
     return `
-    <div style="padding: 12px 0; ${i < data.segments.length - 1 ? 'border-bottom: 1px solid #f0f0f0;' : ''}">
-      <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 6px;">
-        <span style="font-size: 10px; font-weight: 700; text-transform: uppercase; color: ${typeColor}; letter-spacing: 0.04em;">${esc(seg.type)}</span>
-        ${seg.channel ? '<span style="font-size: 10px; color: #aaa;">— ' + esc(seg.channel) + '</span>' : ''}
-        <span style="font-size: 10px; color: #ccc; margin-left: auto;">~${seg.estimatedDuration || '?'}s</span>
+    <div class="script-seg-row" data-seg-index="${i}" style="padding: 12px 0; ${i < total - 1 ? 'border-bottom: 1px solid #f0f0f0;' : ''}">
+      <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 6px;">
+        <span style="font-size: 10px; font-weight: 700; text-transform: uppercase; color: ${typeColor}; letter-spacing: 0.04em;">${esc(typeLabel)}</span>
+        <span style="font-size: 10px; color: #ccc;">~${seg.estimatedDuration || '?'}s</span>
+        <span style="margin-left: auto; display: flex; gap: 2px;">
+          ${i > 0 ? `<button onclick="moveSegment(${i}, -1)" title="Move up" class="cursor-pointer" style="background: none; border: 1px solid #e5e7eb; border-radius: 6px; width: 26px; height: 26px; display: flex; align-items: center; justify-content: center; font-size: 12px; color: #666;">↑</button>` : ''}
+          ${i < total - 1 ? `<button onclick="moveSegment(${i}, 1)" title="Move down" class="cursor-pointer" style="background: none; border: 1px solid #e5e7eb; border-radius: 6px; width: 26px; height: 26px; display: flex; align-items: center; justify-content: center; font-size: 12px; color: #666;">↓</button>` : ''}
+          <button onclick="deleteSegment(${i})" title="Delete section" class="cursor-pointer" style="background: none; border: 1px solid #FEE2E2; border-radius: 6px; width: 26px; height: 26px; display: flex; align-items: center; justify-content: center; font-size: 12px; color: #EF4444;">✕</button>
+        </span>
       </div>
       <textarea data-seg-index="${i}" oninput="onScriptSegmentEdit()" rows="3" style="width: 100%; font-size: 14px; color: #333; line-height: 1.5; border: 1px solid #e5e7eb; border-radius: 8px; padding: 8px 10px; resize: vertical; font-family: inherit;">${esc(seg.narration || '')}</textarea>
     </div>`;
@@ -1257,6 +1313,131 @@ function renderScript(script) {
 
 function onScriptSegmentEdit() {
   document.getElementById('save-script-btn').classList.remove('hidden');
+}
+
+// ── Script segment management ──
+
+function collectNarrationEdits() {
+  // Sync any in-progress textarea edits back to _currentScript before structural changes
+  const textareas = document.querySelectorAll('#script-segments textarea[data-seg-index]');
+  textareas.forEach(ta => {
+    const idx = parseInt(ta.dataset.segIndex, 10);
+    if (window._currentScript && window._currentScript.segments[idx]) {
+      window._currentScript.segments[idx].narration = ta.value;
+    }
+  });
+}
+
+function renumberSegments() {
+  if (!window._currentScript) return;
+  window._currentScript.segments.forEach((seg, i) => { seg.order = i + 1; });
+  window._currentScript.totalSegments = window._currentScript.segments.length;
+}
+
+function moveSegment(index, direction) {
+  if (!window._currentScript) return;
+  collectNarrationEdits();
+  const segs = window._currentScript.segments;
+  const newIdx = index + direction;
+  if (newIdx < 0 || newIdx >= segs.length) return;
+  // Swap
+  [segs[index], segs[newIdx]] = [segs[newIdx], segs[index]];
+  renumberSegments();
+  renderScript(window._currentScript);
+  document.getElementById('save-script-btn').classList.remove('hidden');
+}
+
+function deleteSegment(index) {
+  if (!window._currentScript) return;
+  const seg = window._currentScript.segments[index];
+  const label = seg.type === 'scene' ? `Scene — ${seg.channel || seg.sceneId}` : seg.type;
+  if (!confirm(`Delete "${label}" section? This cannot be undone.`)) return;
+  collectNarrationEdits();
+  window._currentScript.segments.splice(index, 1);
+  renumberSegments();
+  renderScript(window._currentScript);
+  document.getElementById('save-script-btn').classList.remove('hidden');
+}
+
+function showAddSegmentDialog() {
+  if (!window._currentScript) return;
+  // Populate insert position dropdown
+  const posSelect = document.getElementById('add-seg-position');
+  const segs = window._currentScript.segments;
+  posSelect.innerHTML = '<option value="end">At the end</option>' +
+    segs.map((s, i) => {
+      const label = s.type === 'scene' ? `Scene — ${s.channel || s.sceneId}` : s.type;
+      return `<option value="${i}">Before: ${label} (#${i + 1})</option>`;
+    }).join('');
+  // Reset fields
+  document.getElementById('add-seg-type').value = 'transition';
+  document.getElementById('add-seg-channel').value = '';
+  document.getElementById('add-seg-sceneid').value = '';
+  document.getElementById('add-seg-broll').value = '';
+  document.getElementById('add-seg-narration').value = '';
+  document.getElementById('add-seg-duration').value = '10';
+  onAddSegTypeChange();
+  document.getElementById('add-segment-dialog').classList.remove('hidden');
+  document.getElementById('add-segment-dialog').style.display = 'flex';
+}
+
+function hideAddSegmentDialog() {
+  document.getElementById('add-segment-dialog').classList.add('hidden');
+  document.getElementById('add-segment-dialog').style.display = 'none';
+}
+
+function onAddSegTypeChange() {
+  const type = document.getElementById('add-seg-type').value;
+  const isScene = type === 'scene';
+  const isBroll = !isScene;
+  document.getElementById('add-seg-channel-row').classList.toggle('hidden', !isScene);
+  document.getElementById('add-seg-sceneid-row').classList.toggle('hidden', !isScene);
+  document.getElementById('add-seg-broll-row').classList.toggle('hidden', !isBroll);
+}
+
+function addSegment() {
+  if (!window._currentScript) return;
+  collectNarrationEdits();
+
+  const type = document.getElementById('add-seg-type').value;
+  const narration = document.getElementById('add-seg-narration').value.trim();
+  const duration = parseInt(document.getElementById('add-seg-duration').value, 10) || 10;
+  const posValue = document.getElementById('add-seg-position').value;
+
+  const newSeg = {
+    order: 0, // will be renumbered
+    type,
+    sceneId: null,
+    channel: null,
+    visualType: type === 'scene' ? 'scene_capture' : 'broll',
+    brollDescription: null,
+    narration: narration || '',
+    estimatedDuration: Math.max(duration, 4),
+  };
+
+  if (type === 'scene') {
+    const sceneId = parseInt(document.getElementById('add-seg-sceneid').value, 10);
+    const channel = document.getElementById('add-seg-channel').value.trim();
+    if (!sceneId) { alert('Please enter a Scene ID.'); return; }
+    newSeg.sceneId = sceneId;
+    newSeg.channel = channel || 'default';
+  } else {
+    const broll = document.getElementById('add-seg-broll').value.trim();
+    newSeg.brollDescription = broll || `Cinematic ${type} b-roll footage`;
+  }
+
+  // Insert at position
+  if (posValue === 'end') {
+    window._currentScript.segments.push(newSeg);
+  } else {
+    const insertIdx = parseInt(posValue, 10);
+    window._currentScript.segments.splice(insertIdx, 0, newSeg);
+  }
+
+  renumberSegments();
+  renderScript(window._currentScript);
+  document.getElementById('save-script-btn').classList.remove('hidden');
+  hideAddSegmentDialog();
 }
 
 async function generateScriptOnly() {
@@ -1327,14 +1508,9 @@ async function saveNarrationScript() {
   btn.textContent = '💾 Saving...';
 
   try {
-    // Collect edited narration from textareas
-    const textareas = document.querySelectorAll('#script-segments textarea[data-seg-index]');
-    textareas.forEach(ta => {
-      const idx = parseInt(ta.dataset.segIndex, 10);
-      if (window._currentScript.segments[idx]) {
-        window._currentScript.segments[idx].narration = ta.value;
-      }
-    });
+    // Sync textarea edits and renumber orders
+    collectNarrationEdits();
+    renumberSegments();
 
     const resp = await fetch(`/api/videos/${currentVideoId}`, {
       method: 'PUT',

@@ -81,10 +81,18 @@ async function setupMessagingInteraction(page) {
 /**
  * WEBSITE scenes (web chat, Agentforce):
  *   - First: click #chatFab or #agentBanner to open the chat panel
- *   - Then: click #chatInputArea to advance messages
+ *   - Then: click #chatInputArea to advance messages via advanceChat()
  *   - Customer messages need 2 clicks (1 to start typing animation, 1 to "send")
  *   - Agent messages auto-advance after a customer message is sent (no clicks needed)
  *   - So total clicks = 1 (open) + 2 per customer message
+ *
+ * Timing is CRITICAL — different delays for different click types:
+ *   - After open → start typing: 800ms (just CSS transition)
+ *   - After start typing → send: 4s (typing animation ~40ms/char × 80-100 chars)
+ *   - After send → next start typing: 6s (agent auto-advance chain with typing indicators)
+ *
+ * Returns a clickSchedule array with exact frame numbers for each click,
+ * instead of a uniform interval.
  */
 async function setupWebsiteInteraction(page) {
   const chatInfo = await page.evaluate(() => {
@@ -120,14 +128,48 @@ async function setupWebsiteInteraction(page) {
     clickLimit = 3;
   }
 
-  // Interval must be long enough for:
-  //   - Chat panel slide-in animation (400ms)
-  //   - Customer typing animation (~40ms/char × 80 chars ≈ 3.2s)
-  //   - Agent auto-advance typing indicators (~1-2s)
-  // Use 4s to comfortably cover typing animation + agent response
-  const clickInterval = 4000;
-  console.log(`[SceneCapture] Website: ${chatInfo.totalMsgs} msgs (${chatInfo.customerMsgs} customer), clickLimit=${clickLimit}, interval=${clickInterval}ms`);
+  // Build a click schedule with variable timing:
+  //   - Click 0 (open chat): at 2.0s
+  //   - Click 1 (start typing): at 2.8s  (+0.8s for CSS transition)
+  //   - Click 2 (send message): at 6.8s  (+4.0s for typing animation)
+  //   - Click 3 (start typing): at 12.8s (+6.0s for agent auto-advance chain)
+  //   - Click 4 (send message): at 16.8s (+4.0s for typing animation)
+  //   - Click 5 (start typing): at 22.8s (+6.0s for agent auto-advance)
+  //   - ... and so on
+  const OPEN_DELAY = 0;       // click 0 starts at firstClickTime
+  const TRANSITION_DELAY = 0.8; // after open → first typing click
+  const TYPING_DELAY = 4.0;    // after start typing → send click
+  const AGENT_DELAY = 6.0;     // after send → next start typing click
 
+  const clickSchedule = [];
+  let timeOffset = 2.0; // first click at 2 seconds
+
+  for (let c = 0; c < clickLimit; c++) {
+    clickSchedule.push({
+      frame: Math.round(timeOffset * FRAME_RATE),
+      clickIndex: c,
+    });
+
+    if (c === 0) {
+      // After open chat → first typing click
+      timeOffset += TRANSITION_DELAY;
+    } else if (c % 2 === 1) {
+      // After start typing → send click (odd → even)
+      timeOffset += TYPING_DELAY;
+    } else {
+      // After send → next start typing (even → odd)
+      timeOffset += AGENT_DELAY;
+    }
+  }
+
+  console.log(`[SceneCapture] Website: ${chatInfo.totalMsgs} msgs (${chatInfo.customerMsgs} customer), clickLimit=${clickLimit}`);
+  console.log(`[SceneCapture] Website click schedule: ${clickSchedule.map(c => `click${c.clickIndex}@${(c.frame/FRAME_RATE).toFixed(1)}s`).join(', ')}`);
+
+  // Attach click schedule to chatInfo so the capture loop can access it
+  chatInfo.clickSchedule = clickSchedule;
+
+  // Use a dummy interval — the actual timing is in chatInfo.clickSchedule
+  const clickInterval = 4000;
   return { clickLimit, clickInterval, clickFn: 'website', chatInfo };
 }
 
@@ -326,7 +368,7 @@ async function captureScene({ sceneId, channel, duration, outputDir, browser }) 
     browser = await launchBrowser();
   }
 
-  const captureDuration = Math.min(Math.max(duration || 10, MIN_CAPTURE_SECS), MAX_CAPTURE_SECS);
+  let captureDuration = Math.min(Math.max(duration || 10, MIN_CAPTURE_SECS), MAX_CAPTURE_SECS);
   const frameDir = path.join(outputDir || os.tmpdir(), `frames_${sceneId}_${Date.now()}`);
   fs.mkdirSync(frameDir, { recursive: true });
 
@@ -379,26 +421,38 @@ async function captureScene({ sceneId, channel, duration, outputDir, browser }) 
 
     if (interactive) {
       const sceneType = getSceneType(channel);
-      let strategy;
+      let interactionStrategy;
 
       switch (sceneType) {
         case 'messaging':
-          strategy = await setupMessagingInteraction(page);
+          interactionStrategy = await setupMessagingInteraction(page);
           break;
         case 'website':
-          strategy = await setupWebsiteInteraction(page);
+          interactionStrategy = await setupWebsiteInteraction(page);
           break;
         case 'retail':
-          strategy = await setupRetailInteraction(page);
+          interactionStrategy = await setupRetailInteraction(page);
           break;
         default:
-          strategy = { clickLimit: 4, clickInterval: 2500, clickFn: 'generic' };
+          interactionStrategy = { clickLimit: 4, clickInterval: 2500, clickFn: 'generic' };
       }
 
-      clickLimit = strategy.clickLimit;
-      clickFn = strategy.clickFn;
-      chatInfo = strategy.chatInfo;
-      clickIntervalSecs = strategy.clickInterval / 1000;
+      clickLimit = interactionStrategy.clickLimit;
+      clickFn = interactionStrategy.clickFn;
+      chatInfo = interactionStrategy.chatInfo;
+      clickIntervalSecs = interactionStrategy.clickInterval / 1000;
+
+      // For website scenes with a click schedule, extend capture duration
+      // to ensure all clicks fit within the recording window
+      if (clickFn === 'website' && chatInfo && chatInfo.clickSchedule && chatInfo.clickSchedule.length > 0) {
+        const lastClickFrame = chatInfo.clickSchedule[chatInfo.clickSchedule.length - 1].frame;
+        const lastClickTime = lastClickFrame / FRAME_RATE;
+        const minDuration = lastClickTime + 8; // 8s buffer after last click for final agent response
+        if (minDuration > captureDuration) {
+          console.log(`[SceneCapture] Extending capture from ${captureDuration}s to ${minDuration.toFixed(1)}s to fit click schedule`);
+          captureDuration = Math.min(minDuration, 90); // hard cap at 90s to prevent memory issues
+        }
+      }
     } else {
       console.log(`[SceneCapture] Passive mode for channel "${channel}" — no clicks, recording native animations`);
     }
@@ -411,19 +465,31 @@ async function captureScene({ sceneId, channel, duration, outputDir, browser }) 
     const totalFrames = Math.ceil(captureDuration * FRAME_RATE);
     const intervalMs = 1000 / FRAME_RATE;
 
-    // Pre-compute which frames should trigger a click
-    // First click at 2s, then every clickIntervalSecs after that
-    const firstClickFrame = Math.round(2 * FRAME_RATE); // frame at 2 seconds
-    const clickFrameInterval = Math.round(clickIntervalSecs * FRAME_RATE);
+    // Build click frame set — either from a custom clickSchedule (website scenes
+    // need variable timing) or from a uniform interval (messaging/generic scenes).
     const clickFrames = new Set();
-    if (interactive) {
+    const clickStrategy = interactive ? (
+      clickFn === 'website' && chatInfo && chatInfo.clickSchedule
+        ? 'schedule'
+        : 'uniform'
+    ) : 'none';
+
+    if (clickStrategy === 'schedule') {
+      // Website scene: use pre-computed schedule with variable timing
+      for (const entry of chatInfo.clickSchedule) {
+        clickFrames.add(entry.frame);
+      }
+    } else if (clickStrategy === 'uniform') {
+      // Messaging/generic scenes: uniform interval
+      const firstClickFrame = Math.round(2 * FRAME_RATE);
+      const clickFrameInterval = Math.round(clickIntervalSecs * FRAME_RATE);
       for (let c = 0; c < clickLimit; c++) {
         clickFrames.add(firstClickFrame + c * clickFrameInterval);
       }
     }
 
     console.log(`[SceneCapture] Capturing ${totalFrames} frames at ${FRAME_RATE}fps` +
-      (interactive ? `, clicks at frames: [${[...clickFrames].join(',')}]` : ' (passive)') + '...');
+      (interactive ? `, clicks at frames: [${[...clickFrames].sort((a,b) => a-b).join(',')}] (${clickStrategy})` : ' (passive)') + '...');
 
     let capturedFrames = 0;
     for (let i = 0; i < totalFrames; i++) {

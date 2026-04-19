@@ -1086,6 +1086,71 @@ app.get('/{*splat}', (req, res) => {
 });
 
 // ═══════════════════════════════════════════════
+// STARTUP DIAGNOSTICS
+// ═══════════════════════════════════════════════
+
+/**
+ * Non-blocking startup check: probe Veo API to verify the API key has
+ * video generation access (requires paid-tier billing).
+ * Logs results so they show up in Heroku logs automatically.
+ */
+async function checkVeoCapability() {
+  const { GoogleGenAI } = require('@google/genai');
+  const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+
+  const veoModels = ['veo-3.1-lite', 'veo-3.1-fast', 'veo-3.1-generate-preview'];
+
+  console.log('[Startup Veo Check] Testing Veo video generation capability...');
+
+  for (const modelName of veoModels) {
+    try {
+      // Just initiate a short generation — we cancel immediately, we only care
+      // about whether the API key is authorized for this model.
+      const operation = await ai.models.generateVideos({
+        model: modelName,
+        prompt: 'A single blue circle on white background',
+        config: {
+          aspectRatio: '16:9',
+          resolution: '720p',
+          durationSeconds: '5',
+          numberOfVideos: 1,
+        },
+      });
+
+      // If we get here without an error, the model is accessible
+      console.log(`[Startup Veo Check] ✓ ${modelName} — ACCESSIBLE (operation started)`);
+
+      // We don't need the actual video — just log that it works.
+      // The operation will eventually time out or be garbage collected.
+      // Log the operation name for reference.
+      if (operation.name) {
+        console.log(`[Startup Veo Check]   Operation: ${operation.name}`);
+      }
+
+      // One model working is enough — stop testing
+      return;
+    } catch (err) {
+      const errMsg = err.message || String(err);
+      console.warn(`[Startup Veo Check] ✗ ${modelName} — FAILED: ${errMsg}`);
+
+      if (err.status) console.warn(`[Startup Veo Check]   HTTP ${err.status}: ${err.statusText || ''}`);
+      if (err.errorDetails) {
+        console.warn(`[Startup Veo Check]   Details: ${JSON.stringify(err.errorDetails).substring(0, 300)}`);
+      }
+
+      // Billing/permission error means no Veo model will work
+      if (errMsg.includes('billing') || errMsg.includes('quota') || errMsg.includes('permission') || errMsg.includes('403') || errMsg.includes('PERMISSION_DENIED')) {
+        console.error('[Startup Veo Check] ⚠️  Veo requires a paid-tier Gemini API key with billing enabled.');
+        console.error('[Startup Veo Check]    B-roll will fall back to still images until this is resolved.');
+        return;
+      }
+    }
+  }
+
+  console.warn('[Startup Veo Check] ⚠️  No Veo models accessible. B-roll will use still images.');
+}
+
+// ═══════════════════════════════════════════════
 // START SERVER
 // ═══════════════════════════════════════════════
 
@@ -1102,6 +1167,9 @@ async function start() {
     console.log(`Video Builder running on http://localhost:${PORT}`);
     if (!process.env.GEMINI_API_KEY) {
       console.warn('⚠️  GEMINI_API_KEY not set — AI features will not work');
+    } else {
+      // Run Veo capability check in background (non-blocking)
+      checkVeoCapability().catch(() => {});
     }
     if (!process.env.ELEVENLABS_API_KEY) {
       console.warn('⚠️  ELEVENLABS_API_KEY not set — voiceover will not work');

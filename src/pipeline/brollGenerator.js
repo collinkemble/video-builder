@@ -294,37 +294,38 @@ async function generateBroll({ description, brandName, outputDir, segmentType = 
  * @returns {Promise<Array>} Array of { order, imagePath }
  */
 async function generateAllBroll(segments, brandName, outputDir, onProgress) {
-  const results = [];
   let videoCount = 0;
   let imageCount = 0;
 
-  for (let i = 0; i < segments.length; i++) {
-    const seg = segments[i];
-    console.log(`[B-Roll] Generating ${i + 1}/${segments.length} (${seg.type || 'broll'}): ${seg.brollDescription?.substring(0, 50)}...`);
+  // Launch ALL b-roll generations in parallel — Veo clips take ~60-70s each,
+  // so parallel execution cuts total time from ~6min to ~1.5min for 5 clips.
+  console.log(`[B-Roll] Launching ${segments.length} generations in parallel...`);
+  let completed = 0;
 
-    const mediaPath = await generateBroll({
+  const promises = segments.map((seg, i) => {
+    console.log(`[B-Roll] Starting ${i + 1}/${segments.length} (${seg.type || 'broll'}): ${seg.brollDescription?.substring(0, 50)}...`);
+
+    return generateBroll({
       description: seg.brollDescription || 'Professional lifestyle image',
       brandName,
       outputDir,
       segmentType: seg.type || '',
       segmentChannel: seg.channel || '',
+    }).then(mediaPath => {
+      completed++;
+      if (mediaPath.endsWith('.mp4')) {
+        videoCount++;
+        console.log(`[B-Roll] ${completed}/${segments.length} done: VIDEO clip → ${path.basename(mediaPath)}`);
+      } else {
+        imageCount++;
+        console.log(`[B-Roll] ${completed}/${segments.length} done: still IMAGE → ${path.basename(mediaPath)}`);
+      }
+      if (onProgress) onProgress(completed, segments.length);
+      return { order: seg.order, imagePath: mediaPath };
     });
+  });
 
-    if (mediaPath.endsWith('.mp4')) {
-      videoCount++;
-      console.log(`[B-Roll] ${i + 1}/${segments.length}: Got VIDEO clip → ${path.basename(mediaPath)}`);
-    } else {
-      imageCount++;
-      console.log(`[B-Roll] ${i + 1}/${segments.length}: Got still IMAGE → ${path.basename(mediaPath)}`);
-    }
-
-    results.push({
-      order: seg.order,
-      imagePath: mediaPath,  // kept as 'imagePath' for backward compat with compositor
-    });
-
-    if (onProgress) onProgress(i + 1, segments.length);
-  }
+  const results = await Promise.all(promises);
 
   console.log(`[B-Roll] Complete: ${videoCount} video clips, ${imageCount} still images out of ${segments.length} segments`);
   return results;

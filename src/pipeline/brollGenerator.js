@@ -51,17 +51,18 @@ async function pollVeoOperation(ai, operation, label, maxWait = 300000) {
 
 /**
  * Generate a b-roll VIDEO clip from a description using Google Veo.
- * For segments longer than 8s, uses the Veo extend API to add 7s at a time.
- * Returns path to an MP4 file.
+ * Generates a single 8-second clip (Veo maximum per generation).
+ * The compositor handles looping if the segment needs to be longer.
  *
  * @param {object} params
  * @param {string} params.description - What the clip should show
  * @param {string} params.brandName - Brand name for context
  * @param {string} params.outputDir - Directory to save the clip
- * @param {number} params.targetDuration - Desired clip length in seconds (default 8)
+ * @param {string} params.segmentType - Segment type (intro/transition/outro) for prompt context
+ * @param {string} params.segmentChannel - Channel name for prompt context
  * @returns {Promise<string|null>} Path to MP4 clip, or null if video gen failed
  */
-async function generateBrollVideo({ description, brandName, outputDir, targetDuration = 8, segmentType = '', segmentChannel = '' }) {
+async function generateBrollVideo({ description, brandName, outputDir, segmentType = '', segmentChannel = '' }) {
   const ai = getGenAI();
 
   // Add context about the segment role for more fitting footage
@@ -79,9 +80,10 @@ async function generateBrollVideo({ description, brandName, outputDir, targetDur
   const modelName = 'veo-3.1-generate-preview';
 
   try {
-    console.log(`[B-Roll Video] Generating ${targetDuration}s clip with ${modelName}: "${description.substring(0, 60)}..."`);
+    console.log(`[B-Roll Video] Generating 8s clip with ${modelName}: "${description.substring(0, 60)}..."`);
 
-    // Generate initial 8-second clip (max for a single generation)
+    // Generate a single 8-second clip (max for one Veo generation)
+    // The compositor uses -stream_loop to seamlessly loop it if the segment is longer
     let operation = await ai.models.generateVideos({
       model: modelName,
       prompt,
@@ -94,62 +96,18 @@ async function generateBrollVideo({ description, brandName, outputDir, targetDur
       },
     });
 
-    operation = await pollVeoOperation(ai, operation, 'initial generation');
+    operation = await pollVeoOperation(ai, operation, 'generation');
 
     if (!operation.done) return null;
 
     // Extract video
-    let generatedVideo = operation.response?.generatedVideos?.[0];
+    const generatedVideo = operation.response?.generatedVideos?.[0];
     if (!generatedVideo || !generatedVideo.video) {
       console.warn(`[B-Roll Video] ${modelName} completed but no video in response.`);
       return null;
     }
 
-    // If target duration is > 8s, use the extend API to add 7s per hop
-    // Each extension adds 7 seconds; max input is 141s
-    let currentDuration = 8;
-    let extensionAttempts = 0;
-    const maxExtensions = Math.ceil((targetDuration - 8) / 7);
-
-    while (currentDuration < targetDuration && extensionAttempts < maxExtensions) {
-      extensionAttempts++;
-      console.log(`[B-Roll Video] Extending clip (hop ${extensionAttempts}): ${currentDuration}s → ~${currentDuration + 7}s (target: ${targetDuration}s)`);
-
-      try {
-        let extendOp = await ai.models.generateVideos({
-          model: modelName,
-          video: generatedVideo.video,
-          prompt: `Continue the same cinematic b-roll scene smoothly: ${description}.\n${VIDEO_PROMPT_RULES}`,
-          config: {
-            numberOfVideos: 1,
-            resolution: '720p',
-          },
-        });
-
-        extendOp = await pollVeoOperation(ai, extendOp, `extension hop ${extensionAttempts}`);
-
-        if (!extendOp.done) {
-          console.warn(`[B-Roll Video] Extension hop ${extensionAttempts} timed out. Using ${currentDuration}s clip.`);
-          break;
-        }
-
-        const extendedVideo = extendOp.response?.generatedVideos?.[0];
-        if (!extendedVideo || !extendedVideo.video) {
-          console.warn(`[B-Roll Video] Extension hop ${extensionAttempts} returned no video. Using ${currentDuration}s clip.`);
-          break;
-        }
-
-        generatedVideo = extendedVideo;
-        currentDuration += 7;
-        console.log(`[B-Roll Video] Extended to ~${currentDuration}s.`);
-
-      } catch (extErr) {
-        console.warn(`[B-Roll Video] Extension hop ${extensionAttempts} failed: ${extErr.message}. Using ${currentDuration}s clip.`);
-        break;
-      }
-    }
-
-    // Download the final video file
+    // Download the video file
     const filename = `broll_video_${Date.now()}.mp4`;
     const outputPath = path.join(outputDir || os.tmpdir(), filename);
 
@@ -159,7 +117,7 @@ async function generateBrollVideo({ description, brandName, outputDir, targetDur
     });
 
     const stats = fs.statSync(outputPath);
-    console.log(`[B-Roll Video] Final clip: ${outputPath} (~${currentDuration}s, ${(stats.size / 1024).toFixed(1)}KB)`);
+    console.log(`[B-Roll Video] Generated: ${outputPath} (8s, ${(stats.size / 1024).toFixed(1)}KB)`);
     return outputPath;
 
   } catch (err) {
@@ -173,7 +131,7 @@ async function generateBrollVideo({ description, brandName, outputDir, targetDur
     }
   }
 
-  console.warn('[B-Roll Video] All Veo models failed. Falling back to image generation.');
+  console.warn('[B-Roll Video] Veo failed. Falling back to image generation.');
   return null;
 }
 
@@ -316,9 +274,9 @@ function truncate(str, maxLen) {
  * @param {number} params.targetDuration - Desired clip length in seconds (default 8)
  * @returns {Promise<string>} Path to MP4 video or PNG image
  */
-async function generateBroll({ description, brandName, outputDir, targetDuration = 8, segmentType = '', segmentChannel = '' }) {
-  // Try video generation first (Veo) — with extend for longer clips
-  const videoPath = await generateBrollVideo({ description, brandName, outputDir, targetDuration, segmentType, segmentChannel });
+async function generateBroll({ description, brandName, outputDir, segmentType = '', segmentChannel = '' }) {
+  // Try video generation first (Veo) — generates 8s clips
+  const videoPath = await generateBrollVideo({ description, brandName, outputDir, segmentType, segmentChannel });
   if (videoPath) return videoPath;
 
   // Fallback to image generation (Gemini Imagen)
@@ -340,15 +298,12 @@ async function generateAllBroll(segments, brandName, outputDir, onProgress) {
 
   for (let i = 0; i < segments.length; i++) {
     const seg = segments[i];
-    // Ensure b-roll is at least 8s (Veo minimum) — short narration shouldn't mean short visuals
-    const targetDuration = Math.max(seg.estimatedDuration || 10, 8);
-    console.log(`[B-Roll] Generating ${i + 1}/${segments.length} (${seg.type || 'broll'}, target ${targetDuration}s): ${seg.brollDescription?.substring(0, 50)}...`);
+    console.log(`[B-Roll] Generating ${i + 1}/${segments.length} (${seg.type || 'broll'}): ${seg.brollDescription?.substring(0, 50)}...`);
 
     const mediaPath = await generateBroll({
       description: seg.brollDescription || 'Professional lifestyle image',
       brandName,
       outputDir,
-      targetDuration,
       segmentType: seg.type || '',
       segmentChannel: seg.channel || '',
     });

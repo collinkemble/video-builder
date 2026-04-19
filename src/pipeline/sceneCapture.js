@@ -371,8 +371,11 @@ async function captureScene({ sceneId, channel, duration, outputDir, browser }) 
 
     // ── Set up channel-specific interaction strategy ──
     const interactive = shouldInteract(channel);
-    let interactionTimer = null;
     let clickCount = 0;
+    let clickLimit = 0;
+    let clickFn = 'generic';
+    let chatInfo = null;
+    let clickIntervalSecs = 4; // seconds between clicks
 
     if (interactive) {
       const sceneType = getSceneType(channel);
@@ -392,48 +395,60 @@ async function captureScene({ sceneId, channel, duration, outputDir, browser }) 
           strategy = { clickLimit: 4, clickInterval: 2500, clickFn: 'generic' };
       }
 
-      const { clickLimit, clickInterval, clickFn, chatInfo } = strategy;
-
-      // Schedule clicks after initial delay (let the initial state render + record a bit)
-      const startInteractions = () => {
-        interactionTimer = setInterval(async () => {
-          if (clickCount >= clickLimit) {
-            clearInterval(interactionTimer);
-            interactionTimer = null;
-            console.log(`[SceneCapture] Reached click limit (${clickLimit}). Stopping.`);
-            return;
-          }
-          try {
-            switch (clickFn) {
-              case 'messaging':
-                await performMessagingClick(page, clickCount);
-                break;
-              case 'website':
-                await performWebsiteClick(page, clickCount, chatInfo);
-                break;
-              default:
-                await performGenericClick(page, clickCount);
-            }
-            clickCount++;
-          } catch (e) {
-            // Interaction errors are non-fatal — page may have navigated or element gone
-          }
-        }, clickInterval);
-      };
-
-      // Start interactions after 2 seconds (so the initial state is captured first)
-      setTimeout(startInteractions, 2000);
+      clickLimit = strategy.clickLimit;
+      clickFn = strategy.clickFn;
+      chatInfo = strategy.chatInfo;
+      clickIntervalSecs = strategy.clickInterval / 1000;
     } else {
       console.log(`[SceneCapture] Passive mode for channel "${channel}" — no clicks, recording native animations`);
     }
 
-    // ── Capture frames via rapid screenshots ──
+    // ── Capture frames + inline interactions ──
+    // Instead of running clicks on a separate setInterval timer (which competes
+    // with page.screenshot via CDP serialization), we integrate clicks directly
+    // into the frame capture loop. Clicks happen at specific frame numbers,
+    // pausing screenshots briefly to let the page update.
     const totalFrames = Math.ceil(captureDuration * FRAME_RATE);
     const intervalMs = 1000 / FRAME_RATE;
-    console.log(`[SceneCapture] Capturing ${totalFrames} frames at ${FRAME_RATE}fps...`);
+
+    // Pre-compute which frames should trigger a click
+    // First click at 2s, then every clickIntervalSecs after that
+    const firstClickFrame = Math.round(2 * FRAME_RATE); // frame at 2 seconds
+    const clickFrameInterval = Math.round(clickIntervalSecs * FRAME_RATE);
+    const clickFrames = new Set();
+    if (interactive) {
+      for (let c = 0; c < clickLimit; c++) {
+        clickFrames.add(firstClickFrame + c * clickFrameInterval);
+      }
+    }
+
+    console.log(`[SceneCapture] Capturing ${totalFrames} frames at ${FRAME_RATE}fps` +
+      (interactive ? `, clicks at frames: [${[...clickFrames].join(',')}]` : ' (passive)') + '...');
 
     let capturedFrames = 0;
     for (let i = 0; i < totalFrames; i++) {
+      // ── Perform click BEFORE the screenshot at this frame ──
+      if (clickFrames.has(i) && clickCount < clickLimit) {
+        try {
+          switch (clickFn) {
+            case 'messaging':
+              await performMessagingClick(page, clickCount);
+              break;
+            case 'website':
+              await performWebsiteClick(page, clickCount, chatInfo);
+              break;
+            default:
+              await performGenericClick(page, clickCount);
+          }
+          clickCount++;
+          // Brief pause to let click effects render before screenshot
+          await new Promise(r => setTimeout(r, 150));
+        } catch (e) {
+          console.warn(`[SceneCapture] Click ${clickCount} failed: ${e.message}`);
+        }
+      }
+
+      // ── Take screenshot ──
       const framePath = path.join(frameDir, `frame_${String(i).padStart(5, '0')}.jpg`);
       try {
         await page.screenshot({
@@ -452,9 +467,6 @@ async function captureScene({ sceneId, channel, duration, outputDir, browser }) 
         await new Promise(r => setTimeout(r, intervalMs * 0.8));
       }
     }
-
-    // Stop interactions
-    if (interactionTimer) clearInterval(interactionTimer);
 
     console.log(`[SceneCapture] Captured ${capturedFrames}/${totalFrames} frames (${clickCount} interactions performed)`);
 

@@ -749,7 +749,8 @@ app.get('/api/voices', async (req, res) => {
 // ═══════════════════════════════════════════════
 
 app.get('/api/admin/veo-test', async (req, res) => {
-  if (!req.isAdmin) return res.status(403).json({ error: 'Admin only' });
+  const email = req.query.email;
+  if (!email || !isAdmin(email)) return res.status(403).json({ error: 'Admin only' });
 
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) return res.json({ status: 'error', message: 'GEMINI_API_KEY not configured' });

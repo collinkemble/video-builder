@@ -8,6 +8,7 @@ const jwt = require('jsonwebtoken');
 const { query } = require('./src/db/connection');
 const { migrate } = require('./src/db/migrate');
 const { runPipeline, getPipelineStatus } = require('./src/pipeline/orchestrator');
+const { generateScript } = require('./src/pipeline/scriptGenerator');
 const { getAvailableVoices } = require('./src/pipeline/voiceoverGenerator');
 
 const app = express();
@@ -471,7 +472,7 @@ app.get('/api/videos/:id', async (req, res) => {
 
     const video = rows[0];
     // Parse JSON fields
-    ['scene_data', 'scene_ids', 'narration_script', 'voiceover_timestamps'].forEach(field => {
+    ['scene_data', 'scene_ids', 'narration_script', 'voiceover_timestamps', 'scriptwriter_data'].forEach(field => {
       if (typeof video[field] === 'string') {
         try { video[field] = JSON.parse(video[field]); } catch (e) { /* keep as string */ }
       }
@@ -613,6 +614,53 @@ app.delete('/api/videos/:id', async (req, res) => {
 // ═══════════════════════════════════════════════
 // VIDEO BUILDER — Pipeline & Generation
 // ═══════════════════════════════════════════════
+
+// POST /api/videos/:id/generate-script — run ONLY the script generation step (Gemini)
+app.post('/api/videos/:id/generate-script', async (req, res) => {
+  try {
+    const { email } = req.body;
+    if (!email) return res.status(400).json({ error: 'Email required' });
+
+    const user = await getOrCreateUser(email);
+    const rows = await query('SELECT * FROM videos WHERE id = ? AND user_id = ?', [req.params.id, user.id]);
+    if (rows.length === 0) return res.status(404).json({ error: 'Video not found' });
+
+    const video = rows[0];
+    const sceneData = typeof video.scene_data === 'string' ? JSON.parse(video.scene_data || '{}') : (video.scene_data || {});
+    const scenes = sceneData.scenes || [];
+
+    if (scenes.length === 0) {
+      return res.status(400).json({ error: 'No scenes found. Import a PocketSIC project first.' });
+    }
+
+    const scriptWriterData = video.scriptwriter_data
+      ? (typeof video.scriptwriter_data === 'string' ? JSON.parse(video.scriptwriter_data) : video.scriptwriter_data)
+      : null;
+
+    const script = await generateScript({
+      brandName: video.brand_name || sceneData.brand_name || 'Brand',
+      brandDescription: sceneData.brand_description || '',
+      personaName: sceneData.persona_name || '',
+      personaDescription: sceneData.persona_description || '',
+      synopsis: sceneData.synopsis || '',
+      scenes: scenes.map(s => ({
+        id: s.id || s.sceneId,
+        channel: s.channel || s.channel_type || '',
+        content_summary: s.content_summary || s.description || s.name || '',
+      })),
+      durationTarget: video.duration_target || 180,
+      scriptWriterData,
+    });
+
+    // Save script to video record
+    await query('UPDATE videos SET narration_script = ?, updated_at = NOW() WHERE id = ?', [JSON.stringify(script), req.params.id]);
+
+    res.json({ success: true, script });
+  } catch (err) {
+    console.error('Script generation failed:', err);
+    res.status(500).json({ error: 'Script generation failed: ' + err.message });
+  }
+});
 
 // POST /api/videos/:id/generate — start the full pipeline
 app.post('/api/videos/:id/generate', async (req, res) => {

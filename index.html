@@ -315,10 +315,34 @@
         </div>
       </div>
 
-      <!-- Script Preview Card -->
-      <div id="script-card" class="hidden mb-6" style="background: white; border-radius: 12px; padding: 24px; box-shadow: 0 1px 3px rgba(0,0,0,0.08);">
-        <p class="font-bold mb-4" style="font-size: 15px; color: #032D60;">Narration Script</p>
-        <div id="script-segments"></div>
+      <!-- Demo Script Source Card (from Script Writer) -->
+      <div id="scriptwriter-card" class="hidden mb-6" style="background: white; border-radius: 12px; padding: 24px; box-shadow: 0 1px 3px rgba(0,0,0,0.08);">
+        <div class="flex items-center justify-between mb-2">
+          <p class="font-bold" style="font-size: 15px; color: #032D60;">Demo Script</p>
+          <span style="font-size: 11px; color: #888; background: #F3F4F6; padding: 2px 8px; border-radius: 6px;">Script Writer</span>
+        </div>
+        <div style="display: flex; align-items: center; gap: 12px; padding: 10px 0;">
+          <div style="width: 36px; height: 36px; border-radius: 10px; background: linear-gradient(135deg, #7C3AED, #A78BFA); display: flex; align-items: center; justify-content: center; font-size: 16px; color: white; flex-shrink: 0;">📝</div>
+          <div style="flex: 1; min-width: 0;">
+            <div id="scriptwriter-name" style="font-weight: 600; font-size: 14px; color: #111; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"></div>
+            <div id="scriptwriter-synopsis" style="font-size: 12px; color: #888; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Narration Script Card (editable) -->
+      <div id="script-card" class="mb-6" style="background: white; border-radius: 12px; padding: 24px; box-shadow: 0 1px 3px rgba(0,0,0,0.08);">
+        <div class="flex items-center justify-between mb-4">
+          <p class="font-bold" style="font-size: 15px; color: #032D60;">Narration Script</p>
+          <div class="flex items-center gap-2">
+            <button id="save-script-btn" onclick="saveNarrationScript()" class="hidden cursor-pointer" style="background: #16A34A; color: white; font-size: 12px; font-weight: 700; padding: 5px 12px; border-radius: 8px; border: none;">💾 Save Script</button>
+            <button id="gen-script-btn" onclick="generateScriptOnly()" class="cursor-pointer" style="background: #7C3AED; color: white; font-size: 12px; font-weight: 700; padding: 5px 12px; border-radius: 8px; border: none;">📝 Generate Script</button>
+          </div>
+        </div>
+        <div id="script-empty" style="text-align: center; padding: 20px;">
+          <p style="color: #999; font-size: 14px;">No narration script yet. Click "Generate Script" to create one from your scenes and demo script.</p>
+        </div>
+        <div id="script-segments" class="hidden"></div>
       </div>
 
       <!-- Metadata -->
@@ -1061,7 +1085,10 @@ async function viewVideo(id, skipPush) {
     // Scenes
     renderScenes(video.scene_data);
 
-    // Script
+    // Script Writer source card
+    renderScriptWriterCard(video);
+
+    // Narration Script
     renderScript(video.narration_script);
 
     // Pipeline progress
@@ -1115,30 +1142,121 @@ function renderScenes(sceneData) {
   `).join('');
 }
 
-function renderScript(script) {
-  const card = document.getElementById('script-card');
-  const container = document.getElementById('script-segments');
-
-  const data = typeof script === 'string' ? JSON.parse(script || 'null') : script;
-  if (!data || !data.segments) {
+function renderScriptWriterCard(video) {
+  const card = document.getElementById('scriptwriter-card');
+  if (!video.scriptwriter_script_name && !video.scriptwriter_script_id) {
     card.classList.add('hidden');
     return;
   }
-
   card.classList.remove('hidden');
+  document.getElementById('scriptwriter-name').textContent = video.scriptwriter_script_name || `Script #${video.scriptwriter_script_id}`;
+
+  // Try to show synopsis from scriptwriter_data
+  const swData = video.scriptwriter_data || {};
+  const synopsis = swData.synopsis || swData.cx_summary || swData.brand_description || '';
+  document.getElementById('scriptwriter-synopsis').textContent = synopsis;
+}
+
+function renderScript(script) {
+  const container = document.getElementById('script-segments');
+  const empty = document.getElementById('script-empty');
+
+  const data = typeof script === 'string' ? JSON.parse(script || 'null') : script;
+  if (!data || !data.segments || data.segments.length === 0) {
+    container.classList.add('hidden');
+    empty.classList.remove('hidden');
+    document.getElementById('save-script-btn').classList.add('hidden');
+    return;
+  }
+
+  empty.classList.add('hidden');
+  container.classList.remove('hidden');
+
+  // Store the script data for editing
+  window._currentScript = data;
+
   container.innerHTML = data.segments.map((seg, i) => {
     const typeColors = { intro: '#0176D3', scene: '#032D60', transition: '#6B7280', outro: '#0176D3' };
     const typeColor = typeColors[seg.type] || '#888';
     return `
     <div style="padding: 12px 0; ${i < data.segments.length - 1 ? 'border-bottom: 1px solid #f0f0f0;' : ''}">
-      <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px;">
+      <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 6px;">
         <span style="font-size: 10px; font-weight: 700; text-transform: uppercase; color: ${typeColor}; letter-spacing: 0.04em;">${esc(seg.type)}</span>
         ${seg.channel ? '<span style="font-size: 10px; color: #aaa;">— ' + esc(seg.channel) + '</span>' : ''}
         <span style="font-size: 10px; color: #ccc; margin-left: auto;">~${seg.estimatedDuration || '?'}s</span>
       </div>
-      <p style="font-size: 14px; color: #333; line-height: 1.5; margin: 0;">${esc(seg.narration || '')}</p>
+      <textarea data-seg-index="${i}" oninput="onScriptSegmentEdit()" rows="3" style="width: 100%; font-size: 14px; color: #333; line-height: 1.5; border: 1px solid #e5e7eb; border-radius: 8px; padding: 8px 10px; resize: vertical; font-family: inherit;">${esc(seg.narration || '')}</textarea>
     </div>`;
   }).join('');
+}
+
+function onScriptSegmentEdit() {
+  document.getElementById('save-script-btn').classList.remove('hidden');
+}
+
+async function generateScriptOnly() {
+  if (!currentVideoId) return;
+  const email = document.getElementById('user-email').textContent;
+  const btn = document.getElementById('gen-script-btn');
+  btn.disabled = true;
+  btn.textContent = '⏳ Generating...';
+
+  try {
+    const resp = await fetch(`/api/videos/${currentVideoId}/generate-script`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email }),
+    });
+
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || 'Failed to generate script');
+
+    // Render the new script
+    renderScript(data.script);
+    document.getElementById('save-script-btn').classList.add('hidden');
+  } catch (err) {
+    alert(err.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '📝 Generate Script';
+  }
+}
+
+async function saveNarrationScript() {
+  if (!currentVideoId || !window._currentScript) return;
+  const email = document.getElementById('user-email').textContent;
+  const btn = document.getElementById('save-script-btn');
+  btn.disabled = true;
+  btn.textContent = '💾 Saving...';
+
+  try {
+    // Collect edited narration from textareas
+    const textareas = document.querySelectorAll('#script-segments textarea[data-seg-index]');
+    textareas.forEach(ta => {
+      const idx = parseInt(ta.dataset.segIndex, 10);
+      if (window._currentScript.segments[idx]) {
+        window._currentScript.segments[idx].narration = ta.value;
+      }
+    });
+
+    const resp = await fetch(`/api/videos/${currentVideoId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, narrationScript: window._currentScript }),
+    });
+
+    if (!resp.ok) {
+      const data = await resp.json();
+      throw new Error(data.error || 'Failed to save script');
+    }
+
+    btn.classList.add('hidden');
+  } catch (err) {
+    alert(err.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '💾 Save Script';
+  }
 }
 
 // ═══════════════════════════════════════════════

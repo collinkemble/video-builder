@@ -6,7 +6,8 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node server.js",
-    "migrate": "node src/db/migrate.js"
+    "migrate": "node src/db/migrate.js",
+    "heroku-postbuild": "mkdir -p ./.cache && cp -r /app/.cache/puppeteer ./.cache/ 2>/dev/null || true"
   },
   "keywords": [
     "salesforce",

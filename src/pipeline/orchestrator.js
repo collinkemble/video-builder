@@ -48,31 +48,43 @@ async function runPipeline(videoId, userId, options = {}) {
     }
 
     // ── Step 1: Script Generation ──
+    // If user already generated/edited a script, reuse it; otherwise generate one now
+    const existingScript = video.narration_script
+      ? (typeof video.narration_script === 'string' ? JSON.parse(video.narration_script) : video.narration_script)
+      : null;
+
     await updateVideoStatus(videoId, 'scripting');
     const scriptJobId = await createJob(videoId, userId, 'script');
 
     let script;
     try {
-      await updateJob(scriptJobId, 'running');
+      if (existingScript && existingScript.segments && existingScript.segments.length > 0) {
+        // Reuse the pre-generated/edited script
+        script = existingScript;
+        await updateJob(scriptJobId, 'running');
+        await completeJob(scriptJobId, { totalSegments: script.totalSegments, reused: true });
+      } else {
+        await updateJob(scriptJobId, 'running');
 
-      script = await generateScript({
-        brandName: video.brand_name || sceneData.brand_name || 'Brand',
-        brandDescription: sceneData.brand_description || '',
-        personaName: sceneData.persona_name || '',
-        personaDescription: sceneData.persona_description || '',
-        synopsis: sceneData.synopsis || '',
-        scenes: scenes.map(s => ({
-          id: s.id || s.sceneId,
-          channel: s.channel || s.channel_type || '',
-          content_summary: s.content_summary || s.description || '',
-        })),
-        durationTarget: video.duration_target || 180,
-        scriptWriterData,
-      });
+        script = await generateScript({
+          brandName: video.brand_name || sceneData.brand_name || 'Brand',
+          brandDescription: sceneData.brand_description || '',
+          personaName: sceneData.persona_name || '',
+          personaDescription: sceneData.persona_description || '',
+          synopsis: sceneData.synopsis || '',
+          scenes: scenes.map(s => ({
+            id: s.id || s.sceneId,
+            channel: s.channel || s.channel_type || '',
+            content_summary: s.content_summary || s.description || '',
+          })),
+          durationTarget: video.duration_target || 180,
+          scriptWriterData,
+        });
 
-      // Save script to video record
-      await query('UPDATE videos SET narration_script = ? WHERE id = ?', [JSON.stringify(script), videoId]);
-      await completeJob(scriptJobId, { totalSegments: script.totalSegments });
+        // Save script to video record
+        await query('UPDATE videos SET narration_script = ? WHERE id = ?', [JSON.stringify(script), videoId]);
+        await completeJob(scriptJobId, { totalSegments: script.totalSegments });
+      }
     } catch (err) {
       await failJob(scriptJobId, err.message);
       throw err;

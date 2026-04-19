@@ -27,36 +27,53 @@ async function generateBrollImage({ description, brandName, outputDir }) {
   const prompt = `Professional, cinematic b-roll image for a ${brandName || 'brand'} customer experience video: ${description}.
 Style: Clean, modern, high-quality stock photography look. Warm, inviting lighting. No text or logos.`;
 
-  try {
-    console.log(`[B-Roll] Generating image: "${description.substring(0, 60)}..."`);
-    const response = await ai.models.generateContent({
-      model: 'gemini-2.0-flash-exp-image-generation',
-      contents: prompt,
-      config: {
-        responseModalities: ['TEXT', 'IMAGE'],
-      },
-    });
+  // Try multiple model names in order of preference
+  const modelNames = [
+    'gemini-2.5-flash-image',
+    'gemini-2.5-flash-preview-image-generation',
+    'gemini-2.0-flash-preview-image-generation',
+  ];
 
-    // Check if image was generated
-    const parts = response.candidates?.[0]?.content?.parts || [];
-    const imagePart = parts.find(p => p.inlineData);
+  for (const modelName of modelNames) {
+    try {
+      console.log(`[B-Roll] Generating image with ${modelName}: "${description.substring(0, 60)}..."`);
+      const response = await ai.models.generateContent({
+        model: modelName,
+        contents: prompt,
+        config: {
+          responseModalities: ['TEXT', 'IMAGE'],
+        },
+      });
 
-    if (imagePart && imagePart.inlineData) {
-      const imageBuffer = Buffer.from(imagePart.inlineData.data, 'base64');
-      const filename = `broll_${Date.now()}.png`;
-      const outputPath = path.join(outputDir || os.tmpdir(), filename);
-      fs.writeFileSync(outputPath, imageBuffer);
-      console.log(`[B-Roll] AI image generated: ${outputPath} (${(imageBuffer.length / 1024).toFixed(1)}KB)`);
-      return outputPath;
+      // Check if image was generated
+      const parts = response.candidates?.[0]?.content?.parts || [];
+      const imagePart = parts.find(p => p.inlineData);
+
+      if (imagePart && imagePart.inlineData) {
+        const imageBuffer = Buffer.from(imagePart.inlineData.data, 'base64');
+        const filename = `broll_${Date.now()}.png`;
+        const outputPath = path.join(outputDir || os.tmpdir(), filename);
+        fs.writeFileSync(outputPath, imageBuffer);
+        console.log(`[B-Roll] AI image generated with ${modelName}: ${outputPath} (${(imageBuffer.length / 1024).toFixed(1)}KB)`);
+        return outputPath;
+      }
+
+      console.warn(`[B-Roll] No image in response from ${modelName}. Parts:`, JSON.stringify(parts.map(p => p.text ? `text:${p.text.substring(0, 50)}` : p.inlineData ? 'image' : 'unknown')));
+      // If we get a response but no image, try the next model
+      continue;
+    } catch (err) {
+      console.warn(`[B-Roll] Model ${modelName} failed: ${err.message}`);
+      // If model not found (404), try next model
+      if (err.message.includes('not found') || err.message.includes('404') || err.message.includes('not supported')) {
+        continue;
+      }
+      // For other errors (rate limit, etc.), still try next model
+      continue;
     }
-
-    console.warn('[B-Roll] No image in response. Parts:', parts.map(p => p.text ? 'text' : p.inlineData ? 'image' : 'unknown'));
-    // Fallback: generate a simple gradient placeholder
-    return await generatePlaceholderImage({ description, brandName, outputDir });
-  } catch (err) {
-    console.warn(`[B-Roll] Generation failed: ${err.message}. Using placeholder.`);
-    return await generatePlaceholderImage({ description, brandName, outputDir });
   }
+
+  console.warn('[B-Roll] All models failed. Using placeholder.');
+  return await generatePlaceholderImage({ description, brandName, outputDir });
 }
 
 /**

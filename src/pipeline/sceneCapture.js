@@ -14,137 +14,33 @@ const FRAME_RATE = 15; // capture fps — balanced between smoothness and Heroku
 const OUTPUT_FPS = 30; // final output video fps (FFmpeg interpolates)
 
 /**
- * Channel-specific interaction patterns for PocketSIC scenes.
- * Each pattern defines how to progress the story during recording.
- *
- * The interaction scheduler clicks elements at timed intervals to simulate
- * a user naturally progressing through the demo.
+ * Determine if a channel type should have click interactions.
+ * Instagram/social scenes have native video/animation — no clicks needed.
+ * Email scenes are mostly static — no clicks needed.
  */
-const INTERACTION_PATTERNS = {
-  // Chat / agentic chat — click send or next-message buttons
-  website: {
-    // Selectors to try clicking (in priority order)
-    selectors: [
-      'button[class*="send"]',
-      'button[aria-label*="send" i]',
-      'button[aria-label*="Send" i]',
-      '[class*="chat"] button',
-      '[class*="Chat"] button',
-      'button[class*="next"]',
-      'button[class*="reply"]',
-      '.chat-input button',
-      '.message-input button',
-      // Generic clickable progression elements
-      'button:not([disabled])',
-    ],
-    // How often to click (ms) — gives time for animations/responses
-    intervalMs: 2500,
-    // Initial delay before first click
-    initialDelayMs: 2000,
-  },
-
-  // iMessage style — tap message bubbles or send buttons
-  imessage: {
-    selectors: [
-      'button[class*="send"]',
-      'button[aria-label*="send" i]',
-      '[class*="message"] button',
-      '[class*="iMessage"] button',
-      '[class*="imessage"] button',
-      'button[class*="next"]',
-      'button:not([disabled])',
-    ],
-    intervalMs: 2000,
-    initialDelayMs: 1500,
-  },
-
-  // SMS / text messages
-  sms: {
-    selectors: [
-      'button[class*="send"]',
-      'button[aria-label*="send" i]',
-      '[class*="message"] button',
-      'button[class*="next"]',
-      'button:not([disabled])',
-    ],
-    intervalMs: 2000,
-    initialDelayMs: 1500,
-  },
-
-  // Retail cloud / POS — tap through screens
-  retail: {
-    selectors: [
-      'button[class*="next"]',
-      'button[class*="continue"]',
-      'button[class*="proceed"]',
-      'button[class*="action"]',
-      '[class*="retail"] button',
-      '[class*="pos"] button',
-      'button:not([disabled])',
-    ],
-    intervalMs: 3000,
-    initialDelayMs: 2000,
-  },
-
-  // Email — mostly static, light interaction
-  email: {
-    selectors: [
-      'button[class*="open"]',
-      'button[class*="next"]',
-      'a[class*="cta"]',
-      'button:not([disabled])',
-    ],
-    intervalMs: 4000,
-    initialDelayMs: 2000,
-  },
-
-  // Instagram / social — let video play, occasional taps
-  instagram: {
-    selectors: [],  // No clicks — let native video/animations play
-    intervalMs: 0,
-    initialDelayMs: 0,
-  },
-
-  // Default — gentle clicks on available buttons
-  default: {
-    selectors: [
-      'button[class*="next"]',
-      'button[class*="send"]',
-      'button[class*="continue"]',
-      'button[class*="action"]',
-      'button:not([disabled])',
-    ],
-    intervalMs: 3000,
-    initialDelayMs: 2000,
-  },
-};
+function shouldInteract(channel) {
+  const ch = (channel || '').toLowerCase().replace(/[^a-z]/g, '');
+  // These channels have video/animation that plays on its own
+  if (ch.includes('instagram') || ch.includes('social') || ch.includes('facebook') || ch.includes('tiktok')) {
+    return false;
+  }
+  // Email is mostly static
+  if (ch.includes('email')) {
+    return false;
+  }
+  // Everything else (website, chat, imessage, sms, retail, etc.) needs clicks
+  return true;
+}
 
 /**
- * Get the interaction pattern for a channel type.
+ * Get the click interval for a channel type (ms between clicks).
  */
-function getInteractionPattern(channel) {
+function getClickInterval(channel) {
   const ch = (channel || '').toLowerCase().replace(/[^a-z]/g, '');
-
-  if (ch.includes('instagram') || ch.includes('social') || ch.includes('facebook') || ch.includes('tiktok')) {
-    return INTERACTION_PATTERNS.instagram;
-  }
-  if (ch.includes('imessage') || ch.includes('apple')) {
-    return INTERACTION_PATTERNS.imessage;
-  }
-  if (ch.includes('sms') || ch.includes('text')) {
-    return INTERACTION_PATTERNS.sms;
-  }
-  if (ch.includes('retail') || ch.includes('store') || ch.includes('pos') || ch.includes('instore')) {
-    return INTERACTION_PATTERNS.retail;
-  }
-  if (ch.includes('email')) {
-    return INTERACTION_PATTERNS.email;
-  }
-  if (ch.includes('web') || ch.includes('chat') || ch.includes('agent') || ch.includes('service')) {
-    return INTERACTION_PATTERNS.website;
-  }
-
-  return INTERACTION_PATTERNS.default;
+  if (ch.includes('imessage') || ch.includes('sms') || ch.includes('text')) return 2000;
+  if (ch.includes('web') || ch.includes('chat') || ch.includes('agent')) return 2500;
+  if (ch.includes('retail') || ch.includes('store') || ch.includes('pos')) return 3000;
+  return 2500;
 }
 
 /**
@@ -187,28 +83,52 @@ async function captureScene({ sceneId, channel, duration, outputDir, browser }) 
     // Let the page fully render before starting capture
     await new Promise(r => setTimeout(r, 1500));
 
+    // ── Block external navigation (PocketSIC CTAs link to real websites) ──
+    await page.evaluate(() => {
+      // Prevent all link clicks from navigating away
+      document.addEventListener('click', (e) => {
+        const link = e.target.closest('a[href]');
+        if (link && link.href && !link.href.startsWith(window.location.origin)) {
+          e.preventDefault();
+          e.stopPropagation();
+        }
+      }, true);
+      // Also block window.open and form submissions
+      window.open = () => null;
+    });
+
+    // ── Dismiss PWA install banner if present ──
+    try {
+      const dismissBtn = await page.$('.pwa-dismiss-btn, button[class*="dismiss"], button[class*="Dismiss"]');
+      if (dismissBtn) {
+        await dismissBtn.click();
+        console.log(`[SceneCapture] Dismissed PWA banner`);
+        await new Promise(r => setTimeout(r, 500));
+      }
+    } catch { /* no banner */ }
+
     // ── Set up interaction scheduler ──
-    const pattern = getInteractionPattern(channel);
+    const interactive = shouldInteract(channel);
     let interactionTimer = null;
     let clickCount = 0;
 
-    if (pattern.selectors.length > 0 && pattern.intervalMs > 0) {
-      console.log(`[SceneCapture] Interactive mode for channel "${channel}" — clicking every ${pattern.intervalMs}ms`);
+    if (interactive) {
+      const intervalMs = getClickInterval(channel);
+      console.log(`[SceneCapture] Interactive mode for channel "${channel}" — clicking every ${intervalMs}ms`);
 
       // Schedule first click after initial delay
       const startInteractions = () => {
         interactionTimer = setInterval(async () => {
           try {
-            await performInteraction(page, pattern.selectors, clickCount);
+            await performSmartClick(page, clickCount);
             clickCount++;
           } catch (e) {
             // Interaction errors are non-fatal — page may have changed
-            console.log(`[SceneCapture] Interaction click ${clickCount} skipped: ${e.message}`);
           }
-        }, pattern.intervalMs);
+        }, intervalMs);
       };
 
-      setTimeout(startInteractions, pattern.initialDelayMs);
+      setTimeout(startInteractions, 2000);
     } else {
       console.log(`[SceneCapture] Passive mode for channel "${channel}" — no clicks, recording native animations`);
     }
@@ -271,38 +191,113 @@ async function captureScene({ sceneId, channel, duration, outputDir, browser }) 
 }
 
 /**
- * Perform a single interaction click on the page.
- * Tries each selector in order until one succeeds.
+ * Smart click — find the best interactive element on the page and click it.
+ *
+ * PocketSIC scenes are custom HTML pages without standardized selectors.
+ * This function scans the DOM for visible, clickable elements and picks the
+ * best one to click based on:
+ *   1. Buttons and links that look like progression controls (send, next, reply, etc.)
+ *   2. Elements with click handlers or cursor:pointer styling
+ *   3. Skip PWA buttons, navigation chrome, and external links
  */
-async function performInteraction(page, selectors, clickIndex) {
-  for (const selector of selectors) {
-    try {
-      // Find all matching visible elements
-      const elements = await page.$$(selector);
+async function performSmartClick(page, clickIndex) {
+  const clicked = await page.evaluate((idx) => {
+    // Skip list — elements we should never click
+    const skipTexts = ['install', 'dismiss', '✕', 'sign out', 'sign in', 'login', 'log in'];
+    const skipClasses = ['pwa-install', 'pwa-dismiss', 'pwa-banner'];
 
-      for (const el of elements) {
-        const isVisible = await el.evaluate(node => {
-          const rect = node.getBoundingClientRect();
-          const style = window.getComputedStyle(node);
-          return rect.width > 0 && rect.height > 0 &&
-            style.visibility !== 'hidden' &&
-            style.display !== 'none' &&
-            style.opacity !== '0';
-        });
-
-        if (isVisible) {
-          // Scroll into view and click
-          await el.evaluate(node => node.scrollIntoView({ behavior: 'smooth', block: 'center' }));
-          await new Promise(r => setTimeout(r, 200));
-          await el.click();
-          console.log(`[SceneCapture] Clicked: ${selector} (interaction #${clickIndex + 1})`);
-          return; // One click per interval
-        }
-      }
-    } catch {
-      // Selector didn't match or element disappeared — try next
-      continue;
+    function shouldSkip(el) {
+      const text = (el.textContent || '').trim().toLowerCase();
+      const cls = (el.className || '').toString().toLowerCase();
+      if (skipTexts.some(s => text === s)) return true;
+      if (skipClasses.some(s => cls.includes(s))) return true;
+      // Skip external links
+      if (el.tagName === 'A' && el.href && !el.href.startsWith(window.location.origin)) return true;
+      return false;
     }
+
+    function isVisible(el) {
+      const rect = el.getBoundingClientRect();
+      const style = window.getComputedStyle(el);
+      return rect.width > 10 && rect.height > 10 &&
+        style.display !== 'none' && style.visibility !== 'hidden' &&
+        parseFloat(style.opacity) > 0.1 &&
+        rect.top >= 0 && rect.top < window.innerHeight;
+    }
+
+    // Gather all clickable candidates
+    const candidates = [];
+    const allElements = document.querySelectorAll('button, a, [onclick], [role="button"], [tabindex="0"]');
+
+    allElements.forEach(el => {
+      if (!isVisible(el) || shouldSkip(el)) return;
+      if (el.disabled) return;
+
+      const text = (el.textContent || '').trim().toLowerCase();
+      const cls = (el.className || '').toString().toLowerCase();
+      const rect = el.getBoundingClientRect();
+
+      // Score — higher = more likely to be the right thing to click
+      let score = 0;
+
+      // Progression keywords get high scores
+      if (/send|reply|next|continue|submit|type|tap|click|start|begin|go|proceed|confirm|accept|ok|yes|add|open/i.test(text)) score += 10;
+      if (/send|reply|next|continue|submit|action|cta|primary|chat|message/i.test(cls)) score += 8;
+
+      // Buttons get preference over links
+      if (el.tagName === 'BUTTON') score += 3;
+
+      // Elements in the lower half of the screen are more likely CTAs
+      if (rect.top > window.innerHeight * 0.5) score += 2;
+
+      // Larger elements are more likely primary CTAs
+      if (rect.width > 100 && rect.height > 30) score += 2;
+
+      // Elements that haven't been clicked before (use data attribute to track)
+      if (!el.dataset._vbClicked) score += 5;
+
+      candidates.push({ el, score, text: text.substring(0, 30), tag: el.tagName });
+    });
+
+    // Also look for elements with cursor:pointer that aren't buttons/links
+    // (PocketSIC might use divs/spans as clickable elements)
+    document.querySelectorAll('div, span, img, svg').forEach(el => {
+      if (!isVisible(el) || shouldSkip(el)) return;
+      const style = window.getComputedStyle(el);
+      if (style.cursor !== 'pointer') return;
+      // Skip if it's inside an already-found button/link
+      if (el.closest('button, a, [role="button"]')) return;
+
+      const rect = el.getBoundingClientRect();
+      const text = (el.textContent || '').trim().toLowerCase();
+
+      let score = 0;
+      if (/send|reply|next|continue|tap|click/i.test(text)) score += 8;
+      if (rect.width > 30 && rect.height > 30) score += 2;
+      if (!el.dataset._vbClicked) score += 5;
+
+      candidates.push({ el, score, text: text.substring(0, 30), tag: el.tagName });
+    });
+
+    if (candidates.length === 0) return null;
+
+    // Sort by score (highest first), then click the best one
+    candidates.sort((a, b) => b.score - a.score);
+
+    // Pick the best unclicked candidate, or cycle through if all clicked
+    let target = candidates.find(c => !c.el.dataset._vbClicked) || candidates[idx % candidates.length];
+
+    if (target) {
+      target.el.dataset._vbClicked = 'true';
+      target.el.click();
+      return { text: target.text, tag: target.tag, score: target.score };
+    }
+
+    return null;
+  }, clickIndex);
+
+  if (clicked) {
+    console.log(`[SceneCapture] Smart click #${clickIndex + 1}: <${clicked.tag}> "${clicked.text}" (score: ${clicked.score})`);
   }
 }
 

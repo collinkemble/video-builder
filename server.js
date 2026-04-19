@@ -745,6 +745,45 @@ app.get('/api/voices', async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════
+// ADMIN — Veo Diagnostics (test video generation capability)
+// ═══════════════════════════════════════════════
+
+app.get('/api/admin/veo-test', async (req, res) => {
+  if (!req.isAdmin) return res.status(403).json({ error: 'Admin only' });
+
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) return res.json({ status: 'error', message: 'GEMINI_API_KEY not configured' });
+
+  const { GoogleGenAI } = require('@google/genai');
+  const ai = new GoogleGenAI({ apiKey });
+
+  const models = ['veo-3.1-lite', 'veo-3.1-fast', 'veo-3.1-generate-preview'];
+  const results = [];
+
+  for (const modelName of models) {
+    try {
+      const operation = await ai.models.generateVideos({
+        model: modelName,
+        prompt: 'A slow pan across a coffee cup on a wooden table, warm morning light',
+        config: { aspectRatio: '16:9', resolution: '720p', durationSeconds: '4', numberOfVideos: 1 },
+      });
+      results.push({ model: modelName, status: 'accepted', operationDone: operation.done });
+      // Don't wait for completion — just confirm the API accepts the request
+      break; // If one works, report success
+    } catch (err) {
+      results.push({
+        model: modelName,
+        status: 'failed',
+        error: err.message?.substring(0, 200),
+        httpStatus: err.status || null,
+      });
+    }
+  }
+
+  res.json({ status: results.some(r => r.status === 'accepted') ? 'ok' : 'all_failed', results });
+});
+
+// ═══════════════════════════════════════════════
 // VIDEO BUILDER — PocketSIC Proxy (server-side API key)
 // ═══════════════════════════════════════════════
 

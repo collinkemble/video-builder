@@ -120,8 +120,12 @@ async function setupWebsiteInteraction(page) {
     clickLimit = 3;
   }
 
-  // Use a longer interval — agent auto-advance needs time for typing indicators
-  const clickInterval = 3000;
+  // Interval must be long enough for:
+  //   - Chat panel slide-in animation (400ms)
+  //   - Customer typing animation (~40ms/char × 80 chars ≈ 3.2s)
+  //   - Agent auto-advance typing indicators (~1-2s)
+  // Use 4s to comfortably cover typing animation + agent response
+  const clickInterval = 4000;
   console.log(`[SceneCapture] Website: ${chatInfo.totalMsgs} msgs (${chatInfo.customerMsgs} customer), clickLimit=${clickLimit}, interval=${clickInterval}ms`);
 
   return { clickLimit, clickInterval, clickFn: 'website', chatInfo };
@@ -169,46 +173,68 @@ async function performMessagingClick(page, clickIndex) {
 /**
  * Website click: first click opens chat, subsequent clicks advance the conversation.
  *
+ * PocketSIC website scenes have a chat panel that slides in from the bottom.
+ * The panel starts with CSS `transform: translateY(100%)` and transitions to
+ * `translateY(0)` when the `.open` class is added (400ms CSS transition).
+ *
+ * Both #chatContent and #chatInputArea have click handlers calling advanceChat().
+ * We use page.evaluate() for reliable JS event dispatch — confirmed working.
+ *
  * Pattern:
- *   Click 0: Open chat panel via #chatFab or #agentBanner
- *   Click 1: Start customer typing animation (click #chatInputArea)
- *   Click 2: Send customer message + agent auto-replies (click #chatInputArea)
- *   Click 3: Start next customer typing... (click #chatInputArea)
- *   Click 4: Send next customer message + agent auto-replies... etc.
+ *   Click 0: Open chat panel via #chatFab or #agentBanner, then wait for transition
+ *   Click 1+: Click #chatInputArea to call advanceChat() (2 clicks per customer msg)
  */
 async function performWebsiteClick(page, clickIndex, chatInfo) {
   if (clickIndex === 0) {
     // First click: open the chat panel
-    const opened = await page.evaluate(() => {
-      const chatFab = document.getElementById('chatFab');
-      if (chatFab) { chatFab.click(); return 'chatFab'; }
-      const agentBanner = document.getElementById('agentBanner');
-      if (agentBanner) { agentBanner.click(); return 'agentBanner'; }
-      // Fallback: look for anything chat/agent related
-      const els = document.querySelectorAll('button, [role="button"], a, div[onclick]');
-      for (const el of els) {
-        const text = (el.textContent || '').toLowerCase();
-        if (text.includes('chat') || text.includes('agent') || text.includes('ask')) {
-          el.click();
-          return `element: "${text.substring(0, 30)}"`;
+    try {
+      const opened = await page.evaluate(() => {
+        const chatFab = document.getElementById('chatFab');
+        if (chatFab) { chatFab.click(); return 'chatFab'; }
+        const agentBanner = document.getElementById('agentBanner');
+        if (agentBanner) { agentBanner.click(); return 'agentBanner'; }
+        // Fallback: find any chat/agent trigger
+        const els = document.querySelectorAll('button, [role="button"], a, div[onclick]');
+        for (const el of els) {
+          const text = (el.textContent || '').toLowerCase();
+          if (text.includes('chat') || text.includes('agent') || text.includes('ask')) {
+            el.click();
+            return 'fallback';
+          }
         }
+        return null;
+      });
+
+      if (opened) {
+        // Wait for the CSS slide-in transition to complete (400ms transition + buffer)
+        await new Promise(r => setTimeout(r, 600));
+        console.log(`[SceneCapture] Website click #1: opened chat via ${opened} (waited for transition)`);
+      } else {
+        console.warn(`[SceneCapture] Website click #1: no chat opener found`);
       }
-      return null;
-    });
-    console.log(`[SceneCapture] Website click #1: opened chat via ${opened}`);
+    } catch (err) {
+      console.warn(`[SceneCapture] Website click #1 failed: ${err.message}`);
+    }
   } else {
-    // Subsequent clicks: advance the chat by clicking the input area (send button area)
-    // This triggers advanceChat() which handles both customer typing and sending
-    const clicked = await page.evaluate(() => {
-      // Prefer #chatInputArea — it's the bottom bar with the send button
-      const chatInput = document.getElementById('chatInputArea');
-      if (chatInput) { chatInput.click(); return 'chatInputArea'; }
-      // Fallback to #chatContent
-      const chatContent = document.getElementById('chatContent');
-      if (chatContent) { chatContent.click(); return 'chatContent'; }
-      return null;
-    });
-    console.log(`[SceneCapture] Website click #${clickIndex + 1}: advance via ${clicked}`);
+    // Subsequent clicks: call advanceChat() by clicking #chatInputArea or #chatContent
+    try {
+      const result = await page.evaluate(() => {
+        // Prefer #chatInputArea (the input bar with send button)
+        const chatInputArea = document.getElementById('chatInputArea');
+        if (chatInputArea) { chatInputArea.click(); return 'chatInputArea'; }
+        // Fallback: #chatContent (the message area)
+        const chatContent = document.getElementById('chatContent');
+        if (chatContent) { chatContent.click(); return 'chatContent'; }
+        return null;
+      });
+      if (result) {
+        console.log(`[SceneCapture] Website click #${clickIndex + 1}: clicked ${result}`);
+      } else {
+        console.warn(`[SceneCapture] Website click #${clickIndex + 1}: no click target found`);
+      }
+    } catch (err) {
+      console.warn(`[SceneCapture] Website click #${clickIndex + 1} failed: ${err.message}`);
+    }
   }
 }
 

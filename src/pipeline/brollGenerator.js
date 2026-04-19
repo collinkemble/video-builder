@@ -42,9 +42,10 @@ async function generateBrollVideo({ description, brandName, outputDir }) {
   const prompt = `Professional cinematic b-roll footage for a ${brandName || 'brand'} customer experience video: ${description}.\n${VIDEO_PROMPT_RULES}`;
 
   // Veo models in priority order (lite is cheapest, fast is faster, standard is highest quality)
+  // Model names per Google docs: veo-3.1-lite, veo-3.1-fast, veo-3.1-generate-preview
   const veoModels = [
-    'veo-3.1-lite-generate-preview',
-    'veo-3.1-fast-generate-preview',
+    'veo-3.1-lite',
+    'veo-3.1-fast',
     'veo-3.1-generate-preview',
   ];
 
@@ -64,19 +65,21 @@ async function generateBrollVideo({ description, brandName, outputDir }) {
         },
       });
 
-      // Poll until done (max 3 minutes)
-      const maxWait = 180000;
-      const pollInterval = 8000;
+      // Poll until done (max 5 minutes — Google docs say up to 6 min during peak)
+      const maxWait = 300000;
+      const pollInterval = 10000;
       const startTime = Date.now();
+
+      console.log(`[B-Roll Video] Operation started for ${modelName}. Polling every ${pollInterval / 1000}s (max ${maxWait / 1000}s)...`);
 
       while (!operation.done) {
         if (Date.now() - startTime > maxWait) {
           console.warn(`[B-Roll Video] Timeout waiting for ${modelName} (${(maxWait / 1000)}s). Trying next model.`);
           break;
         }
-        console.log(`[B-Roll Video] Polling ${modelName}... (${Math.round((Date.now() - startTime) / 1000)}s)`);
         await new Promise(r => setTimeout(r, pollInterval));
         operation = await ai.operations.getVideosOperation({ operation });
+        console.log(`[B-Roll Video] Polling ${modelName}... (${Math.round((Date.now() - startTime) / 1000)}s) done=${operation.done}`);
       }
 
       if (!operation.done) continue;
@@ -107,10 +110,16 @@ async function generateBrollVideo({ description, brandName, outputDir }) {
       // Log full error details for debugging
       if (err.status) console.warn(`[B-Roll Video] HTTP status: ${err.status}`);
       if (err.statusText) console.warn(`[B-Roll Video] Status text: ${err.statusText}`);
-      // Check for billing/permission errors
-      if (errMsg.includes('billing') || errMsg.includes('quota') || errMsg.includes('permission') || errMsg.includes('403')) {
+      if (err.errorDetails) console.warn(`[B-Roll Video] Error details: ${JSON.stringify(err.errorDetails).substring(0, 500)}`);
+      // Check for billing/permission errors — don't try other models
+      if (errMsg.includes('billing') || errMsg.includes('quota') || errMsg.includes('permission') || errMsg.includes('403') || errMsg.includes('PERMISSION_DENIED')) {
         console.warn('[B-Roll Video] Veo requires a paid-tier Gemini API key with billing enabled. Skipping all Veo models.');
-        break; // Don't try other models if it's a billing issue
+        break;
+      }
+      // Check for model not found — try next model
+      if (errMsg.includes('not found') || errMsg.includes('404') || errMsg.includes('NOT_FOUND')) {
+        console.warn(`[B-Roll Video] Model ${modelName} not available. Trying next model.`);
+        continue;
       }
       continue;
     }
@@ -142,10 +151,12 @@ CRITICAL RULES YOU MUST FOLLOW:
 4. INSTEAD focus on: people's faces, emotions, hands, shopping, outdoor scenes, storefronts, lifestyle moments, environments, nature, cityscapes.
 5. No text, no logos, no UI mockups.`;
 
+  // Image generation models — ordered newest to oldest
+  // gemini-2.0-flash models sunset June 1 2026
   const modelNames = [
+    'gemini-3.1-flash-image-preview',
     'gemini-2.5-flash-image',
-    'gemini-2.5-flash-preview-image-generation',
-    'gemini-2.0-flash-preview-image-generation',
+    'gemini-2.0-flash-exp-image-generation',
   ];
 
   for (const modelName of modelNames) {
@@ -271,16 +282,26 @@ async function generateBroll({ description, brandName, outputDir }) {
  */
 async function generateAllBroll(segments, brandName, outputDir, onProgress) {
   const results = [];
+  let videoCount = 0;
+  let imageCount = 0;
 
   for (let i = 0; i < segments.length; i++) {
     const seg = segments[i];
-    console.log(`Generating b-roll ${i + 1}/${segments.length}: ${seg.brollDescription?.substring(0, 50)}...`);
+    console.log(`[B-Roll] Generating ${i + 1}/${segments.length}: ${seg.brollDescription?.substring(0, 50)}...`);
 
     const mediaPath = await generateBroll({
       description: seg.brollDescription || 'Professional lifestyle image',
       brandName,
       outputDir,
     });
+
+    if (mediaPath.endsWith('.mp4')) {
+      videoCount++;
+      console.log(`[B-Roll] ${i + 1}/${segments.length}: Got VIDEO clip → ${path.basename(mediaPath)}`);
+    } else {
+      imageCount++;
+      console.log(`[B-Roll] ${i + 1}/${segments.length}: Got still IMAGE → ${path.basename(mediaPath)}`);
+    }
 
     results.push({
       order: seg.order,
@@ -290,6 +311,7 @@ async function generateAllBroll(segments, brandName, outputDir, onProgress) {
     if (onProgress) onProgress(i + 1, segments.length);
   }
 
+  console.log(`[B-Roll] Complete: ${videoCount} video clips, ${imageCount} still images out of ${segments.length} segments`);
   return results;
 }
 

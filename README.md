@@ -1,6 +1,6 @@
-# {{APP_NAME}}
+# Video Builder
 
-> {{APP_TAGLINE}}
+> CX stories, on screen
 
 Part of the [aubreydemo.com](https://aubreydemo.com) family of tools.
 
@@ -23,12 +23,12 @@ Search the codebase and replace these tokens with your app's values:
 
 | Placeholder | Example | Where Used |
 |---|---|---|
-| `{{APP_NAME}}` | Demo Script Writer | Page titles, headers, footer |
-| `{{APP_SLUG}}` | demo-script-writer | package.json name, URLs |
-| `{{APP_TAGLINE}}` | AI-powered demo scripts | Header subtitle, meta description |
-| `{{APP_ASSET_NAME}}` | Scripts | Nav buttons, page titles (plural) |
-| `{{APP_ASSET_SINGULAR}}` | Script | Dialogs, labels (singular) |
-| `{{API_KEY_PREFIX}}` | dscr | API key prefix (4 chars) |
+| `Video Builder` | Demo Script Writer | Page titles, headers, footer |
+| `video-builder` | demo-script-writer | package.json name, URLs |
+| `CX stories, on screen` | AI-powered demo scripts | Header subtitle, meta description |
+| `Videos` | Scripts | Nav buttons, page titles (plural) |
+| `Video` | Script | Dialogs, labels (singular) |
+| `vbld` | dscr | API key prefix (4 chars) |
 
 **Tip:** Use your editor's find-and-replace across all files. Every placeholder uses the `{{DOUBLE_BRACE}}` format so they're easy to find.
 

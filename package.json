@@ -1,7 +1,7 @@
 {
-  "name": "{{APP_SLUG}}",
+  "name": "video-builder",
   "version": "1.0.0",
-  "description": "{{APP_TAGLINE}}",
+  "description": "CX stories, on screen",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",

@@ -30,12 +30,10 @@ async function migrate() {
       ];
 
       // =============================================
-      // APP-SPECIFIC ALTER statements — Add yours here
-      // Example: adding share columns to your asset table
+      // APP-SPECIFIC ALTER statements — Video Builder
       // =============================================
       const appAlters = [
-        // "ALTER TABLE items ADD COLUMN shared_by_email VARCHAR(255) DEFAULT NULL",
-        // "ALTER TABLE items ADD COLUMN shared_at TIMESTAMP NULL DEFAULT NULL",
+        // Future schema changes go here
       ];
 
       const allAlters = [...sharedAlters, ...appAlters];

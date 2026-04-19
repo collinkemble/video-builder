@@ -6,13 +6,16 @@ const path = require('path');
 const crypto = require('crypto');
 const { query } = require('./src/db/connection');
 const { migrate } = require('./src/db/migrate');
+const { encrypt, decrypt } = require('./src/utils/encryption');
+const { runPipeline, getPipelineStatus } = require('./src/pipeline/orchestrator');
+const { getAvailableVoices } = require('./src/pipeline/voiceoverGenerator');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
 // ─── Middleware ───
 app.use(cors());
-app.use(express.json({ limit: '1mb' }));
+app.use(express.json({ limit: '5mb' }));
 
 // Serve static files (index.html, etc.)
 app.use(express.static(path.join(__dirname)));
@@ -140,7 +143,6 @@ app.delete('/api/feedback/:id', async (req, res) => {
 // SHARED ROUTES — API Keys
 // ═══════════════════════════════════════════════
 
-// vbld — Change this to your app's prefix (e.g. "dsw_", "dmb_")
 const API_KEY_PREFIX = 'vbld';
 
 function generateApiKeyToken() {
@@ -181,7 +183,7 @@ app.post('/api/api-keys', async (req, res) => {
     const user = await getOrCreateUser(email);
     const rawKey = generateApiKeyToken();
     const keyHash = hashApiKey(rawKey);
-    const keyPrefix = rawKey.substring(0, API_KEY_PREFIX.length + 4); // prefix + first 4 hex chars
+    const keyPrefix = rawKey.substring(0, API_KEY_PREFIX.length + 4);
 
     await query(
       'INSERT INTO api_keys (user_id, name, key_prefix, key_hash) VALUES (?, ?, ?, ?)',
@@ -228,8 +230,6 @@ app.delete('/api/api-keys/:id', async (req, res) => {
 // SHARED ROUTES — Users (admin only)
 // ═══════════════════════════════════════════════
 
-// GET /api/users — admin-only: list all users with asset counts
-// NOTE: Update the LEFT JOIN to match your app-specific asset table
 app.get('/api/users', async (req, res) => {
   try {
     const email = req.query.email;
@@ -238,9 +238,9 @@ app.get('/api/users', async (req, res) => {
     }
     const rows = await query(`
       SELECT u.id, u.email, u.name, u.created_at, u.last_login_at,
-             COUNT(i.id) AS item_count
+             COUNT(v.id) AS item_count
       FROM users u
-      LEFT JOIN items i ON i.user_id = u.id
+      LEFT JOIN videos v ON v.user_id = u.id
       GROUP BY u.id
       ORDER BY u.created_at DESC
     `);
@@ -255,8 +255,6 @@ app.get('/api/users', async (req, res) => {
 // SHARED ROUTES — Gemini Streaming Proxy
 // ═══════════════════════════════════════════════
 
-// POST /api/generate — SSE proxy to Gemini API
-// Streams from Gemini to keep Heroku's connection alive, then sends assembled response.
 app.post('/api/generate', async (req, res) => {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
@@ -271,13 +269,11 @@ app.post('/api/generate', async (req, res) => {
   const model = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
   const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:streamGenerateContent?alt=sse&key=${apiKey}`;
 
-  // Set up SSE headers so Heroku sees data flowing
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
   res.flushHeaders();
 
-  // Send a keepalive comment immediately so Heroku knows we're alive
   res.write(': keepalive\n\n');
 
   try {
@@ -301,7 +297,6 @@ app.post('/api/generate', async (req, res) => {
       return res.end();
     }
 
-    // Collect all text parts to send a final assembled response
     let allText = '';
     const reader = geminiResp.body.getReader();
     const decoder = new TextDecoder();
@@ -363,161 +358,478 @@ app.post('/api/generate', async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════
-// APP-SPECIFIC ROUTES — Replace this section
+// VIDEO BUILDER — Videos CRUD
 // ═══════════════════════════════════════════════
-// Below are example CRUD + sharing routes for "items".
-// Rename "items" to your asset type and customize the logic.
-//
-// GET  /api/items              — list items for user
-// GET  /api/items/:id          — get single item
-// POST /api/items              — create item
-// PUT  /api/items/:id          — update item
-// DELETE /api/items/:id        — delete item
-// POST /api/items/:id/share    — share item
-// POST /api/items/:id/share/confirm — replace or send new copy
 
-// GET /api/items — list items for a user
-app.get('/api/items', async (req, res) => {
+// GET /api/videos — list videos for a user
+app.get('/api/videos', async (req, res) => {
   try {
     const email = req.query.email;
     if (!email) return res.status(400).json({ error: 'Email required' });
 
     const user = await getOrCreateUser(email);
-    const items = await query(
-      'SELECT id, name, shared_by_email, shared_at, created_at, updated_at FROM items WHERE user_id = ? ORDER BY updated_at DESC',
+    const videos = await query(
+      `SELECT id, name, brand_name, pocketsic_project_name, status,
+              video_url, thumbnail_url, duration_actual, error,
+              shared_by, shared_at, created_at, updated_at
+       FROM videos WHERE user_id = ? ORDER BY updated_at DESC`,
       [user.id]
     );
-    res.json({ items });
+    res.json({ videos });
   } catch (err) {
-    console.error('Failed to list items:', err);
-    res.status(500).json({ error: 'Failed to list items' });
+    console.error('Failed to list videos:', err);
+    res.status(500).json({ error: 'Failed to list videos' });
   }
 });
 
-// GET /api/items/:id — get single item with full data
-app.get('/api/items/:id', async (req, res) => {
+// GET /api/videos/:id — get single video with full data
+app.get('/api/videos/:id', async (req, res) => {
   try {
     const email = req.query.email;
     if (!email) return res.status(400).json({ error: 'Email required' });
 
     const user = await getOrCreateUser(email);
-    const rows = await query(
-      'SELECT * FROM items WHERE id = ? AND user_id = ?',
-      [req.params.id, user.id]
-    );
+    const rows = await query('SELECT * FROM videos WHERE id = ? AND user_id = ?', [req.params.id, user.id]);
 
     if (rows.length === 0) {
-      return res.status(404).json({ error: 'Item not found' });
+      return res.status(404).json({ error: 'Video not found' });
     }
 
-    const item = rows[0];
-    // Parse data if it's a string
-    if (typeof item.data === 'string') {
-      item.data = JSON.parse(item.data);
-    }
+    const video = rows[0];
+    // Parse JSON fields
+    ['scene_data', 'scene_ids', 'narration_script', 'voiceover_timestamps'].forEach(field => {
+      if (typeof video[field] === 'string') {
+        try { video[field] = JSON.parse(video[field]); } catch (e) { /* keep as string */ }
+      }
+    });
 
-    res.json({ item });
+    res.json({ video });
   } catch (err) {
-    console.error('Failed to get item:', err);
-    res.status(500).json({ error: 'Failed to get item' });
+    console.error('Failed to get video:', err);
+    res.status(500).json({ error: 'Failed to get video' });
   }
 });
 
-// POST /api/items — create a new item
-app.post('/api/items', async (req, res) => {
+// POST /api/videos — create a new video
+app.post('/api/videos', async (req, res) => {
   try {
-    const { email, name, data } = req.body;
+    const { email, name, brandName, pocketsicProjectId, pocketsicProjectName, sceneData, voiceId, durationTarget } = req.body;
     if (!email || !name) {
       return res.status(400).json({ error: 'Missing required fields: email, name' });
     }
 
     const user = await getOrCreateUser(email);
+
     const result = await query(
-      'INSERT INTO items (user_id, name, data) VALUES (?, ?, ?)',
-      [user.id, name.trim(), data ? JSON.stringify(data) : null]
+      `INSERT INTO videos (user_id, name, brand_name, pocketsic_project_id, pocketsic_project_name,
+        scene_data, voice_id, duration_target, status)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'draft')`,
+      [
+        user.id,
+        name.trim(),
+        brandName || null,
+        pocketsicProjectId || null,
+        pocketsicProjectName || null,
+        sceneData ? JSON.stringify(sceneData) : null,
+        voiceId || 'default',
+        durationTarget || 180,
+      ]
     );
 
     res.status(201).json({
-      item: {
+      video: {
         id: result.insertId,
         name: name.trim(),
+        brand_name: brandName || null,
+        status: 'draft',
         created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
       }
     });
   } catch (err) {
-    console.error('Failed to create item:', err);
-    res.status(500).json({ error: 'Failed to create item' });
+    console.error('Failed to create video:', err);
+    res.status(500).json({ error: 'Failed to create video' });
   }
 });
 
-// PUT /api/items/:id — update an item
-app.put('/api/items/:id', async (req, res) => {
+// PUT /api/videos/:id — update video settings
+app.put('/api/videos/:id', async (req, res) => {
   try {
-    const { email, data } = req.body;
-    if (!email || !data) {
-      return res.status(400).json({ error: 'Email and data required' });
-    }
+    const { email, name, brandName, voiceId, durationTarget, sceneData, narrationScript } = req.body;
+    if (!email) return res.status(400).json({ error: 'Email required' });
 
     const user = await getOrCreateUser(email);
 
     // Verify ownership
-    const existing = await query('SELECT id FROM items WHERE id = ? AND user_id = ?', [req.params.id, user.id]);
+    const existing = await query('SELECT id FROM videos WHERE id = ? AND user_id = ?', [req.params.id, user.id]);
     if (existing.length === 0) {
-      return res.status(404).json({ error: 'Item not found' });
+      return res.status(404).json({ error: 'Video not found' });
     }
 
-    await query(
-      'UPDATE items SET data = ?, updated_at = NOW() WHERE id = ? AND user_id = ?',
-      [JSON.stringify(data), req.params.id, user.id]
-    );
+    // Build dynamic update — three-state race condition guard:
+    // truthy → use value, empty string → set null, null/undefined → keep existing
+    const sets = [];
+    const params = [];
+
+    if (name !== undefined && name !== null) {
+      sets.push('name = ?');
+      params.push(name === '' ? null : name.trim());
+    }
+    if (brandName !== undefined && brandName !== null) {
+      sets.push('brand_name = ?');
+      params.push(brandName === '' ? null : brandName.trim());
+    }
+    if (voiceId !== undefined && voiceId !== null) {
+      sets.push('voice_id = ?');
+      params.push(voiceId === '' ? 'default' : voiceId);
+    }
+    if (durationTarget !== undefined && durationTarget !== null) {
+      sets.push('duration_target = ?');
+      params.push(durationTarget || 180);
+    }
+    if (sceneData !== undefined && sceneData !== null) {
+      sets.push('scene_data = ?');
+      params.push(typeof sceneData === 'string' ? sceneData : JSON.stringify(sceneData));
+    }
+    if (narrationScript !== undefined && narrationScript !== null) {
+      sets.push('narration_script = ?');
+      params.push(typeof narrationScript === 'string' ? narrationScript : JSON.stringify(narrationScript));
+    }
+
+    if (sets.length > 0) {
+      sets.push('updated_at = NOW()');
+      params.push(req.params.id, user.id);
+      await query(`UPDATE videos SET ${sets.join(', ')} WHERE id = ? AND user_id = ?`, params);
+    }
 
     res.json({ success: true });
   } catch (err) {
-    console.error('Failed to update item:', err);
-    res.status(500).json({ error: 'Failed to update item' });
+    console.error('Failed to update video:', err);
+    res.status(500).json({ error: 'Failed to update video' });
   }
 });
 
-// DELETE /api/items/:id — delete an item
-app.delete('/api/items/:id', async (req, res) => {
+// DELETE /api/videos/:id — delete a video
+app.delete('/api/videos/:id', async (req, res) => {
   try {
     const email = req.query.email;
     if (!email) return res.status(400).json({ error: 'Email required' });
 
     const user = await getOrCreateUser(email);
     const result = await query(
-      'DELETE FROM items WHERE id = ? AND user_id = ?',
+      'DELETE FROM videos WHERE id = ? AND user_id = ?',
       [req.params.id, user.id]
     );
 
     if (result.affectedRows === 0) {
-      return res.status(404).json({ error: 'Item not found' });
+      return res.status(404).json({ error: 'Video not found' });
+    }
+
+    // TODO: Clean up R2 files for this video
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Failed to delete video:', err);
+    res.status(500).json({ error: 'Failed to delete video' });
+  }
+});
+
+// ═══════════════════════════════════════════════
+// VIDEO BUILDER — Pipeline & Generation
+// ═══════════════════════════════════════════════
+
+// POST /api/videos/:id/generate — start the full pipeline
+app.post('/api/videos/:id/generate', async (req, res) => {
+  try {
+    const { email } = req.body;
+    if (!email) return res.status(400).json({ error: 'Email required' });
+
+    const user = await getOrCreateUser(email);
+
+    // Verify ownership and check status
+    const rows = await query('SELECT * FROM videos WHERE id = ? AND user_id = ?', [req.params.id, user.id]);
+    if (rows.length === 0) {
+      return res.status(404).json({ error: 'Video not found' });
+    }
+
+    const video = rows[0];
+    if (['scripting', 'voiceover', 'capturing', 'compositing', 'uploading'].includes(video.status)) {
+      return res.status(409).json({ error: 'Video is already being generated', status: video.status });
+    }
+
+    // Reset status and clear previous jobs
+    await query('UPDATE videos SET status = ?, error = NULL WHERE id = ?', ['draft', req.params.id]);
+    await query('DELETE FROM video_jobs WHERE video_id = ?', [req.params.id]);
+
+    // Start pipeline in background (don't await)
+    res.json({ success: true, message: 'Pipeline started. Poll /api/videos/:id/status for progress.' });
+
+    // Run pipeline asynchronously
+    runPipeline(req.params.id, user.id).catch(err => {
+      console.error(`Pipeline failed for video ${req.params.id}:`, err.message);
+    });
+  } catch (err) {
+    console.error('Failed to start pipeline:', err);
+    res.status(500).json({ error: 'Failed to start pipeline' });
+  }
+});
+
+// GET /api/videos/:id/status — get pipeline progress
+app.get('/api/videos/:id/status', async (req, res) => {
+  try {
+    const email = req.query.email;
+    if (!email) return res.status(400).json({ error: 'Email required' });
+
+    const user = await getOrCreateUser(email);
+    const status = await getPipelineStatus(req.params.id, user.id);
+
+    if (!status) {
+      return res.status(404).json({ error: 'Video not found' });
+    }
+
+    res.json(status);
+  } catch (err) {
+    console.error('Failed to get pipeline status:', err);
+    res.status(500).json({ error: 'Failed to get pipeline status' });
+  }
+});
+
+// GET /api/voices — list available voices
+app.get('/api/voices', (req, res) => {
+  res.json({ voices: getAvailableVoices() });
+});
+
+// ═══════════════════════════════════════════════
+// VIDEO BUILDER — App Connections (PocketSIC)
+// ═══════════════════════════════════════════════
+
+// GET /api/connections — list connections for a user
+app.get('/api/connections', async (req, res) => {
+  try {
+    const email = req.query.email;
+    if (!email) return res.status(400).json({ error: 'Email required' });
+
+    const user = await getOrCreateUser(email);
+    const connections = await query(
+      `SELECT id, app_slug, app_name, api_key_prefix, last_tested_at, test_status, created_at
+       FROM app_connections WHERE user_id = ? ORDER BY created_at DESC`,
+      [user.id]
+    );
+    res.json({ connections });
+  } catch (err) {
+    console.error('Failed to list connections:', err);
+    res.status(500).json({ error: 'Failed to list connections' });
+  }
+});
+
+// POST /api/connections — save an app connection
+app.post('/api/connections', async (req, res) => {
+  try {
+    const { email, appSlug, appName, apiKey } = req.body;
+    if (!email || !appSlug || !apiKey) {
+      return res.status(400).json({ error: 'Missing required fields: email, appSlug, apiKey' });
+    }
+
+    const user = await getOrCreateUser(email);
+
+    // Encrypt the API key
+    const { encrypted, iv, tag } = encrypt(apiKey);
+    const keyPrefix = apiKey.substring(0, 8);
+
+    // Upsert: replace existing connection for same app
+    await query('DELETE FROM app_connections WHERE user_id = ? AND app_slug = ?', [user.id, appSlug]);
+
+    await query(
+      `INSERT INTO app_connections (user_id, app_slug, app_name, api_key_encrypted, api_key_iv, api_key_tag, api_key_prefix)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [user.id, appSlug, appName || appSlug, encrypted, iv, tag, keyPrefix]
+    );
+
+    res.status(201).json({ success: true, appSlug, keyPrefix });
+  } catch (err) {
+    console.error('Failed to save connection:', err);
+    res.status(500).json({ error: 'Failed to save connection' });
+  }
+});
+
+// DELETE /api/connections/:id — remove a connection
+app.delete('/api/connections/:id', async (req, res) => {
+  try {
+    const email = req.query.email;
+    if (!email) return res.status(400).json({ error: 'Email required' });
+
+    const user = await getOrCreateUser(email);
+    const result = await query(
+      'DELETE FROM app_connections WHERE id = ? AND user_id = ?',
+      [req.params.id, user.id]
+    );
+
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ error: 'Connection not found' });
     }
 
     res.json({ success: true });
   } catch (err) {
-    console.error('Failed to delete item:', err);
-    res.status(500).json({ error: 'Failed to delete item' });
+    console.error('Failed to delete connection:', err);
+    res.status(500).json({ error: 'Failed to delete connection' });
   }
 });
 
-// ─── Share Items ───
+// POST /api/connections/test — test a PocketSIC connection
+app.post('/api/connections/test', async (req, res) => {
+  try {
+    const { email, appSlug } = req.body;
+    if (!email || !appSlug) {
+      return res.status(400).json({ error: 'email and appSlug required' });
+    }
 
-// Helper: create a shared copy of an item for a recipient
-async function createSharedCopy(sourceItem, senderEmail, recipientEmail) {
-  const recipientUser = await getOrCreateUser(recipientEmail);
+    const user = await getOrCreateUser(email);
+    const rows = await query(
+      'SELECT * FROM app_connections WHERE user_id = ? AND app_slug = ?',
+      [user.id, appSlug]
+    );
 
-  const copyResult = await query(
-    'INSERT INTO items (user_id, name, data, shared_by_email, shared_at) VALUES (?, ?, ?, ?, NOW())',
-    [recipientUser.id, sourceItem.name, typeof sourceItem.data === 'string' ? sourceItem.data : JSON.stringify(sourceItem.data), senderEmail]
+    if (rows.length === 0) {
+      return res.status(404).json({ error: 'Connection not found' });
+    }
+
+    const conn = rows[0];
+    const apiKey = decrypt(conn.api_key_encrypted, conn.api_key_iv, conn.api_key_tag);
+
+    // Test by fetching PocketSIC projects
+    const baseUrl = process.env.POCKETSIC_BASE_URL || 'https://pocketsic.aubreydemo.com';
+    const testResp = await fetch(`${baseUrl}/api/projects?email=${encodeURIComponent(email)}`, {
+      headers: { 'X-API-Key': apiKey },
+    });
+
+    const testStatus = testResp.ok ? 'connected' : 'failed';
+    await query(
+      'UPDATE app_connections SET last_tested_at = NOW(), test_status = ? WHERE id = ?',
+      [testStatus, conn.id]
+    );
+
+    if (!testResp.ok) {
+      return res.json({ success: false, status: testStatus, error: `PocketSIC returned ${testResp.status}` });
+    }
+
+    res.json({ success: true, status: testStatus });
+  } catch (err) {
+    console.error('Connection test failed:', err);
+    res.status(500).json({ error: 'Connection test failed: ' + err.message });
+  }
+});
+
+// ═══════════════════════════════════════════════
+// VIDEO BUILDER — PocketSIC Proxy
+// ═══════════════════════════════════════════════
+
+// GET /api/pocketsic/projects — fetch projects from PocketSIC
+app.get('/api/pocketsic/projects', async (req, res) => {
+  try {
+    const email = req.query.email;
+    if (!email) return res.status(400).json({ error: 'Email required' });
+
+    const user = await getOrCreateUser(email);
+    const apiKey = await getUserPocketsicKey(user.id);
+    if (!apiKey) {
+      return res.status(400).json({ error: 'PocketSIC not connected. Add your API key in Connections.' });
+    }
+
+    const baseUrl = process.env.POCKETSIC_BASE_URL || 'https://pocketsic.aubreydemo.com';
+    const pResp = await fetch(`${baseUrl}/api/projects?email=${encodeURIComponent(email)}`, {
+      headers: { 'X-API-Key': apiKey },
+    });
+
+    if (!pResp.ok) {
+      const errText = await pResp.text();
+      return res.status(pResp.status).json({ error: `PocketSIC error: ${errText}` });
+    }
+
+    const data = await pResp.json();
+    res.json(data);
+  } catch (err) {
+    console.error('PocketSIC proxy failed:', err);
+    res.status(500).json({ error: 'Failed to fetch PocketSIC projects' });
+  }
+});
+
+// GET /api/pocketsic/projects/:id — fetch single project with scenes
+app.get('/api/pocketsic/projects/:id', async (req, res) => {
+  try {
+    const email = req.query.email;
+    if (!email) return res.status(400).json({ error: 'Email required' });
+
+    const user = await getOrCreateUser(email);
+    const apiKey = await getUserPocketsicKey(user.id);
+    if (!apiKey) {
+      return res.status(400).json({ error: 'PocketSIC not connected. Add your API key in Connections.' });
+    }
+
+    const baseUrl = process.env.POCKETSIC_BASE_URL || 'https://pocketsic.aubreydemo.com';
+    const pResp = await fetch(`${baseUrl}/api/projects/${req.params.id}?email=${encodeURIComponent(email)}`, {
+      headers: { 'X-API-Key': apiKey },
+    });
+
+    if (!pResp.ok) {
+      const errText = await pResp.text();
+      return res.status(pResp.status).json({ error: `PocketSIC error: ${errText}` });
+    }
+
+    const data = await pResp.json();
+    res.json(data);
+  } catch (err) {
+    console.error('PocketSIC proxy failed:', err);
+    res.status(500).json({ error: 'Failed to fetch PocketSIC project' });
+  }
+});
+
+// Helper: get decrypted PocketSIC API key for a user
+async function getUserPocketsicKey(userId) {
+  const rows = await query(
+    'SELECT api_key_encrypted, api_key_iv, api_key_tag FROM app_connections WHERE user_id = ? AND app_slug = ?',
+    [userId, 'pocketsic']
   );
-
-  return copyResult.insertId;
+  if (rows.length === 0) return null;
+  return decrypt(rows[0].api_key_encrypted, rows[0].api_key_iv, rows[0].api_key_tag);
 }
 
-// POST /api/items/:id/share — share an item with another user
-app.post('/api/items/:id/share', async (req, res) => {
+// ═══════════════════════════════════════════════
+// VIDEO BUILDER — Share Videos
+// ═══════════════════════════════════════════════
+
+// Helper: create a shared copy of a video for a recipient
+async function createSharedVideoCopy(sourceVideo, senderEmail, recipientEmail) {
+  const recipientUser = await getOrCreateUser(recipientEmail);
+
+  const result = await query(
+    `INSERT INTO videos (user_id, name, brand_name, pocketsic_project_id, pocketsic_project_name,
+      scene_data, narration_script, voiceover_timestamps, video_url, thumbnail_url, voiceover_url,
+      voice_id, duration_target, duration_actual, status, shared_by, shared_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
+    [
+      recipientUser.id,
+      sourceVideo.name,
+      sourceVideo.brand_name,
+      sourceVideo.pocketsic_project_id,
+      sourceVideo.pocketsic_project_name,
+      sourceVideo.scene_data ? (typeof sourceVideo.scene_data === 'string' ? sourceVideo.scene_data : JSON.stringify(sourceVideo.scene_data)) : null,
+      sourceVideo.narration_script ? (typeof sourceVideo.narration_script === 'string' ? sourceVideo.narration_script : JSON.stringify(sourceVideo.narration_script)) : null,
+      sourceVideo.voiceover_timestamps ? (typeof sourceVideo.voiceover_timestamps === 'string' ? sourceVideo.voiceover_timestamps : JSON.stringify(sourceVideo.voiceover_timestamps)) : null,
+      sourceVideo.video_url,
+      sourceVideo.thumbnail_url,
+      sourceVideo.voiceover_url,
+      sourceVideo.voice_id,
+      sourceVideo.duration_target,
+      sourceVideo.duration_actual,
+      sourceVideo.status === 'completed' ? 'completed' : 'draft',
+      senderEmail,
+    ]
+  );
+
+  return result.insertId;
+}
+
+// POST /api/videos/:id/share — share a video with another user
+app.post('/api/videos/:id/share', async (req, res) => {
   try {
     const { email, recipientEmail } = req.body;
     if (!email || !recipientEmail) {
@@ -525,21 +837,21 @@ app.post('/api/items/:id/share', async (req, res) => {
     }
 
     if (email.toLowerCase() === recipientEmail.toLowerCase()) {
-      return res.status(400).json({ error: 'You cannot share an item with yourself' });
+      return res.status(400).json({ error: 'You cannot share a video with yourself' });
     }
 
     const sender = await getOrCreateUser(email);
 
-    // Verify sender owns the item
-    const items = await query('SELECT * FROM items WHERE id = ? AND user_id = ?', [req.params.id, sender.id]);
-    if (items.length === 0) {
-      return res.status(404).json({ error: 'Item not found' });
+    // Verify sender owns the video
+    const videos = await query('SELECT * FROM videos WHERE id = ? AND user_id = ?', [req.params.id, sender.id]);
+    if (videos.length === 0) {
+      return res.status(404).json({ error: 'Video not found' });
     }
-    const sourceItem = items[0];
+    const sourceVideo = videos[0];
 
-    // Check if already shared to this recipient from this item
+    // Check if already shared to this recipient
     const existing = await query(
-      'SELECT id, copied_item_id, created_at FROM shared_items WHERE item_id = ? AND sender_user_id = ? AND recipient_email = ?',
+      'SELECT id, copied_video_id, created_at FROM shared_videos WHERE video_id = ? AND sender_user_id = ? AND recipient_email = ?',
       [req.params.id, sender.id, recipientEmail.toLowerCase()]
     );
 
@@ -547,28 +859,28 @@ app.post('/api/items/:id/share', async (req, res) => {
       return res.json({
         alreadyShared: true,
         sharedAt: existing[0].created_at,
-        copiedItemId: existing[0].copied_item_id,
+        copiedVideoId: existing[0].copied_video_id,
         shareRecordId: existing[0].id
       });
     }
 
     // First-time share: create copy and tracking record
-    const copiedItemId = await createSharedCopy(sourceItem, email, recipientEmail);
+    const copiedVideoId = await createSharedVideoCopy(sourceVideo, email, recipientEmail);
 
     await query(
-      'INSERT INTO shared_items (item_id, sender_user_id, sender_email, recipient_email, copied_item_id) VALUES (?, ?, ?, ?, ?)',
-      [req.params.id, sender.id, email.toLowerCase(), recipientEmail.toLowerCase(), copiedItemId]
+      'INSERT INTO shared_videos (video_id, sender_user_id, sender_email, recipient_email, copied_video_id) VALUES (?, ?, ?, ?, ?)',
+      [req.params.id, sender.id, email.toLowerCase(), recipientEmail.toLowerCase(), copiedVideoId]
     );
 
-    res.status(201).json({ success: true, copiedItemId });
+    res.status(201).json({ success: true, copiedVideoId });
   } catch (err) {
-    console.error('Failed to share item:', err);
-    res.status(500).json({ error: 'Failed to share item' });
+    console.error('Failed to share video:', err);
+    res.status(500).json({ error: 'Failed to share video' });
   }
 });
 
-// POST /api/items/:id/share/confirm — replace or send new copy
-app.post('/api/items/:id/share/confirm', async (req, res) => {
+// POST /api/videos/:id/share/confirm — replace or send new copy
+app.post('/api/videos/:id/share/confirm', async (req, res) => {
   try {
     const { email, recipientEmail, action } = req.body;
     if (!email || !recipientEmail || !action) {
@@ -580,17 +892,15 @@ app.post('/api/items/:id/share/confirm', async (req, res) => {
 
     const sender = await getOrCreateUser(email);
 
-    // Verify sender owns the item
-    const items = await query('SELECT * FROM items WHERE id = ? AND user_id = ?', [req.params.id, sender.id]);
-    if (items.length === 0) {
-      return res.status(404).json({ error: 'Item not found' });
+    const videos = await query('SELECT * FROM videos WHERE id = ? AND user_id = ?', [req.params.id, sender.id]);
+    if (videos.length === 0) {
+      return res.status(404).json({ error: 'Video not found' });
     }
-    const sourceItem = items[0];
+    const sourceVideo = videos[0];
 
     if (action === 'replace') {
-      // Find existing share record
       const existing = await query(
-        'SELECT id, copied_item_id FROM shared_items WHERE item_id = ? AND sender_user_id = ? AND recipient_email = ?',
+        'SELECT id, copied_video_id FROM shared_videos WHERE video_id = ? AND sender_user_id = ? AND recipient_email = ?',
         [req.params.id, sender.id, recipientEmail.toLowerCase()]
       );
 
@@ -598,30 +908,42 @@ app.post('/api/items/:id/share/confirm', async (req, res) => {
         return res.status(404).json({ error: 'No previous share found' });
       }
 
-      const copiedId = existing[0].copied_item_id;
+      const copiedId = existing[0].copied_video_id;
 
-      // Update the existing copy with current data
       if (copiedId) {
         await query(
-          'UPDATE items SET name = ?, data = ?, shared_by_email = ?, shared_at = NOW(), updated_at = NOW() WHERE id = ?',
-          [sourceItem.name, typeof sourceItem.data === 'string' ? sourceItem.data : JSON.stringify(sourceItem.data), email.toLowerCase(), copiedId]
+          `UPDATE videos SET name = ?, brand_name = ?, scene_data = ?, narration_script = ?,
+            voiceover_timestamps = ?, video_url = ?, thumbnail_url = ?, voiceover_url = ?,
+            duration_actual = ?, status = ?, shared_by = ?, shared_at = NOW(), updated_at = NOW()
+           WHERE id = ?`,
+          [
+            sourceVideo.name,
+            sourceVideo.brand_name,
+            sourceVideo.scene_data ? (typeof sourceVideo.scene_data === 'string' ? sourceVideo.scene_data : JSON.stringify(sourceVideo.scene_data)) : null,
+            sourceVideo.narration_script ? (typeof sourceVideo.narration_script === 'string' ? sourceVideo.narration_script : JSON.stringify(sourceVideo.narration_script)) : null,
+            sourceVideo.voiceover_timestamps ? (typeof sourceVideo.voiceover_timestamps === 'string' ? sourceVideo.voiceover_timestamps : JSON.stringify(sourceVideo.voiceover_timestamps)) : null,
+            sourceVideo.video_url,
+            sourceVideo.thumbnail_url,
+            sourceVideo.voiceover_url,
+            sourceVideo.duration_actual,
+            sourceVideo.status === 'completed' ? 'completed' : 'draft',
+            email.toLowerCase(),
+            copiedId,
+          ]
         );
       }
 
-      // Update tracking timestamp
-      await query('UPDATE shared_items SET created_at = NOW() WHERE id = ?', [existing[0].id]);
-
-      res.json({ success: true, action: 'replaced', copiedItemId: copiedId });
+      await query('UPDATE shared_videos SET created_at = NOW() WHERE id = ?', [existing[0].id]);
+      res.json({ success: true, action: 'replaced', copiedVideoId: copiedId });
     } else {
-      // Send a new copy
-      const copiedItemId = await createSharedCopy(sourceItem, email, recipientEmail);
+      const copiedVideoId = await createSharedVideoCopy(sourceVideo, email, recipientEmail);
 
       await query(
-        'INSERT INTO shared_items (item_id, sender_user_id, sender_email, recipient_email, copied_item_id) VALUES (?, ?, ?, ?, ?)',
-        [req.params.id, sender.id, email.toLowerCase(), recipientEmail.toLowerCase(), copiedItemId]
+        'INSERT INTO shared_videos (video_id, sender_user_id, sender_email, recipient_email, copied_video_id) VALUES (?, ?, ?, ?, ?)',
+        [req.params.id, sender.id, email.toLowerCase(), recipientEmail.toLowerCase(), copiedVideoId]
       );
 
-      res.status(201).json({ success: true, action: 'copied', copiedItemId });
+      res.status(201).json({ success: true, action: 'copied', copiedVideoId });
     }
   } catch (err) {
     console.error('Failed to confirm share:', err);
@@ -629,7 +951,7 @@ app.post('/api/items/:id/share/confirm', async (req, res) => {
   }
 });
 
-// SPA catch-all — serve index.html for any non-API route (enables deep links like /views/:id)
+// SPA catch-all — serve index.html for any non-API route
 app.get('/{*splat}', (req, res) => {
   res.sendFile(path.join(__dirname, 'index.html'));
 });
@@ -639,7 +961,6 @@ app.get('/{*splat}', (req, res) => {
 // ═══════════════════════════════════════════════
 
 async function start() {
-  // Run database migrations
   try {
     await migrate();
     console.log('✓ Database ready');
@@ -652,6 +973,12 @@ async function start() {
     console.log(`Video Builder running on http://localhost:${PORT}`);
     if (!process.env.GEMINI_API_KEY) {
       console.warn('⚠️  GEMINI_API_KEY not set — AI features will not work');
+    }
+    if (!process.env.ELEVENLABS_API_KEY) {
+      console.warn('⚠️  ELEVENLABS_API_KEY not set — voiceover will not work');
+    }
+    if (!process.env.R2_ACCOUNT_ID) {
+      console.warn('⚠️  R2 credentials not set — video upload will not work');
     }
   });
 

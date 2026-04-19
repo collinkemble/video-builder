@@ -34,7 +34,6 @@
     }
   </style>
   <style>
-    /* Mobile header — hamburger menu */
     @media (max-width: 768px) {
       .nav-desktop { display: none !important; }
       .actions-desktop { display: none !important; }
@@ -83,6 +82,24 @@
       background: rgba(255,255,255,0.1);
       margin: 4px 0;
     }
+    .status-badge {
+      display: inline-flex; align-items: center; gap: 4px;
+      font-size: 11px; font-weight: 700; padding: 2px 8px;
+      border-radius: 999px; text-transform: uppercase; letter-spacing: 0.04em;
+    }
+    .status-draft { background: #F3F4F6; color: #6B7280; }
+    .status-scripting, .status-voiceover, .status-capturing, .status-compositing, .status-uploading {
+      background: #FEF3C7; color: #92400E;
+    }
+    .status-completed { background: #D1FAE5; color: #065F46; }
+    .status-failed { background: #FEE2E2; color: #991B1B; }
+    .pipeline-step { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-bottom: 1px solid #f0f0f0; }
+    .pipeline-step:last-child { border-bottom: none; }
+    .step-icon { width: 28px; height: 28px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 13px; flex-shrink: 0; }
+    .step-pending .step-icon { background: #F3F4F6; color: #9CA3AF; }
+    .step-running .step-icon { background: #FEF3C7; color: #92400E; }
+    .step-completed .step-icon { background: #D1FAE5; color: #065F46; }
+    .step-failed .step-icon { background: #FEE2E2; color: #991B1B; }
   </style>
 </head>
 <body class="bg-surface min-h-screen font-sans">
@@ -91,15 +108,11 @@
   <!-- LOGIN SCREEN (shared — do not modify)          -->
   <!-- ═══════════════════════════════════════════════ -->
   <div id="login-section" class="min-h-screen flex items-center justify-center p-5 relative overflow-hidden" style="background: #032D60;">
-    <!-- Background dot pattern -->
     <div class="absolute inset-0" style="background-image: radial-gradient(rgba(1,118,211,0.15) 1px, transparent 1px); background-size: 30px 30px; opacity: 0.6;"></div>
-    <!-- Accent glow top-right -->
     <div class="absolute" style="top: -20%; right: -10%; width: 600px; height: 600px; border-radius: 50%; background: radial-gradient(circle, rgba(0,179,255,0.12) 0%, transparent 70%);"></div>
-    <!-- Accent glow bottom-left -->
     <div class="absolute" style="bottom: -15%; left: -10%; width: 500px; height: 500px; border-radius: 50%; background: radial-gradient(circle, rgba(1,118,211,0.15) 0%, transparent 70%);"></div>
 
     <div class="bg-white w-full max-w-[420px] relative z-10" style="border-radius: 16px; padding: 48px 40px; box-shadow: 0 24px 80px rgba(0,0,0,0.3), 0 0 0 1px rgba(255,255,255,0.05);">
-      <!-- Logo + branding -->
       <div class="text-center mb-9">
         <img src="https://sfse-public.sfse.dev/assets/sflogo.png" alt="Salesforce" class="mx-auto mb-5 block" style="width: 56px; height: 56px; object-fit: contain;">
         <h1 class="text-3xl font-bold" style="color: #032D60; letter-spacing: -0.03em;">Video Builder</h1>
@@ -149,11 +162,10 @@
   <div id="app-section" style="display: none;">
    <div style="display: flex; flex-direction: column; min-height: 100vh;">
 
-    <!-- Header — Salesforce navy navbar (shared) -->
+    <!-- Header -->
     <header style="position: sticky; top: 0; z-index: 1000; background: #032D60; border-bottom: 1px solid rgba(255,255,255,0.1);">
       <div style="max-width: 1200px; margin: 0 auto; padding: 0 24px; height: 56px;" class="flex items-center justify-between">
-        <!-- Left — Logo + Title (clickable → home) -->
-        <a href="#" onclick="showPage('items'); closeMobileMenu(); return false;" class="flex items-center gap-3" style="text-decoration: none; cursor: pointer;">
+        <a href="#" onclick="showPage('videos'); closeMobileMenu(); return false;" class="flex items-center gap-3" style="text-decoration: none; cursor: pointer;">
           <img src="https://sfse-public.sfse.dev/assets/sflogo.png" alt="Salesforce" style="width: 32px; height: 32px; object-fit: contain;">
           <div class="flex items-baseline gap-2">
             <span class="text-white font-bold" style="font-size: 15px; letter-spacing: -0.01em;">Video Builder</span>
@@ -161,31 +173,29 @@
           </div>
         </a>
 
-        <!-- Center — Navigation (desktop only) -->
         <div class="nav-desktop flex items-center gap-1">
-          <button id="nav-items" onclick="showPage('items')" class="cursor-pointer" style="padding: 6px 16px; border-radius: 6px; background: rgba(255,255,255,0.12); border: none; color: #FFFFFF; font-size: 13px; font-weight: 700; transition: background 0.15s ease;">Videos</button>
+          <button id="nav-videos" onclick="showPage('videos')" class="cursor-pointer" style="padding: 6px 16px; border-radius: 6px; background: rgba(255,255,255,0.12); border: none; color: #FFFFFF; font-size: 13px; font-weight: 700; transition: background 0.15s ease;">Videos</button>
+          <button id="nav-connections" onclick="showPage('connections')" class="cursor-pointer" style="padding: 6px 16px; border-radius: 6px; background: transparent; border: none; color: rgba(255,255,255,0.7); font-size: 13px; font-weight: 500; transition: background 0.15s ease;" onmouseenter="if(!this.dataset.active)this.style.background='rgba(255,255,255,0.07)'" onmouseleave="if(!this.dataset.active)this.style.background='transparent'">Connections</button>
           <button id="nav-api-keys" onclick="showPage('api-keys')" class="cursor-pointer" style="padding: 6px 16px; border-radius: 6px; background: transparent; border: none; color: rgba(255,255,255,0.7); font-size: 13px; font-weight: 500; transition: background 0.15s ease;" onmouseenter="if(!this.dataset.active)this.style.background='rgba(255,255,255,0.07)'" onmouseleave="if(!this.dataset.active)this.style.background='transparent'">API Keys</button>
           <button id="nav-feedback" onclick="showPage('feedback')" class="hidden cursor-pointer" style="padding: 6px 16px; border-radius: 6px; background: transparent; border: none; color: rgba(255,255,255,0.7); font-size: 13px; font-weight: 500; transition: background 0.15s ease;" onmouseenter="if(!this.dataset.active)this.style.background='rgba(255,255,255,0.07)'" onmouseleave="if(!this.dataset.active)this.style.background='transparent'">Feedback</button>
           <button id="nav-users" onclick="showPage('users')" class="hidden cursor-pointer" style="padding: 6px 16px; border-radius: 6px; background: transparent; border: none; color: rgba(255,255,255,0.7); font-size: 13px; font-weight: 500; transition: background 0.15s ease;" onmouseenter="if(!this.dataset.active)this.style.background='rgba(255,255,255,0.07)'" onmouseleave="if(!this.dataset.active)this.style.background='transparent'">Users</button>
         </div>
 
-        <!-- Right — User actions (desktop only) -->
         <div class="actions-desktop flex items-center gap-3">
           <span id="user-email" style="display: none;"></span>
-          <button onclick="openFeedbackDialog()" class="cursor-pointer" style="color: rgba(255,255,255,0.7); font-size: 13px; background: none; border: none; padding: 6px 12px; border-radius: 6px; transition: background 0.15s ease;" onmouseenter="this.style.background='rgba(255,255,255,0.07)'" onmouseleave="this.style.background='transparent'">💬 Give Feedback</button>
+          <button onclick="openFeedbackDialog()" class="cursor-pointer" style="color: rgba(255,255,255,0.7); font-size: 13px; background: none; border: none; padding: 6px 12px; border-radius: 6px; transition: background 0.15s ease;" onmouseenter="this.style.background='rgba(255,255,255,0.07)'" onmouseleave="this.style.background='transparent'">💬 Feedback</button>
           <button onclick="handleLogout()" class="cursor-pointer" style="color: rgba(255,255,255,0.7); font-size: 13px; background: none; border: none; padding: 6px 12px; border-radius: 6px; transition: background 0.15s ease;" onmouseenter="this.style.background='rgba(255,255,255,0.07)'" onmouseleave="this.style.background='transparent'">Sign Out</button>
         </div>
 
-        <!-- Hamburger button (mobile only) -->
         <button class="hamburger-btn cursor-pointer" onclick="toggleMobileMenu()" style="background: none; border: none; color: white; padding: 8px; border-radius: 6px;" aria-label="Menu">
           <svg id="hamburger-icon" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
           <svg id="close-icon" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="display:none;"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
         </button>
       </div>
 
-      <!-- Mobile dropdown menu -->
       <div id="mobile-menu" class="mobile-menu">
-        <button id="mob-nav-items" onclick="showPage('items'); closeMobileMenu();">📝 Videos</button>
+        <button id="mob-nav-videos" onclick="showPage('videos'); closeMobileMenu();">🎬 Videos</button>
+        <button id="mob-nav-connections" onclick="showPage('connections'); closeMobileMenu();">🔗 Connections</button>
         <button id="mob-nav-api-keys" onclick="showPage('api-keys'); closeMobileMenu();">🔑 API Keys</button>
         <button id="mob-nav-feedback" onclick="showPage('feedback'); closeMobileMenu();" style="display:none;">📋 Feedback</button>
         <button id="mob-nav-users" onclick="showPage('users'); closeMobileMenu();" style="display:none;">👤 Users</button>
@@ -198,164 +208,159 @@
     <div style="flex: 1;">
 
     <!-- ═══════════════════════════════════════════════ -->
-    <!-- APP-SPECIFIC CONTENT — Replace this section    -->
+    <!-- VIDEOS HOME                                    -->
     <!-- ═══════════════════════════════════════════════ -->
-    <div id="items-home" style="max-width: 912px; margin: 0 auto; padding: 32px 16px 0;">
-      <!-- Header row -->
+    <div id="videos-home" style="max-width: 912px; margin: 0 auto; padding: 32px 16px 0;">
       <div class="flex items-center justify-between" style="margin-bottom: 24px;">
         <div>
           <h2 style="font-size: 35px; line-height: 40px; letter-spacing: -0.025em; font-weight: 700; color: #032D60; margin: 0 0 4px 0;">Videos</h2>
-          <p style="font-size: 14px; line-height: 20px; color: #888; margin: 0;">Your saved items</p>
+          <p style="font-size: 14px; line-height: 20px; color: #888; margin: 0;">Your CX story videos</p>
         </div>
-        <button onclick="openNewItemDialog()" class="cursor-pointer" style="background: #0176D3; color: white; font-weight: 700; font-size: 16px; height: 40px; padding: 0 16px; border-radius: 8px; border: none;">+ New Video</button>
+        <button onclick="openNewVideoDialog()" class="cursor-pointer" style="background: #0176D3; color: white; font-weight: 700; font-size: 16px; height: 40px; padding: 0 16px; border-radius: 8px; border: none;">+ New Video</button>
       </div>
 
-      <!-- Item cards grid -->
-      <div id="items-grid" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 16px;"></div>
+      <div id="videos-grid" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px;"></div>
 
-      <!-- Empty state -->
-      <div id="items-empty" class="hidden">
+      <div id="videos-empty" class="hidden">
         <div style="background: white; border-radius: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); padding: 60px 40px; text-align: center;">
-          <p style="font-size: 28px; margin-bottom: 8px;">📝</p>
-          <h3 style="font-size: 18px; font-weight: 500; margin-bottom: 8px; color: #111;">No items yet</h3>
-          <p style="font-size: 14px; color: #888; margin-bottom: 16px;">Create your first item to get started.</p>
-          <button onclick="openNewItemDialog()" class="cursor-pointer" style="background: #0176D3; color: white; font-weight: 500; font-size: 15px; height: 40px; padding: 0 16px; border-radius: 8px; border: none;">+ Create Video</button>
+          <p style="font-size: 42px; margin-bottom: 12px;">🎬</p>
+          <h3 style="font-size: 18px; font-weight: 500; margin-bottom: 8px; color: #111;">No videos yet</h3>
+          <p style="font-size: 14px; color: #888; margin-bottom: 16px;">Create your first video from a PocketSIC project.</p>
+          <button onclick="openNewVideoDialog()" class="cursor-pointer" style="background: #0176D3; color: white; font-weight: 500; font-size: 15px; height: 40px; padding: 0 16px; border-radius: 8px; border: none;">+ Create Video</button>
         </div>
       </div>
     </div>
-    <!-- END APP-SPECIFIC CONTENT -->
 
     <!-- ═══════════════════════════════════════════════ -->
-    <!-- SHARED: Item Detail Page                       -->
+    <!-- VIDEO DETAIL                                   -->
     <!-- ═══════════════════════════════════════════════ -->
-    <div id="item-detail" class="hidden" style="max-width: 912px; margin: 0 auto; padding: 32px 16px 0;">
-      <!-- Header row with back button -->
+    <div id="video-detail" class="hidden" style="max-width: 960px; margin: 0 auto; padding: 32px 16px 0;">
+      <!-- Header -->
       <div class="flex items-center justify-between" style="margin-bottom: 24px;">
         <div class="flex items-center gap-3">
-          <button onclick="showPage('items')" class="cursor-pointer" style="background: none; border: none; color: #0176D3; font-size: 14px; font-weight: 600; padding: 0;">← Back</button>
+          <button onclick="showPage('videos')" class="cursor-pointer" style="background: none; border: none; color: #0176D3; font-size: 14px; font-weight: 600; padding: 0;">← Back</button>
           <span style="color: #ccc;">|</span>
           <h2 id="detail-breadcrumb" style="font-size: 20px; font-weight: 700; color: #032D60; margin: 0;"></h2>
+          <span id="detail-status-badge" class="status-badge status-draft">Draft</span>
         </div>
         <div class="flex items-center gap-2">
-          <button onclick="openShareDialogForItem()" class="cursor-pointer" style="background: none; border: 1px solid #d1d5db; color: #374151; font-size: 13px; font-weight: 600; padding: 6px 14px; border-radius: 8px;">Share</button>
+          <button onclick="openShareDialogForVideo()" class="cursor-pointer" style="background: none; border: 1px solid #d1d5db; color: #374151; font-size: 13px; font-weight: 600; padding: 6px 14px; border-radius: 8px;">Share</button>
+          <button id="generate-btn" onclick="startGeneration()" class="cursor-pointer" style="background: #0176D3; color: white; font-size: 13px; font-weight: 700; padding: 6px 16px; border-radius: 8px; border: none;">🎬 Generate Video</button>
         </div>
       </div>
 
-      <!-- View Settings card -->
+      <!-- Video Player (shown when completed) -->
+      <div id="video-player-wrap" class="hidden mb-6" style="background: #000; border-radius: 12px; overflow: hidden; aspect-ratio: 16/9;">
+        <video id="video-player" controls style="width: 100%; height: 100%; object-fit: contain;"></video>
+      </div>
+
+      <!-- Pipeline Progress (shown during generation) -->
+      <div id="pipeline-progress" class="hidden mb-6" style="background: white; border-radius: 12px; padding: 24px; box-shadow: 0 1px 3px rgba(0,0,0,0.08);">
+        <p class="font-bold mb-3" style="font-size: 15px; color: #032D60;">Pipeline Progress</p>
+        <div id="pipeline-steps"></div>
+      </div>
+
+      <!-- Error Banner -->
+      <div id="video-error-banner" class="hidden mb-6" style="background: #FEF2F2; border: 1px solid #FEE2E2; border-radius: 12px; padding: 16px 20px;">
+        <p class="font-bold text-sm mb-1" style="color: #991B1B;">Generation Failed</p>
+        <p id="video-error-text" class="text-sm" style="color: #B91C1C;"></p>
+        <button onclick="startGeneration()" class="mt-2 cursor-pointer" style="background: #EF4444; color: white; font-size: 13px; font-weight: 600; padding: 6px 14px; border-radius: 8px; border: none;">🔄 Retry</button>
+      </div>
+
+      <!-- Settings Card -->
       <div class="mb-6" style="background: white; border-radius: 12px; padding: 24px; box-shadow: 0 1px 3px rgba(0,0,0,0.08);">
         <p class="font-bold mb-4" style="font-size: 15px; color: #032D60;">Video Settings</p>
         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
-          <!-- APP-SPECIFIC: Add your editable fields here -->
-          <!-- Example fields (customize per app): -->
           <div>
             <label class="block text-xs font-bold mb-1" style="color: #032D60;">Name <span style="color: #ea001e;">*</span></label>
             <input id="edit-name" type="text" class="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm">
           </div>
           <div>
-            <label class="block text-xs font-bold mb-1" style="color: #032D60;">Website URL</label>
-            <input id="edit-website" type="url" class="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm">
+            <label class="block text-xs font-bold mb-1" style="color: #032D60;">Brand Name</label>
+            <input id="edit-brand" type="text" class="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm" placeholder="e.g. NTO">
           </div>
-          <div style="grid-column: 1 / -1;">
-            <label class="block text-xs font-bold mb-1" style="color: #032D60;">Description</label>
-            <textarea id="edit-description" rows="2" class="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm resize-none"></textarea>
+          <div>
+            <label class="block text-xs font-bold mb-1" style="color: #032D60;">Voice</label>
+            <select id="edit-voice" class="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm">
+              <option value="default">Default (Adam)</option>
+            </select>
+          </div>
+          <div>
+            <label class="block text-xs font-bold mb-1" style="color: #032D60;">Target Duration</label>
+            <select id="edit-duration" class="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm">
+              <option value="120">~2 minutes</option>
+              <option value="180" selected>~3 minutes</option>
+              <option value="300">~5 minutes</option>
+            </select>
           </div>
         </div>
 
-        <!-- Save Settings button (hidden until fields change) -->
         <div id="save-settings-bar" class="hidden" style="margin-top: 14px; display: none;">
           <div class="flex items-center justify-between" style="background: #FFFBEB; border: 1px solid #F59E0B; border-radius: 10px; padding: 10px 16px;">
             <span style="font-size: 13px; color: #92400E;">⚠️ You have unsaved changes</span>
-            <button id="save-settings-btn" onclick="saveItemSettings()" class="px-4 py-2 text-sm font-bold text-white rounded-lg cursor-pointer" style="background: #16A34A; height: 36px;">💾 Save Settings</button>
+            <button id="save-settings-btn" onclick="saveVideoSettings()" class="px-4 py-2 text-sm font-bold text-white rounded-lg cursor-pointer" style="background: #16A34A; height: 36px;">💾 Save Settings</button>
           </div>
         </div>
       </div>
 
-      <!-- APP-SPECIFIC: Add your item content/preview area here -->
-      <div id="item-content" style="background: white; border-radius: 12px; padding: 24px; box-shadow: 0 1px 3px rgba(0,0,0,0.08);">
-        <p class="font-bold mb-4" style="font-size: 15px; color: #032D60;">Content</p>
-        <div id="item-content-body">
-          <!-- Customize: Render your item content here (e.g. prompt, table, preview) -->
-          <p style="color: #999; font-size: 14px;">Item content will be rendered here.</p>
+      <!-- Scene Data Card -->
+      <div class="mb-6" style="background: white; border-radius: 12px; padding: 24px; box-shadow: 0 1px 3px rgba(0,0,0,0.08);">
+        <div class="flex items-center justify-between mb-4">
+          <p class="font-bold" style="font-size: 15px; color: #032D60;">Scenes</p>
+          <span id="scene-count" style="font-size: 12px; color: #888;"></span>
         </div>
+        <div id="scenes-list"></div>
+        <div id="scenes-empty" class="hidden" style="text-align: center; padding: 20px;">
+          <p style="color: #999; font-size: 14px;">No scenes imported yet. Import a PocketSIC project to get started.</p>
+        </div>
+      </div>
+
+      <!-- Script Preview Card -->
+      <div id="script-card" class="hidden mb-6" style="background: white; border-radius: 12px; padding: 24px; box-shadow: 0 1px 3px rgba(0,0,0,0.08);">
+        <p class="font-bold mb-4" style="font-size: 15px; color: #032D60;">Narration Script</p>
+        <div id="script-segments"></div>
       </div>
 
       <!-- Metadata -->
       <div class="flex items-center gap-4 mt-4 mb-8">
         <span id="detail-meta-created" style="font-size: 12px; color: #aaa;"></span>
         <span id="detail-meta-updated" style="font-size: 12px; color: #aaa;"></span>
+        <span id="detail-meta-project" style="font-size: 12px; color: #aaa;"></span>
       </div>
     </div>
 
     <!-- ═══════════════════════════════════════════════ -->
-    <!-- SHARED: Share Dialog                           -->
+    <!-- CONNECTIONS PAGE                               -->
     <!-- ═══════════════════════════════════════════════ -->
-    <div id="share-dialog" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4" style="background: rgba(0,0,0,0.5);">
-      <div class="bg-white rounded-2xl shadow-2xl w-full max-w-[450px] p-8">
-        <!-- Default state: email input -->
-        <div id="share-form-state">
-          <h3 class="text-lg font-bold text-gray-800 mb-1">Share Video</h3>
-          <p class="text-sm text-gray-500 mb-5">Send a copy of <strong id="share-item-name"></strong> to another user.</p>
-          <div class="mb-4">
-            <label for="share-email-input" class="block font-bold mb-2" style="color: #032D60; font-size: 13px;">Recipient Email</label>
-            <input id="share-email-input" type="email" placeholder="name@company.com"
-              class="w-full px-4 py-3 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition text-gray-800" style="font-size: 15px;">
-          </div>
-          <p id="share-error" class="hidden text-sm mb-3" style="color: #C23934;"></p>
-          <div class="flex justify-end gap-3">
-            <button onclick="closeShareDialog()" class="px-4 py-2 text-sm font-medium text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200 cursor-pointer">Cancel</button>
-            <button id="share-submit-btn" onclick="submitShare()" class="px-4 py-2 text-sm font-bold text-white rounded-lg cursor-pointer" style="background: #0176D3;">Share</button>
-          </div>
-        </div>
-
-        <!-- Already shared state -->
-        <div id="share-already-state" class="hidden">
-          <h3 class="text-lg font-bold text-gray-800 mb-1">Already Shared</h3>
-          <p class="text-sm text-gray-500 mb-5">You already shared this with <strong id="share-already-email"></strong> on <span id="share-already-date"></span>.</p>
-          <p class="text-sm text-gray-500 mb-5">Would you like to replace the previous copy with this version, or send them a new copy?</p>
-          <div class="flex justify-end gap-3">
-            <button onclick="closeShareDialog()" class="px-4 py-2 text-sm font-medium text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200 cursor-pointer">Cancel</button>
-            <button onclick="confirmShare('copy')" class="px-4 py-2 text-sm font-bold rounded-lg cursor-pointer" style="border: 1px solid #d1d5db; background: white; color: #374151;">Send New Copy</button>
-            <button onclick="confirmShare('replace')" class="px-4 py-2 text-sm font-bold text-white rounded-lg cursor-pointer" style="background: #0176D3;">Replace Previous</button>
-          </div>
-        </div>
-
-        <!-- Loading state -->
-        <div id="share-loading-state" class="hidden py-6">
-          <div class="flex flex-col items-center">
-            <div class="flex gap-2 mb-4">
-              <div class="w-3 h-3 bg-brand rounded-full" style="animation: pulse-dot 1.4s infinite ease-in-out both; animation-delay: 0s;"></div>
-              <div class="w-3 h-3 bg-brand rounded-full" style="animation: pulse-dot 1.4s infinite ease-in-out both; animation-delay: 0.2s;"></div>
-              <div class="w-3 h-3 bg-brand rounded-full" style="animation: pulse-dot 1.4s infinite ease-in-out both; animation-delay: 0.4s;"></div>
-            </div>
-            <p class="text-sm text-gray-500">Sharing...</p>
-          </div>
-        </div>
-
-        <!-- Success state -->
-        <div id="share-success-state" class="hidden">
-          <div class="flex flex-col items-center py-4">
-            <div style="width: 48px; height: 48px; border-radius: 50%; background: #ECFDF5; display: flex; align-items: center; justify-content: center; margin-bottom: 16px;">
-              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#10B981" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>
-            </div>
-            <h3 class="text-lg font-bold text-gray-800 mb-1">Shared!</h3>
-            <p class="text-sm text-gray-500 mb-5" id="share-success-message"></p>
-            <button onclick="closeShareDialog()" class="px-5 py-2 text-sm font-bold text-white rounded-lg cursor-pointer" style="background: #0176D3;">Done</button>
-          </div>
-        </div>
+    <div id="connections-section" class="hidden" style="max-width: 700px; margin: 0 auto; padding: 32px 16px 0;">
+      <div class="mb-6">
+        <h2 class="text-2xl font-bold text-gray-800 mb-1">Connections</h2>
+        <p class="text-sm text-gray-500">Connect to PocketSIC to import your demo projects and scenes.</p>
       </div>
-    </div>
 
-    <!-- ═══════════════════════════════════════════════ -->
-    <!-- SHARED: Delete Confirmation Dialog             -->
-    <!-- ═══════════════════════════════════════════════ -->
-    <div id="delete-dialog" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4" style="background: rgba(0,0,0,0.5);">
-      <div class="bg-white rounded-2xl shadow-2xl w-full max-w-[450px] p-8">
-        <h3 class="text-lg font-bold text-gray-800 mb-2">Delete Video</h3>
-        <p class="text-sm text-gray-500 mb-5">Are you sure you want to delete <strong id="delete-item-name"></strong>? This action cannot be undone.</p>
-        <div class="flex justify-end gap-3">
-          <button onclick="closeDeleteDialog()" class="px-4 py-2 text-sm font-medium text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200 cursor-pointer">Cancel</button>
-          <button id="delete-confirm-btn" onclick="confirmDeleteItem()" class="px-4 py-2 text-sm font-bold text-white rounded-lg cursor-pointer" style="background: #E5534B;">Delete</button>
+      <!-- PocketSIC Connection -->
+      <div style="background: white; border-radius: 12px; padding: 24px; box-shadow: 0 1px 3px rgba(0,0,0,0.08);">
+        <div class="flex items-center gap-4 mb-4">
+          <div style="width: 48px; height: 48px; border-radius: 12px; background: linear-gradient(135deg, #032D60, #0176D3); display: flex; align-items: center; justify-content: center; font-size: 22px; color: white; flex-shrink: 0;">📱</div>
+          <div style="flex: 1;">
+            <p class="font-bold" style="font-size: 16px; color: #032D60;">PocketSIC</p>
+            <p style="font-size: 13px; color: #888;">Import scenes from your PocketSIC demo projects</p>
+          </div>
+          <span id="conn-pocketsic-status" class="status-badge status-draft">Not Connected</span>
         </div>
+
+        <div class="mb-4">
+          <label class="block text-xs font-bold mb-1" style="color: #032D60;">PocketSIC API Key</label>
+          <div class="flex gap-2">
+            <input id="conn-pocketsic-key" type="password" placeholder="Paste your PocketSIC API key"
+              class="flex-1 px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm">
+            <button onclick="savePocketsicConnection()" class="px-4 py-2 text-sm font-bold text-white rounded-lg cursor-pointer" style="background: #0176D3;">Save</button>
+            <button onclick="testPocketsicConnection()" id="conn-test-btn" class="px-4 py-2 text-sm font-medium rounded-lg cursor-pointer" style="background: #F3F4F6; color: #374151;">Test</button>
+          </div>
+          <p id="conn-pocketsic-msg" class="hidden mt-2 text-sm"></p>
+        </div>
+
+        <p style="font-size: 12px; color: #aaa;">You can generate an API key from the PocketSIC app under Settings → API Keys.</p>
       </div>
     </div>
 
@@ -373,7 +378,6 @@
 
       <p id="ak-error" class="hidden text-sm mb-4" style="color: #C23934;"></p>
 
-      <!-- Newly created key callout -->
       <div id="ak-new-key-callout" class="hidden mb-6 rounded-lg p-4" style="background: #ECFDF5; border: 1px solid #6EE7B7;">
         <p class="font-bold text-sm mb-2" style="color: #065F46;">API key created — copy it now, it won't be shown again!</p>
         <div class="flex items-center gap-3">
@@ -383,7 +387,6 @@
         </div>
       </div>
 
-      <!-- Keys table -->
       <div id="ak-table-wrap" class="bg-white rounded-2xl shadow-md overflow-hidden">
         <table class="w-full text-sm">
           <thead style="background: #F4F6F9;">
@@ -403,11 +406,10 @@
         <p class="text-gray-400 text-sm">No API keys yet. Create one to enable external tool access.</p>
       </div>
 
-      <!-- Usage instructions -->
       <div class="mt-6 p-4 rounded-lg" style="background: #F4F6F9; border: 1px solid #D8DDE6;">
         <h3 class="font-bold text-gray-800 text-sm mb-3">Usage</h3>
         <p class="text-sm text-gray-600 mb-2">Include the API key in the <code class="text-xs px-1.5 py-0.5 rounded bg-gray-200">X-API-Key</code> header:</p>
-        <code class="block text-xs px-3 py-2.5 rounded bg-white border border-gray-200" style="word-break: break-all;">curl -H "X-API-Key: vbldyour_key_here" https://video-builder.aubreydemo.com/api/generate</code>
+        <code class="block text-xs px-3 py-2.5 rounded bg-white border border-gray-200" style="word-break: break-all;">curl -H "X-API-Key: vbldyour_key_here" https://video-builder.aubreydemo.com/api/videos</code>
       </div>
     </div>
 
@@ -437,7 +439,7 @@
             <h2 class="text-xl font-semibold text-gray-800">Feedback</h2>
             <span id="feedback-count" class="text-xs font-semibold px-2.5 py-0.5 rounded-full bg-gray-100 text-gray-500">0</span>
           </div>
-          <button onclick="showPage('items')" class="text-sm text-gray-500 hover:text-gray-700 underline cursor-pointer">Close</button>
+          <button onclick="showPage('videos')" class="text-sm text-gray-500 hover:text-gray-700 underline cursor-pointer">Close</button>
         </div>
         <div id="feedback-list"></div>
         <div id="feedback-empty" class="hidden text-center py-10">
@@ -451,12 +453,9 @@
     <!-- SHARED: Admin Users Page                       -->
     <!-- ═══════════════════════════════════════════════ -->
     <div id="admin-users-section" class="hidden" style="max-width: 1024px; margin: 0 auto; padding: 32px 16px 0;">
-      <!-- Heading -->
       <div class="flex items-center justify-between" style="margin-bottom: 20px;">
         <h2 style="font-size: 28px; line-height: 36px; letter-spacing: -0.56px; font-weight: 700; color: #032D60; margin: 0;">Users</h2>
       </div>
-
-      <!-- Stat Cards -->
       <div style="display: flex; gap: 16px; margin-bottom: 20px;">
         <div style="flex: 1; text-align: center; padding: 20px; background: white; border: 1px solid #d8dde6; border-radius: 8px; box-shadow: 0 1px 3px rgba(3,45,96,0.06);">
           <span style="display: block; font-size: 12px; font-weight: 700; color: rgba(0,7,20,0.624); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px;">Total Users</span>
@@ -467,16 +466,12 @@
           <span id="stat-total-items" style="font-size: 28px; font-weight: 700; color: #0176D3;">0</span>
         </div>
       </div>
-
-      <!-- Sort Buttons -->
       <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 16px;">
         <span style="font-size: 14px; font-weight: 500; color: rgba(0,7,20,0.624);">Sort by:</span>
         <button onclick="sortUsers('first_login')" id="sort-first-login" class="cursor-pointer" style="height: 24px; padding: 0 8px; border-radius: 3px; font-size: 12px; font-weight: 700; border: none; background: #0161B0; color: #fff;">First Login</button>
         <button onclick="sortUsers('last_login')" id="sort-last-login" class="cursor-pointer" style="height: 24px; padding: 0 8px; border-radius: 3px; font-size: 12px; font-weight: 700; border: 1px solid rgba(0,109,203,0.5); background: transparent; color: rgba(0,109,203,0.95);">Last Login</button>
         <button onclick="sortUsers('items')" id="sort-items" class="cursor-pointer" style="height: 24px; padding: 0 8px; border-radius: 3px; font-size: 12px; font-weight: 700; border: 1px solid rgba(0,109,203,0.5); background: transparent; color: rgba(0,109,203,0.95);">Videos Created</button>
       </div>
-
-      <!-- Table Header -->
       <div style="display: flex; align-items: center; padding: 8px 20px; border-bottom: 2px solid #d8dde6;">
         <span style="flex: 2; font-size: 12px; font-weight: 700; color: rgba(0,7,20,0.624); text-transform: uppercase; letter-spacing: 0.5px;">Email</span>
         <span style="flex: 1; font-size: 12px; font-weight: 700; color: rgba(0,7,20,0.624); text-transform: uppercase; letter-spacing: 0.5px;">Name</span>
@@ -484,11 +479,7 @@
         <span style="width: 120px; font-size: 12px; font-weight: 700; color: rgba(0,7,20,0.624); text-transform: uppercase; letter-spacing: 0.5px; text-align: center;">Last Login</span>
         <span style="width: 80px; font-size: 12px; font-weight: 700; color: rgba(0,7,20,0.624); text-transform: uppercase; letter-spacing: 0.5px; text-align: center;">Videos</span>
       </div>
-
-      <!-- Data Rows -->
       <div id="users-rows" style="display: flex; flex-direction: column; gap: 8px; margin-top: 8px;"></div>
-
-      <!-- Empty State -->
       <div id="users-empty" class="hidden text-center py-10">
         <p class="text-2xl mb-1">👤</p>
         <p class="text-gray-400">No users found.</p>
@@ -497,21 +488,125 @@
 
     </div><!-- end flex:1 content wrapper -->
 
-    <!-- SHARED: Footer -->
+    <!-- Footer -->
     <footer style="text-align: center; padding: 24px 16px 16px; font-size: 12px; color: #9e9e9e; letter-spacing: 0.01em;">
       &copy; 2026 Made by <a href="https://salesforce.enterprise.slack.com/team/U01G523L4TF" target="_blank" style="color: #0176D3; text-decoration: none;" onmouseenter="this.style.textDecoration='underline'" onmouseleave="this.style.textDecoration='none'">Aubrey Kemble</a> with <a href="https://meshmesh.io" target="_blank" style="color: #0176D3; text-decoration: none;" onmouseenter="this.style.textDecoration='underline'" onmouseleave="this.style.textDecoration='none'">MeshMesh</a>. For demo purposes only.
     </footer>
-   </div><!-- end flex column wrapper -->
+   </div>
   </div>
 
   <!-- ═══════════════════════════════════════════════ -->
-  <!-- SHARED: Feedback Dialog (overlay)              -->
+  <!-- NEW VIDEO DIALOG                               -->
+  <!-- ═══════════════════════════════════════════════ -->
+  <div id="new-video-dialog" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4" style="background: rgba(0,0,0,0.5);">
+    <div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg p-8">
+      <h3 class="text-lg font-bold text-gray-800 mb-1">New Video</h3>
+      <p class="text-sm text-gray-500 mb-5">Create a video from a PocketSIC demo project.</p>
+
+      <div class="mb-4">
+        <label class="block text-xs font-bold mb-1" style="color: #032D60;">Video Name <span style="color: #ea001e;">*</span></label>
+        <input id="new-video-name" type="text" placeholder="e.g. NTO Connected CX Story"
+          class="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm">
+      </div>
+
+      <div class="mb-4">
+        <label class="block text-xs font-bold mb-1" style="color: #032D60;">Brand Name</label>
+        <input id="new-video-brand" type="text" placeholder="e.g. Northern Trail Outfitters"
+          class="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm">
+      </div>
+
+      <div class="mb-4">
+        <label class="block text-xs font-bold mb-1" style="color: #032D60;">PocketSIC Project</label>
+        <div id="project-picker-loading" class="hidden text-sm text-gray-400 py-2">Loading projects...</div>
+        <div id="project-picker-error" class="hidden text-sm py-2" style="color: #C23934;"></div>
+        <select id="new-video-project" class="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm">
+          <option value="">— Select a project (optional) —</option>
+        </select>
+        <p class="mt-1 text-xs text-gray-400">You can also import scenes later.</p>
+      </div>
+
+      <p id="new-video-error" class="hidden text-sm mb-3" style="color: #C23934;"></p>
+
+      <div class="flex justify-end gap-3">
+        <button onclick="closeNewVideoDialog()" class="px-4 py-2 text-sm font-medium text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200 cursor-pointer">Cancel</button>
+        <button id="new-video-submit" onclick="createNewVideo()" class="px-4 py-2 text-sm font-bold text-white rounded-lg cursor-pointer" style="background: #0176D3;">Create Video</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════ -->
+  <!-- SHARE DIALOG                                    -->
+  <!-- ═══════════════════════════════════════════════ -->
+  <div id="share-dialog" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4" style="background: rgba(0,0,0,0.5);">
+    <div class="bg-white rounded-2xl shadow-2xl w-full max-w-[450px] p-8">
+      <div id="share-form-state">
+        <h3 class="text-lg font-bold text-gray-800 mb-1">Share Video</h3>
+        <p class="text-sm text-gray-500 mb-5">Send a copy of <strong id="share-item-name"></strong> to another user.</p>
+        <div class="mb-4">
+          <label for="share-email-input" class="block font-bold mb-2" style="color: #032D60; font-size: 13px;">Recipient Email</label>
+          <input id="share-email-input" type="email" placeholder="name@company.com"
+            class="w-full px-4 py-3 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition text-gray-800" style="font-size: 15px;">
+        </div>
+        <p id="share-error" class="hidden text-sm mb-3" style="color: #C23934;"></p>
+        <div class="flex justify-end gap-3">
+          <button onclick="closeShareDialog()" class="px-4 py-2 text-sm font-medium text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200 cursor-pointer">Cancel</button>
+          <button id="share-submit-btn" onclick="submitShare()" class="px-4 py-2 text-sm font-bold text-white rounded-lg cursor-pointer" style="background: #0176D3;">Share</button>
+        </div>
+      </div>
+      <div id="share-already-state" class="hidden">
+        <h3 class="text-lg font-bold text-gray-800 mb-1">Already Shared</h3>
+        <p class="text-sm text-gray-500 mb-5">You already shared this with <strong id="share-already-email"></strong> on <span id="share-already-date"></span>.</p>
+        <p class="text-sm text-gray-500 mb-5">Would you like to replace the previous copy with this version, or send them a new copy?</p>
+        <div class="flex justify-end gap-3">
+          <button onclick="closeShareDialog()" class="px-4 py-2 text-sm font-medium text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200 cursor-pointer">Cancel</button>
+          <button onclick="confirmShare('copy')" class="px-4 py-2 text-sm font-bold rounded-lg cursor-pointer" style="border: 1px solid #d1d5db; background: white; color: #374151;">Send New Copy</button>
+          <button onclick="confirmShare('replace')" class="px-4 py-2 text-sm font-bold text-white rounded-lg cursor-pointer" style="background: #0176D3;">Replace Previous</button>
+        </div>
+      </div>
+      <div id="share-loading-state" class="hidden py-6">
+        <div class="flex flex-col items-center">
+          <div class="flex gap-2 mb-4">
+            <div class="w-3 h-3 bg-brand rounded-full" style="animation: pulse-dot 1.4s infinite ease-in-out both; animation-delay: 0s;"></div>
+            <div class="w-3 h-3 bg-brand rounded-full" style="animation: pulse-dot 1.4s infinite ease-in-out both; animation-delay: 0.2s;"></div>
+            <div class="w-3 h-3 bg-brand rounded-full" style="animation: pulse-dot 1.4s infinite ease-in-out both; animation-delay: 0.4s;"></div>
+          </div>
+          <p class="text-sm text-gray-500">Sharing...</p>
+        </div>
+      </div>
+      <div id="share-success-state" class="hidden">
+        <div class="flex flex-col items-center py-4">
+          <div style="width: 48px; height: 48px; border-radius: 50%; background: #ECFDF5; display: flex; align-items: center; justify-content: center; margin-bottom: 16px;">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#10B981" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>
+          </div>
+          <h3 class="text-lg font-bold text-gray-800 mb-1">Shared!</h3>
+          <p class="text-sm text-gray-500 mb-5" id="share-success-message"></p>
+          <button onclick="closeShareDialog()" class="px-5 py-2 text-sm font-bold text-white rounded-lg cursor-pointer" style="background: #0176D3;">Done</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════ -->
+  <!-- DELETE DIALOG                                   -->
+  <!-- ═══════════════════════════════════════════════ -->
+  <div id="delete-dialog" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4" style="background: rgba(0,0,0,0.5);">
+    <div class="bg-white rounded-2xl shadow-2xl w-full max-w-[450px] p-8">
+      <h3 class="text-lg font-bold text-gray-800 mb-2">Delete Video</h3>
+      <p class="text-sm text-gray-500 mb-5">Are you sure you want to delete <strong id="delete-item-name"></strong>? This action cannot be undone.</p>
+      <div class="flex justify-end gap-3">
+        <button onclick="closeDeleteDialog()" class="px-4 py-2 text-sm font-medium text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200 cursor-pointer">Cancel</button>
+        <button id="delete-confirm-btn" onclick="confirmDeleteVideo()" class="px-4 py-2 text-sm font-bold text-white rounded-lg cursor-pointer" style="background: #E5534B;">Delete</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════ -->
+  <!-- FEEDBACK DIALOG                                 -->
   <!-- ═══════════════════════════════════════════════ -->
   <div id="feedback-dialog" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4" style="background: rgba(0,0,0,0.5);">
     <div class="bg-white rounded-2xl shadow-2xl w-full max-w-md p-8">
       <h3 class="text-lg font-bold text-gray-800 mb-1">Give Feedback</h3>
       <p class="text-sm text-gray-500 mb-5">Help us improve Video Builder — we'd love to hear from you!</p>
-
       <div id="feedback-form-content">
         <div class="mb-3">
           <label class="block text-xs font-bold mb-1" style="color: #032D60;">Name</label>
@@ -523,21 +618,18 @@
         </div>
         <div class="mb-3">
           <label class="block text-xs font-bold mb-1" style="color: #032D60;">Subject</label>
-          <input id="fb-subject" type="text" placeholder="Brief summary of your feedback" class="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm">
+          <input id="fb-subject" type="text" placeholder="Brief summary" class="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm">
         </div>
         <div class="mb-4">
           <label class="block text-xs font-bold mb-1" style="color: #032D60;">Details</label>
           <textarea id="fb-body" rows="4" placeholder="Tell us more…" class="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm resize-none"></textarea>
         </div>
-
         <p id="fb-error" class="hidden text-sm mb-3" style="color: #C23934;"></p>
-
         <div class="flex justify-end gap-3">
           <button onclick="closeFeedbackDialog()" class="px-4 py-2 text-sm font-medium text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200 cursor-pointer">Cancel</button>
-          <button id="fb-submit-btn" onclick="submitFeedback()" class="px-4 py-2 text-sm font-bold text-white rounded-lg cursor-pointer" style="background: #0176D3;">Submit Feedback</button>
+          <button id="fb-submit-btn" onclick="submitFeedback()" class="px-4 py-2 text-sm font-bold text-white rounded-lg cursor-pointer" style="background: #0176D3;">Submit</button>
         </div>
       </div>
-
       <div id="feedback-success" class="hidden text-center py-8">
         <p class="text-4xl mb-3">✅</p>
         <p class="text-lg font-bold" style="color: #2E844A;">Thank you for your feedback!</p>
@@ -570,22 +662,18 @@ function deleteCookie(name, domain) {
 let magic = null;
 let cookieDomain = null;
 
-// Initialize Magic and check auth — fetches config from the server
 async function initAndCheckAuth() {
   try {
     const configResp = await fetch('/api/auth/config');
     const config = await configResp.json();
-
     const magicKey = config.magicPublishableKey;
     cookieDomain = config.cookieDomain || null;
     if (magicKey) magic = new Magic(magicKey);
   } catch (err) {
     console.warn('Config fetch failed:', err.message);
   }
+  if (!magic) return;
 
-  if (!magic) return; // Magic key not configured
-
-  // Check for a shared cookie token from another subdomain
   const sharedToken = getCookie('didToken');
   if (sharedToken) {
     try {
@@ -595,12 +683,9 @@ async function initAndCheckAuth() {
         showApp(email);
         return;
       }
-    } catch (err) {
-      console.log('Magic session check failed:', err.message);
-    }
+    } catch (err) { console.log('Magic session check failed:', err.message); }
   }
 
-  // Fall back to checking Magic's own session
   try {
     const isLoggedIn = await magic.user.isLoggedIn();
     if (isLoggedIn) {
@@ -608,12 +693,10 @@ async function initAndCheckAuth() {
       try {
         const didToken = await magic.user.getIdToken();
         if (didToken) setCookie('didToken', didToken, cookieDomain);
-      } catch (e) { /* token fetch optional */ }
+      } catch (e) {}
       showApp(email);
     }
-  } catch (err) {
-    console.log('Auth check:', err.message);
-  }
+  } catch (err) { console.log('Auth check:', err.message); }
 }
 
 async function handleLogin() {
@@ -632,12 +715,8 @@ async function handleLogin() {
   try {
     loginForm.classList.add('hidden');
     loginLoading.classList.remove('hidden');
-
     const didToken = await magic.auth.loginWithEmailOTP({ email, showUI: true });
-
-    // Store token in shared cookie for cross-subdomain SSO
     if (didToken) setCookie('didToken', didToken, cookieDomain);
-
     const userInfo = await magic.user.getInfo();
     showApp(userInfo.email);
   } catch (err) {
@@ -645,11 +724,8 @@ async function handleLogin() {
     loginLoading.classList.add('hidden');
     loginBtn.disabled = false;
     loginBtn.textContent = 'Sign In with Magic Link';
-
-    if (err.message && err.message.includes('cancel')) {
-      // User cancelled — do nothing
-    } else {
-      loginError.textContent = err.message || 'Login failed. Please try again.';
+    if (err.message && err.message.includes('cancel')) {} else {
+      loginError.textContent = err.message || 'Login failed.';
       loginError.classList.remove('hidden');
     }
   }
@@ -673,26 +749,26 @@ async function showApp(email) {
   document.getElementById('app-section').style.display = 'block';
   document.getElementById('user-email').textContent = email;
 
-  // Check if URL has a deep link (e.g. /views/123)
   const viewMatch = window.location.pathname.match(/^\/views\/(\d+)$/);
-  const pageMap = { '/api-keys': 'api-keys', '/feedback': 'feedback', '/users': 'users' };
+  const pageMap = { '/connections': 'connections', '/api-keys': 'api-keys', '/feedback': 'feedback', '/users': 'users' };
   const urlPage = pageMap[window.location.pathname];
 
   if (viewMatch) {
-    viewItem(parseInt(viewMatch[1]), true);
+    viewVideo(parseInt(viewMatch[1]), true);
   } else if (urlPage) {
     showPage(urlPage, true);
   } else {
-    showPage('items', true);
+    showPage('videos', true);
   }
 
-  // Replace current history state so back button works from initial load
   const initState = viewMatch
-    ? { page: 'item-detail', itemId: parseInt(viewMatch[1]) }
-    : { page: urlPage || 'items' };
+    ? { page: 'video-detail', videoId: parseInt(viewMatch[1]) }
+    : { page: urlPage || 'videos' };
   history.replaceState(initState, '', window.location.pathname);
 
-  // Check if user is admin and show/hide admin nav links
+  // Load voices
+  loadVoices();
+
   try {
     const resp = await fetch(`/api/is-admin?email=${encodeURIComponent(email)}`);
     const data = await resp.json();
@@ -701,82 +777,28 @@ async function showApp(email) {
     if (feedbackNav) feedbackNav.classList.toggle('hidden', !data.isAdmin);
     if (usersNav) usersNav.classList.toggle('hidden', !data.isAdmin);
     syncMobileAdminNav();
-  } catch (err) {
-    console.log('Admin check failed:', err.message);
-  }
+  } catch (err) { console.log('Admin check failed:', err.message); }
 }
 
-// Check auth on page load
 initAndCheckAuth();
 
-// Allow Enter key to trigger login
 document.getElementById('login-email').addEventListener('keydown', function(e) {
   if (e.key === 'Enter') handleLogin();
 });
 
 // ═══════════════════════════════════════════════
-// SHARED: Utility
+// Utility
 // ═══════════════════════════════════════════════
 function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+function fmtDate(d) { return d ? new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—'; }
 
-// ═══════════════════════════════════════════════
-// SHARED: SSE Helper — call Gemini streaming proxy
-// ═══════════════════════════════════════════════
-async function callGeminiSSE(bodyPayload, statusEl) {
-  if (statusEl) statusEl.textContent = 'Connecting to Gemini...';
-
-  const resp = await fetch('/api/generate', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(bodyPayload)
-  });
-
-  if (statusEl) statusEl.textContent = 'Generating (this may take a minute)...';
-
-  const reader = resp.body.getReader();
-  const decoder = new TextDecoder();
-  let sseBuffer = '';
-  let finalData = null;
-
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    sseBuffer += decoder.decode(value, { stream: true });
-
-    const lines = sseBuffer.split('\n');
-    sseBuffer = lines.pop() || '';
-
-    for (const line of lines) {
-      if (line.startsWith('data: ')) {
-        const dataStr = line.slice(6).trim();
-        if (dataStr === '[DONE]') continue;
-        try {
-          const parsed = JSON.parse(dataStr);
-          if (parsed.error) throw new Error(parsed.error);
-          if (parsed.candidates) finalData = parsed;
-        } catch (e) {
-          if (e.message && !e.message.includes('JSON')) throw e;
-        }
-      }
-    }
-  }
-
-  if (!finalData) throw new Error('No response received from Gemini. Please try again.');
-
-  if (statusEl) statusEl.textContent = 'Processing response...';
-
-  let content = finalData.candidates?.[0]?.content?.parts?.[0]?.text;
-  if (!content) throw new Error('No content returned from Gemini.');
-  content = content.trim();
-
-  const jsonMatch = content.match(/```(?:json)?\s*([\s\S]*?)```/);
-  if (jsonMatch) content = jsonMatch[1].trim();
-
-  return JSON.parse(content);
+function statusText(s) {
+  const map = { draft: 'Draft', scripting: 'Scripting', voiceover: 'Voiceover', capturing: 'Capturing', compositing: 'Compositing', uploading: 'Uploading', completed: 'Completed', failed: 'Failed' };
+  return map[s] || s;
 }
 
 // ═══════════════════════════════════════════════
-// SHARED: Mobile Menu
+// Mobile Menu
 // ═══════════════════════════════════════════════
 function toggleMobileMenu() {
   const menu = document.getElementById('mobile-menu');
@@ -784,46 +806,38 @@ function toggleMobileMenu() {
   document.getElementById('hamburger-icon').style.display = isOpen ? 'none' : 'block';
   document.getElementById('close-icon').style.display = isOpen ? 'block' : 'none';
 }
-
 function closeMobileMenu() {
   const menu = document.getElementById('mobile-menu');
   menu.classList.remove('open');
   document.getElementById('hamburger-icon').style.display = 'block';
   document.getElementById('close-icon').style.display = 'none';
 }
-
-// Sync mobile menu admin items with desktop nav visibility
 function syncMobileAdminNav() {
   const feedbackDesktop = document.getElementById('nav-feedback');
   const usersDesktop = document.getElementById('nav-users');
   const feedbackMobile = document.getElementById('mob-nav-feedback');
   const usersMobile = document.getElementById('mob-nav-users');
-  if (feedbackDesktop && feedbackMobile) {
-    feedbackMobile.style.display = feedbackDesktop.classList.contains('hidden') ? 'none' : 'block';
-  }
-  if (usersDesktop && usersMobile) {
-    usersMobile.style.display = usersDesktop.classList.contains('hidden') ? 'none' : 'block';
-  }
+  if (feedbackDesktop && feedbackMobile) feedbackMobile.style.display = feedbackDesktop.classList.contains('hidden') ? 'none' : 'block';
+  if (usersDesktop && usersMobile) usersMobile.style.display = usersDesktop.classList.contains('hidden') ? 'none' : 'block';
 }
 
 // ═══════════════════════════════════════════════
-// SHARED: Page Navigation
+// Page Navigation
 // ═══════════════════════════════════════════════
-let currentPage = 'items';
+let currentPage = 'videos';
 
 function showPage(page, skipPush) {
   currentPage = page;
 
-  // Hide all content pages
-  document.getElementById('items-home').classList.toggle('hidden', page !== 'items');
-  document.getElementById('item-detail').classList.toggle('hidden', page !== 'item-detail');
+  document.getElementById('videos-home').classList.toggle('hidden', page !== 'videos');
+  document.getElementById('video-detail').classList.toggle('hidden', page !== 'video-detail');
+  document.getElementById('connections-section').classList.toggle('hidden', page !== 'connections');
   document.getElementById('api-keys-section').classList.toggle('hidden', page !== 'api-keys');
   document.getElementById('admin-feedback-section').classList.toggle('hidden', page !== 'feedback');
   document.getElementById('admin-users-section').classList.toggle('hidden', page !== 'users');
 
-  // Update desktop nav button styles — item-detail highlights the Items tab
-  const navPage = page === 'item-detail' ? 'items' : page;
-  ['items', 'api-keys', 'users', 'feedback'].forEach(p => {
+  const navPage = page === 'video-detail' ? 'videos' : page;
+  ['videos', 'connections', 'api-keys', 'users', 'feedback'].forEach(p => {
     const btn = document.getElementById('nav-' + p);
     if (!btn) return;
     const isActive = p === navPage;
@@ -833,355 +847,656 @@ function showPage(page, skipPush) {
     btn.style.fontWeight = isActive ? '700' : '500';
   });
 
-  // Update mobile nav active state
-  ['items', 'api-keys', 'feedback', 'users'].forEach(p => {
+  ['videos', 'connections', 'api-keys', 'feedback', 'users'].forEach(p => {
     const mobBtn = document.getElementById('mob-nav-' + p);
-    if (!mobBtn) return;
-    mobBtn.classList.toggle('mobile-nav-active', p === navPage);
+    if (mobBtn) mobBtn.classList.toggle('mobile-nav-active', p === navPage);
   });
 
-  // Push URL state (skip when triggered by popstate or viewItem which pushes its own)
-  if (!skipPush && page !== 'item-detail') {
-    const urlMap = { 'items': '/', 'api-keys': '/api-keys', 'feedback': '/feedback', 'users': '/users' };
-    const url = urlMap[page] || '/';
-    history.pushState({ page: page }, '', url);
+  if (!skipPush && page !== 'video-detail') {
+    const urlMap = { 'videos': '/', 'connections': '/connections', 'api-keys': '/api-keys', 'feedback': '/feedback', 'users': '/users' };
+    history.pushState({ page }, '', urlMap[page] || '/');
   }
 
-  // Load data for the page
-  if (page === 'items') loadItems();
+  if (page === 'videos') loadVideos();
+  if (page === 'connections') loadConnections();
   if (page === 'api-keys') loadApiKeys();
   if (page === 'users') loadUsers();
   if (page === 'feedback') loadAdminFeedback();
 }
 
 // ═══════════════════════════════════════════════
-// SHARED: API Key Functions
+// Videos List
 // ═══════════════════════════════════════════════
-let newKeyValue = null;
-
-async function loadApiKeys() {
+async function loadVideos() {
   const email = document.getElementById('user-email').textContent;
-  const tbody = document.getElementById('ak-tbody');
-  const emptyEl = document.getElementById('ak-empty');
-  const tableWrap = document.getElementById('ak-table-wrap');
+  const grid = document.getElementById('videos-grid');
+  const empty = document.getElementById('videos-empty');
 
-  tbody.innerHTML = '<tr><td colspan="5" class="text-center text-gray-400 py-6">Loading...</td></tr>';
-  emptyEl.classList.add('hidden');
-  tableWrap.classList.remove('hidden');
+  grid.innerHTML = '<p class="text-center text-gray-400 py-10 col-span-full">Loading...</p>';
+  empty.classList.add('hidden');
 
   try {
-    const resp = await fetch(`/api/api-keys?email=${encodeURIComponent(email)}`);
-    if (!resp.ok) throw new Error('Failed to load API keys');
+    const resp = await fetch(`/api/videos?email=${encodeURIComponent(email)}`);
+    if (!resp.ok) throw new Error('Failed to load videos');
     const data = await resp.json();
-    const keys = data.apiKeys || [];
+    const videos = data.videos || [];
 
-    if (keys.length === 0) {
-      tableWrap.classList.add('hidden');
-      emptyEl.classList.remove('hidden');
+    if (videos.length === 0) {
+      grid.innerHTML = '';
+      empty.classList.remove('hidden');
       return;
     }
 
-    tbody.innerHTML = keys.map(key => `
-      <tr class="border-t border-gray-100">
-        <td class="px-5 py-3 font-bold text-gray-800">${esc(key.name)}</td>
-        <td class="px-5 py-3"><code class="text-xs px-1.5 py-0.5 rounded bg-gray-100">${esc(key.key_prefix)}••••••••</code></td>
-        <td class="px-5 py-3 text-gray-500">${new Date(key.created_at).toLocaleDateString()}</td>
-        <td class="px-5 py-3 text-gray-500">${key.last_used_at ? new Date(key.last_used_at).toLocaleDateString() : 'Never'}</td>
-        <td class="px-5 py-3 text-right">
-          <button onclick="revokeApiKey(${key.id}, '${esc(key.name)}')" class="px-3 py-1 text-xs font-medium text-red-500 rounded-md cursor-pointer" style="background: #FEE2E2;">Revoke</button>
-        </td>
-      </tr>
-    `).join('');
+    empty.classList.add('hidden');
+
+    grid.innerHTML = videos.map((v) => {
+      const safeName = esc(v.name).replace(/'/g, "\\'");
+      const isProcessing = ['scripting','voiceover','capturing','compositing','uploading'].includes(v.status);
+      const thumbStyle = v.thumbnail_url
+        ? `background-image: url('${v.thumbnail_url}'); background-size: cover; background-position: center;`
+        : 'background: linear-gradient(135deg, #032D60, #0176D3);';
+
+      return `
+      <div style="background: white; border-radius: 12px; overflow: hidden; cursor: pointer; transition: box-shadow 0.15s ease, transform 0.15s ease; position: relative; box-shadow: 0 1px 3px rgba(0,0,0,0.08); border: 1px solid #e5e7eb;"
+        onclick="viewVideo(${v.id})"
+        onmouseenter="this.style.boxShadow='0 4px 16px rgba(1,118,211,0.15)'; this.style.transform='translateY(-2px)'; this.querySelector('.del-btn').style.opacity='1';"
+        onmouseleave="this.style.boxShadow='0 1px 3px rgba(0,0,0,0.08)'; this.style.transform='none'; this.querySelector('.del-btn').style.opacity='0';">
+        <!-- Thumbnail -->
+        <div style="aspect-ratio: 16/9; ${thumbStyle} display: flex; align-items: center; justify-content: center; position: relative;">
+          ${v.status === 'completed' ? '<div style="width: 48px; height: 48px; border-radius: 50%; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center;"><svg width="20" height="20" viewBox="0 0 24 24" fill="white"><path d="M8 5v14l11-7z"/></svg></div>' : ''}
+          ${isProcessing ? '<div style="width: 48px; height: 48px; border-radius: 50%; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center;"><div class="flex gap-1"><div class="w-2 h-2 bg-white rounded-full" style="animation: pulse-dot 1.4s infinite ease-in-out both; animation-delay: 0s;"></div><div class="w-2 h-2 bg-white rounded-full" style="animation: pulse-dot 1.4s infinite ease-in-out both; animation-delay: 0.2s;"></div><div class="w-2 h-2 bg-white rounded-full" style="animation: pulse-dot 1.4s infinite ease-in-out both; animation-delay: 0.4s;"></div></div></div>' : ''}
+          ${!v.thumbnail_url && !isProcessing && v.status !== 'completed' ? '<span style="font-size: 36px; opacity: 0.6;">🎬</span>' : ''}
+          ${v.duration_actual ? '<span style="position: absolute; bottom: 8px; right: 8px; background: rgba(0,0,0,0.7); color: white; font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 4px;">' + formatDuration(v.duration_actual) + '</span>' : ''}
+        </div>
+        <!-- Info -->
+        <div style="padding: 14px 16px;">
+          <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 6px;">
+            <div style="font-weight: 600; font-size: 15px; color: #111; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1;">${esc(v.name)}</div>
+            <button class="del-btn" onclick="event.stopPropagation(); deleteVideo(${v.id}, '${safeName}')" style="opacity: 0; transition: opacity 0.15s ease; cursor: pointer; flex-shrink: 0; background: none; border: none; color: #e5534b; padding: 4px; border-radius: 4px;" title="Delete">
+              <svg width="14" height="14" viewBox="0 0 15 15" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M5.5 1C5.22386 1 5 1.22386 5 1.5C5 1.77614 5.22386 2 5.5 2H9.5C9.77614 2 10 1.77614 10 1.5C10 1.22386 9.77614 1 9.5 1H5.5ZM3 3.5C3 3.22386 3.22386 3 3.5 3H5H10H11.5C11.7761 3 12 3.22386 12 3.5C12 3.77614 11.7761 4 11.5 4H11V12C11 12.5523 10.5523 13 10 13H5C4.44772 13 4 12.5523 4 12V4H3.5C3.22386 4 3 3.77614 3 3.5ZM5 4H10V12H5V4Z" fill="currentColor" fill-rule="evenodd" clip-rule="evenodd"/></svg>
+            </button>
+          </div>
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <span class="status-badge status-${v.status}">${statusText(v.status)}</span>
+            ${v.brand_name ? '<span style="font-size: 12px; color: #888;">' + esc(v.brand_name) + '</span>' : ''}
+          </div>
+          <div style="font-size: 11px; color: #aaa; margin-top: 6px;">${fmtDate(v.created_at)}</div>
+          ${v.shared_by ? '<div style="font-size: 11px; color: #6b7280; margin-top: 4px;">📤 Shared by ' + esc(v.shared_by) + '</div>' : ''}
+        </div>
+      </div>`;
+    }).join('');
   } catch (err) {
-    tbody.innerHTML = `<tr><td colspan="5" class="text-center text-red-500 py-6">${esc(err.message)}</td></tr>`;
+    grid.innerHTML = `<p class="text-center text-red-500 py-10 col-span-full">${esc(err.message)}</p>`;
   }
 }
 
-function openCreateKeyDialog() {
-  document.getElementById('ak-name').value = '';
-  document.getElementById('ak-create-dialog').classList.remove('hidden');
-  document.getElementById('ak-name').focus();
+function formatDuration(seconds) {
+  const m = Math.floor(seconds / 60);
+  const s = Math.floor(seconds % 60);
+  return m + ':' + String(s).padStart(2, '0');
 }
 
-function closeCreateKeyDialog() {
-  document.getElementById('ak-create-dialog').classList.add('hidden');
-}
+// ═══════════════════════════════════════════════
+// Video Detail
+// ═══════════════════════════════════════════════
+let currentVideoId = null;
+let currentVideoData = null;
+let statusPollInterval = null;
 
-async function createApiKey() {
-  const name = document.getElementById('ak-name').value.trim();
-  if (!name) return;
-
+async function viewVideo(id, skipPush) {
   const email = document.getElementById('user-email').textContent;
-  const btn = document.getElementById('ak-create-btn');
-  btn.disabled = true;
-  btn.textContent = 'Creating...';
+  showPage('video-detail', true);
 
   try {
-    const resp = await fetch('/api/api-keys', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, name })
-    });
+    const resp = await fetch(`/api/videos/${id}?email=${encodeURIComponent(email)}`);
+    if (!resp.ok) throw new Error('Video not found');
+    const data = await resp.json();
+    const video = data.video;
 
-    if (!resp.ok) {
-      const data = await resp.json();
-      throw new Error(data.error || 'Failed to create API key');
+    currentVideoId = video.id;
+    currentVideoData = video;
+
+    // Header
+    document.getElementById('detail-breadcrumb').textContent = video.name;
+    const badge = document.getElementById('detail-status-badge');
+    badge.className = 'status-badge status-' + video.status;
+    badge.textContent = statusText(video.status);
+
+    // Settings
+    document.getElementById('edit-name').value = video.name || '';
+    document.getElementById('edit-brand').value = video.brand_name || '';
+    document.getElementById('edit-voice').value = video.voice_id || 'default';
+    document.getElementById('edit-duration').value = String(video.duration_target || 180);
+
+    // Store originals
+    window._origSettings = {
+      name: video.name || '',
+      brand: video.brand_name || '',
+      voice: video.voice_id || 'default',
+      duration: String(video.duration_target || 180),
+    };
+    hideSaveSettingsBar();
+
+    // Video player
+    const playerWrap = document.getElementById('video-player-wrap');
+    const player = document.getElementById('video-player');
+    if (video.status === 'completed' && video.video_url) {
+      player.src = video.video_url;
+      playerWrap.classList.remove('hidden');
+    } else {
+      playerWrap.classList.add('hidden');
+      player.src = '';
     }
 
-    const data = await resp.json();
-    newKeyValue = data.apiKey;
+    // Error banner
+    const errorBanner = document.getElementById('video-error-banner');
+    if (video.status === 'failed' && video.error) {
+      document.getElementById('video-error-text').textContent = video.error;
+      errorBanner.classList.remove('hidden');
+    } else {
+      errorBanner.classList.add('hidden');
+    }
 
-    document.getElementById('ak-new-key-value').textContent = newKeyValue;
-    document.getElementById('ak-new-key-callout').classList.remove('hidden');
+    // Generate button state
+    const genBtn = document.getElementById('generate-btn');
+    const isProcessing = ['scripting','voiceover','capturing','compositing','uploading'].includes(video.status);
+    genBtn.disabled = isProcessing;
+    genBtn.textContent = isProcessing ? '⏳ Generating...' : (video.status === 'completed' ? '🔄 Regenerate' : '🎬 Generate Video');
 
-    closeCreateKeyDialog();
-    loadApiKeys();
+    // Scenes
+    renderScenes(video.scene_data);
+
+    // Script
+    renderScript(video.narration_script);
+
+    // Pipeline progress
+    if (isProcessing) {
+      startStatusPolling(id);
+    } else {
+      stopStatusPolling();
+      document.getElementById('pipeline-progress').classList.add('hidden');
+    }
+
+    // Metadata
+    document.getElementById('detail-meta-created').textContent = 'Created: ' + fmtDate(video.created_at);
+    document.getElementById('detail-meta-updated').textContent = video.updated_at ? 'Updated: ' + fmtDate(video.updated_at) : '';
+    document.getElementById('detail-meta-project').textContent = video.pocketsic_project_name ? 'Project: ' + video.pocketsic_project_name : '';
+
+    if (!skipPush) {
+      history.pushState({ page: 'video-detail', videoId: id }, '', `/views/${id}`);
+    }
   } catch (err) {
-    alert(err.message);
-  } finally {
-    btn.disabled = false;
-    btn.textContent = 'Create';
+    alert('Failed to load video: ' + err.message);
+    showPage('videos');
   }
 }
 
-function copyNewKey() {
-  if (newKeyValue) navigator.clipboard.writeText(newKeyValue).catch(() => {});
+function renderScenes(sceneData) {
+  const list = document.getElementById('scenes-list');
+  const empty = document.getElementById('scenes-empty');
+  const count = document.getElementById('scene-count');
+
+  const data = typeof sceneData === 'string' ? JSON.parse(sceneData || '{}') : (sceneData || {});
+  const scenes = data.scenes || [];
+
+  count.textContent = scenes.length + ' scene' + (scenes.length !== 1 ? 's' : '');
+
+  if (scenes.length === 0) {
+    list.innerHTML = '';
+    empty.classList.remove('hidden');
+    return;
+  }
+
+  empty.classList.add('hidden');
+  list.innerHTML = scenes.map((s, i) => `
+    <div style="display: flex; align-items: center; gap: 12px; padding: 10px 0; ${i < scenes.length - 1 ? 'border-bottom: 1px solid #f0f0f0;' : ''}">
+      <div style="width: 32px; height: 32px; border-radius: 8px; background: #E8F4FD; color: #0176D3; display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 700; flex-shrink: 0;">${i + 1}</div>
+      <div style="flex: 1; min-width: 0;">
+        <div style="font-weight: 600; font-size: 14px; color: #111; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${esc(s.channel || s.channel_type || 'Scene')}</div>
+        <div style="font-size: 12px; color: #888; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${esc(s.content_summary || s.description || '')}</div>
+      </div>
+      <span style="font-size: 11px; color: #aaa; flex-shrink: 0;">ID: ${s.id || s.sceneId || '—'}</span>
+    </div>
+  `).join('');
 }
 
-function dismissNewKey() {
-  newKeyValue = null;
-  document.getElementById('ak-new-key-callout').classList.add('hidden');
+function renderScript(script) {
+  const card = document.getElementById('script-card');
+  const container = document.getElementById('script-segments');
+
+  const data = typeof script === 'string' ? JSON.parse(script || 'null') : script;
+  if (!data || !data.segments) {
+    card.classList.add('hidden');
+    return;
+  }
+
+  card.classList.remove('hidden');
+  container.innerHTML = data.segments.map((seg, i) => {
+    const typeColors = { intro: '#0176D3', scene: '#032D60', transition: '#6B7280', outro: '#0176D3' };
+    const typeColor = typeColors[seg.type] || '#888';
+    return `
+    <div style="padding: 12px 0; ${i < data.segments.length - 1 ? 'border-bottom: 1px solid #f0f0f0;' : ''}">
+      <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px;">
+        <span style="font-size: 10px; font-weight: 700; text-transform: uppercase; color: ${typeColor}; letter-spacing: 0.04em;">${esc(seg.type)}</span>
+        ${seg.channel ? '<span style="font-size: 10px; color: #aaa;">— ' + esc(seg.channel) + '</span>' : ''}
+        <span style="font-size: 10px; color: #ccc; margin-left: auto;">~${seg.estimatedDuration || '?'}s</span>
+      </div>
+      <p style="font-size: 14px; color: #333; line-height: 1.5; margin: 0;">${esc(seg.narration || '')}</p>
+    </div>`;
+  }).join('');
 }
 
-async function revokeApiKey(id, name) {
-  if (!confirm(`Revoke API key "${name}"? This cannot be undone.`)) return;
+// ═══════════════════════════════════════════════
+// Pipeline Status Polling
+// ═══════════════════════════════════════════════
+const STEP_LABELS = { script: '📝 Script', voiceover: '🎙️ Voiceover', capture: '📸 Capture', broll: '🖼️ B-Roll', composite: '🎬 Composite', upload: '☁️ Upload' };
+const STEP_ORDER = ['script', 'voiceover', 'capture', 'broll', 'composite', 'upload'];
 
+function startStatusPolling(videoId) {
+  stopStatusPolling();
+  document.getElementById('pipeline-progress').classList.remove('hidden');
+  pollStatus(videoId);
+  statusPollInterval = setInterval(() => pollStatus(videoId), 3000);
+}
+
+function stopStatusPolling() {
+  if (statusPollInterval) { clearInterval(statusPollInterval); statusPollInterval = null; }
+}
+
+async function pollStatus(videoId) {
   const email = document.getElementById('user-email').textContent;
   try {
-    const resp = await fetch(`/api/api-keys/${id}?email=${encodeURIComponent(email)}`, { method: 'DELETE' });
-    if (!resp.ok) throw new Error('Failed to revoke API key');
-    loadApiKeys();
+    const resp = await fetch(`/api/videos/${videoId}/status?email=${encodeURIComponent(email)}`);
+    if (!resp.ok) return;
+    const data = await resp.json();
+
+    renderPipelineSteps(data.jobs || []);
+
+    const video = data.video;
+    if (video) {
+      const badge = document.getElementById('detail-status-badge');
+      badge.className = 'status-badge status-' + video.status;
+      badge.textContent = statusText(video.status);
+
+      if (video.status === 'completed' || video.status === 'failed') {
+        stopStatusPolling();
+        viewVideo(videoId, true); // Reload full detail
+      }
+    }
+  } catch (err) { console.log('Poll failed:', err.message); }
+}
+
+function renderPipelineSteps(jobs) {
+  const container = document.getElementById('pipeline-steps');
+  const jobMap = {};
+  jobs.forEach(j => { jobMap[j.step] = j; });
+
+  container.innerHTML = STEP_ORDER.map(step => {
+    const job = jobMap[step];
+    const status = job ? job.status : 'pending';
+    const label = STEP_LABELS[step] || step;
+    const icons = { pending: '○', running: '◐', completed: '✓', failed: '✗' };
+    const progressText = job && job.status === 'running' && job.total > 1 ? ` (${job.progress}/${job.total})` : '';
+
+    return `
+    <div class="pipeline-step step-${status}">
+      <div class="step-icon">${icons[status]}</div>
+      <div style="flex: 1;">
+        <div style="font-size: 14px; font-weight: 600; color: ${status === 'pending' ? '#9CA3AF' : '#111'};">${label}${progressText}</div>
+        ${job && job.error ? '<div style="font-size: 12px; color: #B91C1C; margin-top: 2px;">' + esc(job.error) + '</div>' : ''}
+      </div>
+      ${status === 'running' ? '<div class="flex gap-1"><div class="w-2 h-2 bg-amber-500 rounded-full" style="animation: pulse-dot 1.4s infinite ease-in-out both; animation-delay: 0s;"></div><div class="w-2 h-2 bg-amber-500 rounded-full" style="animation: pulse-dot 1.4s infinite ease-in-out both; animation-delay: 0.2s;"></div></div>' : ''}
+    </div>`;
+  }).join('');
+}
+
+// ═══════════════════════════════════════════════
+// Video Generation
+// ═══════════════════════════════════════════════
+async function startGeneration() {
+  if (!currentVideoId) return;
+  const email = document.getElementById('user-email').textContent;
+  const btn = document.getElementById('generate-btn');
+  btn.disabled = true;
+  btn.textContent = '⏳ Starting...';
+
+  try {
+    const resp = await fetch(`/api/videos/${currentVideoId}/generate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email }),
+    });
+
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || 'Failed to start generation');
+
+    document.getElementById('video-error-banner').classList.add('hidden');
+    btn.textContent = '⏳ Generating...';
+    startStatusPolling(currentVideoId);
   } catch (err) {
     alert(err.message);
+    btn.disabled = false;
+    btn.textContent = '🎬 Generate Video';
   }
 }
 
-document.getElementById('ak-name').addEventListener('keydown', function(e) {
-  if (e.key === 'Enter') createApiKey();
+// ═══════════════════════════════════════════════
+// Video Settings Save
+// ═══════════════════════════════════════════════
+function checkSettingsChanged() {
+  const orig = window._origSettings;
+  if (!orig) return;
+  const changed = ['name', 'brand', 'voice', 'duration'].some(f => {
+    const el = document.getElementById('edit-' + f);
+    return el && el.value !== orig[f];
+  });
+  const bar = document.getElementById('save-settings-bar');
+  bar.classList.toggle('hidden', !changed);
+  bar.style.display = changed ? 'block' : 'none';
+}
+
+function hideSaveSettingsBar() {
+  const bar = document.getElementById('save-settings-bar');
+  bar.classList.add('hidden');
+  bar.style.display = 'none';
+}
+
+async function saveVideoSettings() {
+  const btn = document.getElementById('save-settings-btn');
+  btn.disabled = true;
+  btn.textContent = 'Saving...';
+
+  try {
+    const name = document.getElementById('edit-name').value.trim();
+    const brandName = document.getElementById('edit-brand').value.trim();
+    const voiceId = document.getElementById('edit-voice').value;
+    const durationTarget = parseInt(document.getElementById('edit-duration').value);
+
+    if (!name) { alert('Name is required.'); btn.textContent = '💾 Save Settings'; btn.disabled = false; return; }
+
+    const email = document.getElementById('user-email').textContent;
+    const resp = await fetch(`/api/videos/${currentVideoId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, name, brandName, voiceId, durationTarget }),
+    });
+    if (!resp.ok) throw new Error('Save failed');
+
+    window._origSettings = { name, brand: brandName, voice: voiceId, duration: String(durationTarget) };
+    document.getElementById('detail-breadcrumb').textContent = name;
+    hideSaveSettingsBar();
+    btn.textContent = '✓ Saved!';
+    setTimeout(() => { btn.textContent = '💾 Save Settings'; btn.disabled = false; }, 1500);
+  } catch (err) {
+    alert('Save failed: ' + err.message);
+    btn.textContent = '💾 Save Settings';
+    btn.disabled = false;
+  }
+}
+
+['edit-name', 'edit-brand', 'edit-voice', 'edit-duration'].forEach(id => {
+  const el = document.getElementById(id);
+  if (el) {
+    el.addEventListener('input', checkSettingsChanged);
+    el.addEventListener('change', checkSettingsChanged);
+  }
 });
 
 // ═══════════════════════════════════════════════
-// SHARED: Feedback Functions
+// Voices
 // ═══════════════════════════════════════════════
-function openFeedbackDialog() {
+async function loadVoices() {
+  try {
+    const resp = await fetch('/api/voices');
+    const data = await resp.json();
+    const select = document.getElementById('edit-voice');
+    select.innerHTML = '<option value="default">Default (Adam)</option>';
+    (data.voices || []).forEach(v => {
+      select.innerHTML += `<option value="${esc(v.id)}">${esc(v.name)} — ${esc(v.description)}</option>`;
+    });
+  } catch (err) { console.log('Failed to load voices:', err.message); }
+}
+
+// ═══════════════════════════════════════════════
+// New Video Dialog
+// ═══════════════════════════════════════════════
+async function openNewVideoDialog() {
+  document.getElementById('new-video-name').value = '';
+  document.getElementById('new-video-brand').value = '';
+  document.getElementById('new-video-error').classList.add('hidden');
+  document.getElementById('new-video-dialog').classList.remove('hidden');
+
+  // Load PocketSIC projects
+  const select = document.getElementById('new-video-project');
+  const loading = document.getElementById('project-picker-loading');
+  const error = document.getElementById('project-picker-error');
+
+  select.innerHTML = '<option value="">— Select a project (optional) —</option>';
+  loading.classList.remove('hidden');
+  error.classList.add('hidden');
+
   const email = document.getElementById('user-email').textContent;
-  document.getElementById('fb-email').value = email;
-  document.getElementById('fb-name').value = '';
-  document.getElementById('fb-subject').value = '';
-  document.getElementById('fb-body').value = '';
-  document.getElementById('fb-error').classList.add('hidden');
-  document.getElementById('feedback-form-content').classList.remove('hidden');
-  document.getElementById('feedback-success').classList.add('hidden');
-  document.getElementById('feedback-dialog').classList.remove('hidden');
+  try {
+    const resp = await fetch(`/api/pocketsic/projects?email=${encodeURIComponent(email)}`);
+    if (!resp.ok) {
+      const data = await resp.json();
+      throw new Error(data.error || 'Failed to load projects');
+    }
+    const data = await resp.json();
+    const projects = data.projects || data.items || [];
+    projects.forEach(p => {
+      const projId = p.id;
+      const projName = p.name || p.data?.metadata?.name || p.data?.metadata?.brand || `Project #${p.id}`;
+      select.innerHTML += `<option value="${projId}" data-name="${esc(projName)}">${esc(projName)}</option>`;
+    });
+  } catch (err) {
+    error.textContent = err.message;
+    error.classList.remove('hidden');
+  } finally {
+    loading.classList.add('hidden');
+  }
 }
 
-function closeFeedbackDialog() {
-  document.getElementById('feedback-dialog').classList.add('hidden');
+function closeNewVideoDialog() {
+  document.getElementById('new-video-dialog').classList.add('hidden');
 }
 
-async function submitFeedback() {
-  const name = document.getElementById('fb-name').value.trim();
-  const email = document.getElementById('fb-email').value.trim();
-  const subject = document.getElementById('fb-subject').value.trim();
-  const body = document.getElementById('fb-body').value.trim();
-  const errorEl = document.getElementById('fb-error');
-  const submitBtn = document.getElementById('fb-submit-btn');
+async function createNewVideo() {
+  const name = document.getElementById('new-video-name').value.trim();
+  const brandName = document.getElementById('new-video-brand').value.trim();
+  const projectSelect = document.getElementById('new-video-project');
+  const projectId = projectSelect.value;
+  const projectName = projectSelect.selectedOptions[0]?.dataset?.name || '';
+  const errorEl = document.getElementById('new-video-error');
 
-  if (!name || !subject || !body) {
-    errorEl.textContent = 'Please fill in all fields.';
+  if (!name) {
+    errorEl.textContent = 'Video name is required.';
     errorEl.classList.remove('hidden');
     return;
   }
 
   errorEl.classList.add('hidden');
-  submitBtn.disabled = true;
-  submitBtn.textContent = 'Submitting...';
+  const btn = document.getElementById('new-video-submit');
+  btn.disabled = true;
+  btn.textContent = 'Creating...';
+
+  const email = document.getElementById('user-email').textContent;
 
   try {
-    const resp = await fetch('/api/feedback', {
+    // If project selected, fetch its scene data
+    let sceneData = null;
+    if (projectId) {
+      const projResp = await fetch(`/api/pocketsic/projects/${projectId}?email=${encodeURIComponent(email)}`);
+      if (projResp.ok) {
+        const projData = await projResp.json();
+        const item = projData.item || projData;
+        const data = typeof item.data === 'string' ? JSON.parse(item.data) : (item.data || {});
+        sceneData = data;
+      }
+    }
+
+    const resp = await fetch('/api/videos', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, email, subject, body })
+      body: JSON.stringify({
+        email,
+        name,
+        brandName: brandName || null,
+        pocketsicProjectId: projectId || null,
+        pocketsicProjectName: projectName || null,
+        sceneData,
+      }),
     });
 
     if (!resp.ok) {
       const data = await resp.json();
-      throw new Error(data.error || 'Failed to submit feedback');
+      throw new Error(data.error || 'Failed to create video');
     }
 
-    document.getElementById('feedback-form-content').classList.add('hidden');
-    document.getElementById('feedback-success').classList.remove('hidden');
-    setTimeout(() => closeFeedbackDialog(), 2000);
+    const result = await resp.json();
+    closeNewVideoDialog();
+    viewVideo(result.video.id);
   } catch (err) {
     errorEl.textContent = err.message;
     errorEl.classList.remove('hidden');
   } finally {
-    submitBtn.disabled = false;
-    submitBtn.textContent = 'Submit Feedback';
+    btn.disabled = false;
+    btn.textContent = 'Create Video';
   }
 }
 
-async function loadAdminFeedback() {
+// ═══════════════════════════════════════════════
+// Connections
+// ═══════════════════════════════════════════════
+async function loadConnections() {
   const email = document.getElementById('user-email').textContent;
-  const listEl = document.getElementById('feedback-list');
-  const emptyEl = document.getElementById('feedback-empty');
-  const countEl = document.getElementById('feedback-count');
-
-  listEl.innerHTML = '<p class="text-center text-gray-400 py-6">Loading feedback...</p>';
-  emptyEl.classList.add('hidden');
-
   try {
-    const resp = await fetch(`/api/feedback?email=${encodeURIComponent(email)}`);
-    if (!resp.ok) throw new Error('Failed to load feedback');
+    const resp = await fetch(`/api/connections?email=${encodeURIComponent(email)}`);
     const data = await resp.json();
-    const items = data.feedback || [];
+    const conns = data.connections || [];
+    const pocketsic = conns.find(c => c.app_slug === 'pocketsic');
 
-    countEl.textContent = items.length;
-
-    if (items.length === 0) {
-      listEl.innerHTML = '';
-      emptyEl.classList.remove('hidden');
-      return;
+    const statusEl = document.getElementById('conn-pocketsic-status');
+    if (pocketsic) {
+      const isOk = pocketsic.test_status === 'connected';
+      statusEl.className = 'status-badge ' + (isOk ? 'status-completed' : 'status-draft');
+      statusEl.textContent = isOk ? 'Connected' : 'Saved';
+    } else {
+      statusEl.className = 'status-badge status-draft';
+      statusEl.textContent = 'Not Connected';
     }
-
-    listEl.innerHTML = items.map(item => `
-      <div class="border border-gray-200 rounded-xl p-5 mb-3 hover:shadow-sm transition-shadow">
-        <div class="flex items-start justify-between mb-2">
-          <div>
-            <p class="font-bold text-gray-800">${esc(item.subject)}</p>
-            <p class="text-xs text-gray-400">${esc(item.name)} &middot; ${esc(item.email)} &middot; ${new Date(item.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' })}</p>
-          </div>
-          <button onclick="deleteFeedback(${item.id})" class="text-xs text-red-400 hover:text-red-600 cursor-pointer ml-4 shrink-0">Delete</button>
-        </div>
-        <p class="text-sm text-gray-600 whitespace-pre-line">${esc(item.body)}</p>
-      </div>
-    `).join('');
-  } catch (err) {
-    listEl.innerHTML = `<p class="text-center text-red-500 py-6">${esc(err.message)}</p>`;
-  }
+  } catch (err) { console.log('Failed to load connections:', err.message); }
 }
 
-async function deleteFeedback(id) {
-  if (!confirm('Delete this feedback?')) return;
+async function savePocketsicConnection() {
+  const apiKey = document.getElementById('conn-pocketsic-key').value.trim();
+  const msgEl = document.getElementById('conn-pocketsic-msg');
+  if (!apiKey) { msgEl.textContent = 'Please enter an API key.'; msgEl.style.color = '#C23934'; msgEl.classList.remove('hidden'); return; }
 
   const email = document.getElementById('user-email').textContent;
   try {
-    const resp = await fetch(`/api/feedback/${id}?email=${encodeURIComponent(email)}`, { method: 'DELETE' });
-    if (!resp.ok) throw new Error('Failed to delete feedback');
-    loadAdminFeedback();
+    const resp = await fetch('/api/connections', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, appSlug: 'pocketsic', appName: 'PocketSIC', apiKey }),
+    });
+    if (!resp.ok) throw new Error('Failed to save');
+    msgEl.textContent = '✓ Connection saved. Click Test to verify.';
+    msgEl.style.color = '#065F46';
+    msgEl.classList.remove('hidden');
+    document.getElementById('conn-pocketsic-key').value = '';
+    loadConnections();
+  } catch (err) {
+    msgEl.textContent = err.message;
+    msgEl.style.color = '#C23934';
+    msgEl.classList.remove('hidden');
+  }
+}
+
+async function testPocketsicConnection() {
+  const email = document.getElementById('user-email').textContent;
+  const msgEl = document.getElementById('conn-pocketsic-msg');
+  const btn = document.getElementById('conn-test-btn');
+  btn.disabled = true;
+  btn.textContent = 'Testing...';
+
+  try {
+    const resp = await fetch('/api/connections/test', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, appSlug: 'pocketsic' }),
+    });
+    const data = await resp.json();
+
+    if (data.success) {
+      msgEl.textContent = '✓ Connection verified!';
+      msgEl.style.color = '#065F46';
+    } else {
+      msgEl.textContent = '✗ Test failed: ' + (data.error || 'Unknown error');
+      msgEl.style.color = '#C23934';
+    }
+    msgEl.classList.remove('hidden');
+    loadConnections();
+  } catch (err) {
+    msgEl.textContent = '✗ ' + err.message;
+    msgEl.style.color = '#C23934';
+    msgEl.classList.remove('hidden');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Test';
+  }
+}
+
+// ═══════════════════════════════════════════════
+// Delete
+// ═══════════════════════════════════════════════
+let deleteTargetId = null;
+let deleteTargetName = '';
+
+function deleteVideo(id, name) {
+  deleteTargetId = id;
+  deleteTargetName = name;
+  document.getElementById('delete-item-name').textContent = name;
+  document.getElementById('delete-dialog').classList.remove('hidden');
+}
+
+function closeDeleteDialog() {
+  document.getElementById('delete-dialog').classList.add('hidden');
+  deleteTargetId = null;
+}
+
+async function confirmDeleteVideo() {
+  if (!deleteTargetId) return;
+  const btn = document.getElementById('delete-confirm-btn');
+  btn.disabled = true;
+  btn.textContent = 'Deleting...';
+
+  const email = document.getElementById('user-email').textContent;
+  try {
+    const resp = await fetch(`/api/videos/${deleteTargetId}?email=${encodeURIComponent(email)}`, { method: 'DELETE' });
+    if (!resp.ok) throw new Error('Failed to delete');
+    closeDeleteDialog();
+    if (currentPage === 'video-detail' && currentVideoId === deleteTargetId) {
+      showPage('videos');
+    } else {
+      loadVideos();
+    }
   } catch (err) {
     alert(err.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Delete';
   }
 }
 
 // ═══════════════════════════════════════════════
-// SHARED: Admin Users
-// ═══════════════════════════════════════════════
-let usersData = [];
-let usersSortField = 'first_login';
-
-function sortUsers(field) {
-  usersSortField = field;
-  ['first-login', 'last-login', 'items'].forEach(id => {
-    const btn = document.getElementById('sort-' + id);
-    const isActive = (field === 'first_login' && id === 'first-login') ||
-                     (field === 'last_login' && id === 'last-login') ||
-                     (field === 'items' && id === 'items');
-    btn.style.background = isActive ? '#0161B0' : 'transparent';
-    btn.style.color = isActive ? '#fff' : 'rgba(0,109,203,0.95)';
-    btn.style.border = isActive ? 'none' : '1px solid rgba(0,109,203,0.5)';
-  });
-  renderUsersRows();
-}
-
-function renderUsersRows() {
-  const container = document.getElementById('users-rows');
-  const emptyEl = document.getElementById('users-empty');
-
-  if (usersData.length === 0) {
-    container.innerHTML = '';
-    emptyEl.classList.remove('hidden');
-    return;
-  }
-  emptyEl.classList.add('hidden');
-
-  const sorted = [...usersData].sort((a, b) => {
-    if (usersSortField === 'first_login') {
-      return new Date(b.created_at) - new Date(a.created_at);
-    } else if (usersSortField === 'last_login') {
-      const aDate = a.last_login_at ? new Date(a.last_login_at) : new Date(0);
-      const bDate = b.last_login_at ? new Date(b.last_login_at) : new Date(0);
-      return bDate - aDate;
-    } else {
-      return b.item_count - a.item_count;
-    }
-  });
-
-  const fmtDate = (d) => {
-    if (!d) return '—';
-    return new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-  };
-
-  container.innerHTML = sorted.map(u => {
-    const badgeBg = u.item_count > 0 ? 'background: #E8F5E9; color: #2E7D32;' : 'background: #eee; color: #888;';
-    return `
-    <div style="padding: 12px 20px; background: white; border: 1px solid #d8dde6; border-radius: 8px; transition: box-shadow 0.15s;">
-      <div style="display: flex; align-items: center;">
-        <span style="flex: 2; font-size: 14px; color: #1C2024; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${esc(u.email)}</span>
-        <span style="flex: 1; font-size: 14px; color: rgba(0,7,20,0.624); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${esc(u.name || '—')}</span>
-        <span style="width: 120px; font-size: 14px; color: rgba(0,7,20,0.624); text-align: center;">${fmtDate(u.created_at)}</span>
-        <span style="width: 120px; font-size: 14px; color: rgba(0,7,20,0.624); text-align: center;">${u.last_login_at ? fmtDate(u.last_login_at) : '—'}</span>
-        <div style="width: 80px; text-align: center;">
-          <span style="display: inline-block; ${badgeBg} padding: 2px 12px; border-radius: 999px; font-size: 12px; font-weight: 700;">${u.item_count}</span>
-        </div>
-      </div>
-    </div>`;
-  }).join('');
-}
-
-async function loadUsers() {
-  const email = document.getElementById('user-email').textContent;
-  const container = document.getElementById('users-rows');
-  const emptyEl = document.getElementById('users-empty');
-
-  container.innerHTML = '<div style="padding: 24px; text-align: center; color: #9ca3af;">Loading users...</div>';
-  emptyEl.classList.add('hidden');
-
-  try {
-    const resp = await fetch(`/api/users?email=${encodeURIComponent(email)}`);
-    if (!resp.ok) throw new Error('Failed to load users');
-    usersData = await resp.json();
-
-    document.getElementById('stat-total-users').textContent = usersData.length;
-    const totalItems = usersData.reduce((sum, u) => sum + (u.item_count || 0), 0);
-    document.getElementById('stat-total-items').textContent = totalItems;
-
-    renderUsersRows();
-  } catch (err) {
-    container.innerHTML = `<div style="padding: 24px; text-align: center; color: #ef4444;">${esc(err.message)}</div>`;
-  }
-}
-
-// ═══════════════════════════════════════════════
-// SHARED: Share Functions
+// Share
 // ═══════════════════════════════════════════════
 let shareRecipientEmail = '';
-let currentItemId = null;
-let currentItemName = '';
 
-function openShareDialog() {
-  shareRecipientEmail = '';
-  document.getElementById('share-item-name').textContent = currentItemName;
+function openShareDialogForVideo() {
+  if (!currentVideoId) return;
+  document.getElementById('share-item-name').textContent = document.getElementById('detail-breadcrumb').textContent;
   document.getElementById('share-email-input').value = '';
   document.getElementById('share-error').classList.add('hidden');
   showShareState('share-form-state');
@@ -1204,37 +1519,27 @@ async function submitShare() {
   const emailInput = document.getElementById('share-email-input');
   const errorEl = document.getElementById('share-error');
   const recipientEmail = emailInput.value.trim().toLowerCase();
-
-  if (!recipientEmail || !recipientEmail.includes('@')) {
-    errorEl.textContent = 'Please enter a valid email address.';
-    errorEl.classList.remove('hidden');
-    return;
-  }
+  if (!recipientEmail || !recipientEmail.includes('@')) { errorEl.textContent = 'Please enter a valid email.'; errorEl.classList.remove('hidden'); return; }
 
   const senderEmail = document.getElementById('user-email').textContent;
-  if (recipientEmail === senderEmail.toLowerCase()) {
-    errorEl.textContent = 'You cannot share with yourself.';
-    errorEl.classList.remove('hidden');
-    return;
-  }
+  if (recipientEmail === senderEmail.toLowerCase()) { errorEl.textContent = 'You cannot share with yourself.'; errorEl.classList.remove('hidden'); return; }
 
   errorEl.classList.add('hidden');
   shareRecipientEmail = recipientEmail;
   showShareState('share-loading-state');
 
   try {
-    const resp = await fetch(`/api/items/${currentItemId}/share`, {
+    const resp = await fetch(`/api/videos/${currentVideoId}/share`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: senderEmail, recipientEmail })
+      body: JSON.stringify({ email: senderEmail, recipientEmail }),
     });
-
     const data = await resp.json();
     if (!resp.ok) throw new Error(data.error || 'Failed to share');
 
     if (data.alreadyShared) {
       document.getElementById('share-already-email').textContent = recipientEmail;
-      document.getElementById('share-already-date').textContent = new Date(data.sharedAt).toLocaleDateString();
+      document.getElementById('share-already-date').textContent = fmtDate(data.sharedAt);
       showShareState('share-already-state');
     } else {
       document.getElementById('share-success-message').textContent = `A copy has been sent to ${recipientEmail}.`;
@@ -1250,17 +1555,14 @@ async function submitShare() {
 async function confirmShare(action) {
   showShareState('share-loading-state');
   const senderEmail = document.getElementById('user-email').textContent;
-
   try {
-    const resp = await fetch(`/api/items/${currentItemId}/share/confirm`, {
+    const resp = await fetch(`/api/videos/${currentVideoId}/share/confirm`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: senderEmail, recipientEmail: shareRecipientEmail, action })
+      body: JSON.stringify({ email: senderEmail, recipientEmail: shareRecipientEmail, action }),
     });
-
     const data = await resp.json();
     if (!resp.ok) throw new Error(data.error || 'Failed to complete share');
-
     const msg = action === 'replace'
       ? `The previous copy sent to ${shareRecipientEmail} has been replaced.`
       : `A new copy has been sent to ${shareRecipientEmail}.`;
@@ -1268,266 +1570,229 @@ async function confirmShare(action) {
     showShareState('share-success-state');
   } catch (err) {
     showShareState('share-form-state');
-    const errorEl = document.getElementById('share-error');
-    errorEl.textContent = err.message;
-    errorEl.classList.remove('hidden');
+    document.getElementById('share-error').textContent = err.message;
+    document.getElementById('share-error').classList.remove('hidden');
   }
 }
 
 // ═══════════════════════════════════════════════
-// SHARED: Delete Functions
+// API Keys (shared)
 // ═══════════════════════════════════════════════
-let deleteTargetId = null;
-let deleteTargetName = '';
+let newKeyValue = null;
 
-function deleteItem(id, name) {
-  deleteTargetId = id;
-  deleteTargetName = name;
-  document.getElementById('delete-item-name').textContent = name;
-  document.getElementById('delete-dialog').classList.remove('hidden');
-}
-
-function closeDeleteDialog() {
-  document.getElementById('delete-dialog').classList.add('hidden');
-  deleteTargetId = null;
-  deleteTargetName = '';
-}
-
-async function confirmDeleteItem() {
-  if (!deleteTargetId) return;
-
-  const btn = document.getElementById('delete-confirm-btn');
-  btn.disabled = true;
-  btn.textContent = 'Deleting...';
-
+async function loadApiKeys() {
   const email = document.getElementById('user-email').textContent;
-  try {
-    const resp = await fetch(`/api/items/${deleteTargetId}?email=${encodeURIComponent(email)}`, { method: 'DELETE' });
-    if (!resp.ok) throw new Error('Failed to delete');
-    closeDeleteDialog();
-    loadItems();
-  } catch (err) {
-    alert(err.message);
-  } finally {
-    btn.disabled = false;
-    btn.textContent = 'Delete';
-  }
-}
-
-// ═══════════════════════════════════════════════
-// APP-SPECIFIC LOGIC — Replace this section
-// ═══════════════════════════════════════════════
-// Below are placeholder functions for your app's main asset.
-// Replace "items" with your asset type and customize.
-
-async function loadItems() {
-  const email = document.getElementById('user-email').textContent;
-  const grid = document.getElementById('items-grid');
-  const empty = document.getElementById('items-empty');
-
-  grid.innerHTML = '<p class="text-center text-gray-400 py-10 col-span-full">Loading...</p>';
-  empty.classList.add('hidden');
+  const tbody = document.getElementById('ak-tbody');
+  const emptyEl = document.getElementById('ak-empty');
+  const tableWrap = document.getElementById('ak-table-wrap');
+  tbody.innerHTML = '<tr><td colspan="5" class="text-center text-gray-400 py-6">Loading...</td></tr>';
+  emptyEl.classList.add('hidden');
+  tableWrap.classList.remove('hidden');
 
   try {
-    const resp = await fetch(`/api/items?email=${encodeURIComponent(email)}`);
-    if (!resp.ok) throw new Error('Failed to load items');
+    const resp = await fetch(`/api/api-keys?email=${encodeURIComponent(email)}`);
+    if (!resp.ok) throw new Error('Failed to load API keys');
     const data = await resp.json();
-    const items = data.items || [];
-
-    if (items.length === 0) {
-      grid.innerHTML = '';
-      empty.classList.remove('hidden');
-      return;
-    }
-
-    empty.classList.add('hidden');
-
-    grid.innerHTML = items.map((item) => {
-      const safeName = esc(item.name).replace(/'/g, "\\'");
-      return `
-      <div class="item-card" style="background: white; border-radius: 8px; padding: 20px; cursor: pointer; transition: box-shadow 0.15s ease, transform 0.15s ease; position: relative; box-shadow: 0 1px 3px rgba(0,0,0,0.08); border: 1px solid #e5e7eb;"
-        onclick="viewItem(${item.id})"
-        onmouseenter="this.style.boxShadow='0 4px 16px rgba(1,118,211,0.15)'; this.style.transform='translateY(-2px)'; this.querySelector('.delete-btn').style.opacity='1';"
-        onmouseleave="this.style.boxShadow='0 1px 3px rgba(0,0,0,0.08)'; this.style.transform='none'; this.querySelector('.delete-btn').style.opacity='0';">
-        <div style="display: flex; flex-direction: column; gap: 8px;">
-          <div style="display: flex; align-items: center; gap: 12px;">
-            <div style="width: 40px; height: 40px; border-radius: 10px; background: linear-gradient(135deg, #032D60, #0176D3); color: #fff; display: flex; align-items: center; justify-content: center; font-size: 18px; font-weight: 700; flex-shrink: 0;">
-              ${esc(item.name.charAt(0).toUpperCase())}
-            </div>
-            <div style="flex: 1; min-width: 0;">
-              <div style="font-weight: 600; font-size: 18px; line-height: 26px; letter-spacing: -0.01em; color: #111; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${esc(item.name)}</div>
-            </div>
-            <button class="delete-btn" onclick="event.stopPropagation(); deleteItem(${item.id}, '${safeName}')" style="opacity: 0; transition: opacity 0.15s ease; cursor: pointer; flex-shrink: 0; background: none; border: none; color: #e5534b; padding: 4px; border-radius: 4px;" title="Delete">
-              <svg width="15" height="15" viewBox="0 0 15 15" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M5.5 1C5.22386 1 5 1.22386 5 1.5C5 1.77614 5.22386 2 5.5 2H9.5C9.77614 2 10 1.77614 10 1.5C10 1.22386 9.77614 1 9.5 1H5.5ZM3 3.5C3 3.22386 3.22386 3 3.5 3H5H10H11.5C11.7761 3 12 3.22386 12 3.5C12 3.77614 11.7761 4 11.5 4H11V12C11 12.5523 10.5523 13 10 13H5C4.44772 13 4 12.5523 4 12V4H3.5C3.22386 4 3 3.77614 3 3.5ZM5 4H10V12H5V4Z" fill="currentColor" fill-rule="evenodd" clip-rule="evenodd"/></svg>
-            </button>
-          </div>
-          <div style="font-size: 12px; color: #888; opacity: 0.6;">Created ${new Date(item.created_at).toLocaleDateString()}</div>
-          ${item.shared_by_email ? `
-          <div style="font-size: 11px; color: #6b7280; display: flex; align-items: center; gap: 4px; margin-top: 2px;">
-            <svg width="12" height="12" viewBox="0 0 15 15" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M5 7.50003C5 8.32845 4.32843 9.00003 3.5 9.00003C2.67157 9.00003 2 8.32845 2 7.50003C2 6.6716 2.67157 6.00003 3.5 6.00003C4.32843 6.00003 5 6.6716 5 7.50003ZM5.71313 8.66388C5.29445 9.45838 4.46048 10 3.5 10C2.11929 10 1 8.88074 1 7.50003C1 6.11931 2.11929 5.00003 3.5 5.00003C4.46048 5.00003 5.29445 5.54167 5.71313 6.33616L9.10424 4.21671C9.03643 3.98968 9 3.74911 9 3.50003C9 2.11931 10.1193 1.00003 11.5 1.00003C12.8807 1.00003 14 2.11931 14 3.50003C14 4.88074 12.8807 6.00003 11.5 6.00003C10.4573 6.00003 9.5609 5.36459 9.17375 4.45794L5.90283 6.50457C5.96658 6.82583 6 7.15899 6 7.50003C6 7.84106 5.96658 8.17422 5.90283 8.49549L9.17375 10.5421C9.5609 9.63548 10.4573 9.00003 11.5 9.00003C12.8807 9.00003 14 10.1193 14 11.5C14 12.8807 12.8807 14 11.5 14C10.1193 14 9 12.8807 9 11.5C9 11.251 9.03643 11.0104 9.10424 10.7834L5.71313 8.66388ZM11.5 5.00003C12.3284 5.00003 13 4.32845 13 3.50003C13 2.6716 12.3284 2.00003 11.5 2.00003C10.6716 2.00003 10 2.6716 10 3.50003C10 4.32845 10.6716 5.00003 11.5 5.00003ZM13 11.5C13 12.3285 12.3284 13 11.5 13C10.6716 13 10 12.3285 10 11.5C10 10.6716 10.6716 10 11.5 10C12.3284 10 13 10.6716 13 11.5Z" fill="currentColor" fill-rule="evenodd" clip-rule="evenodd"/></svg>
-            Shared by ${esc(item.shared_by_email)} · ${new Date(item.shared_at).toLocaleDateString()}
-          </div>` : ''}
-        </div>
-      </div>`;
-    }).join('');
+    const keys = data.apiKeys || [];
+    if (keys.length === 0) { tableWrap.classList.add('hidden'); emptyEl.classList.remove('hidden'); return; }
+    tbody.innerHTML = keys.map(key => `
+      <tr class="border-t border-gray-100">
+        <td class="px-5 py-3 font-bold text-gray-800">${esc(key.name)}</td>
+        <td class="px-5 py-3"><code class="text-xs px-1.5 py-0.5 rounded bg-gray-100">${esc(key.key_prefix)}••••••••</code></td>
+        <td class="px-5 py-3 text-gray-500">${fmtDate(key.created_at)}</td>
+        <td class="px-5 py-3 text-gray-500">${key.last_used_at ? fmtDate(key.last_used_at) : 'Never'}</td>
+        <td class="px-5 py-3 text-right">
+          <button onclick="revokeApiKey(${key.id}, '${esc(key.name)}')" class="px-3 py-1 text-xs font-medium text-red-500 rounded-md cursor-pointer" style="background: #FEE2E2;">Revoke</button>
+        </td>
+      </tr>
+    `).join('');
   } catch (err) {
-    grid.innerHTML = `<p class="text-center text-red-500 py-10 col-span-full">${esc(err.message)}</p>`;
+    tbody.innerHTML = `<tr><td colspan="5" class="text-center text-red-500 py-6">${esc(err.message)}</td></tr>`;
   }
 }
 
-// ═══════════════════════════════════════════════
-// SHARED: Item Detail View
-// ═══════════════════════════════════════════════
-let currentItemId = null;
-let currentItemData = null;
+function openCreateKeyDialog() { document.getElementById('ak-name').value = ''; document.getElementById('ak-create-dialog').classList.remove('hidden'); document.getElementById('ak-name').focus(); }
+function closeCreateKeyDialog() { document.getElementById('ak-create-dialog').classList.add('hidden'); }
 
-async function viewItem(id, skipPush) {
+async function createApiKey() {
+  const name = document.getElementById('ak-name').value.trim();
+  if (!name) return;
   const email = document.getElementById('user-email').textContent;
-
-  // Show detail page immediately
-  showPage('item-detail', true);
-
+  const btn = document.getElementById('ak-create-btn');
+  btn.disabled = true; btn.textContent = 'Creating...';
   try {
-    const resp = await fetch(`/api/items/${id}?email=${encodeURIComponent(email)}`);
-    if (!resp.ok) throw new Error('Item not found');
-    const item = await resp.json();
-    const data = typeof item.data === 'string' ? JSON.parse(item.data) : (item.data || {});
-
-    currentItemId = item.id;
-    currentItemData = data;
-
-    // Populate header
-    const name = data.metadata?.name || data.metadata?.brand || 'Untitled';
-    document.getElementById('detail-breadcrumb').textContent = name;
-
-    // Populate editable fields — customize these per app
-    const meta = data.metadata || {};
-    document.getElementById('edit-name').value = meta.name || meta.brand || '';
-    document.getElementById('edit-website').value = meta.website || meta.brand_url || '';
-    document.getElementById('edit-description').value = meta.description || meta.brand_desc || '';
-
-    // Metadata timestamps
-    document.getElementById('detail-meta-created').textContent = 'Created: ' + new Date(item.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-    document.getElementById('detail-meta-updated').textContent = item.updated_at ? 'Updated: ' + new Date(item.updated_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '';
-
-    // Store original values for change detection
-    window._origSettings = {
-      name: meta.name || meta.brand || '',
-      website: meta.website || meta.brand_url || '',
-      description: meta.description || meta.brand_desc || ''
-    };
-    hideSaveSettingsBar();
-
-    // APP-SPECIFIC: Render item content in #item-content-body
-    // renderItemContent(data);
-
-    // Push URL state for deep linking
-    if (!skipPush) {
-      history.pushState({ page: 'item-detail', itemId: id }, '', `/views/${id}`);
-    }
-  } catch (err) {
-    alert('Failed to load item: ' + err.message);
-    showPage('items');
-  }
+    const resp = await fetch('/api/api-keys', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, name }) });
+    if (!resp.ok) { const data = await resp.json(); throw new Error(data.error || 'Failed'); }
+    const data = await resp.json();
+    newKeyValue = data.apiKey;
+    document.getElementById('ak-new-key-value').textContent = newKeyValue;
+    document.getElementById('ak-new-key-callout').classList.remove('hidden');
+    closeCreateKeyDialog();
+    loadApiKeys();
+  } catch (err) { alert(err.message); } finally { btn.disabled = false; btn.textContent = 'Create'; }
 }
 
-function openShareDialogForItem() {
-  if (!currentItemId) return;
-  openShareDialog(currentItemId, document.getElementById('detail-breadcrumb').textContent);
+function copyNewKey() { if (newKeyValue) navigator.clipboard.writeText(newKeyValue).catch(() => {}); }
+function dismissNewKey() { newKeyValue = null; document.getElementById('ak-new-key-callout').classList.add('hidden'); }
+
+async function revokeApiKey(id, name) {
+  if (!confirm(`Revoke API key "${name}"?`)) return;
+  const email = document.getElementById('user-email').textContent;
+  try {
+    const resp = await fetch(`/api/api-keys/${id}?email=${encodeURIComponent(email)}`, { method: 'DELETE' });
+    if (!resp.ok) throw new Error('Failed to revoke');
+    loadApiKeys();
+  } catch (err) { alert(err.message); }
+}
+
+document.getElementById('ak-name').addEventListener('keydown', function(e) { if (e.key === 'Enter') createApiKey(); });
+
+// ═══════════════════════════════════════════════
+// Feedback (shared)
+// ═══════════════════════════════════════════════
+function openFeedbackDialog() {
+  const email = document.getElementById('user-email').textContent;
+  document.getElementById('fb-email').value = email;
+  document.getElementById('fb-name').value = '';
+  document.getElementById('fb-subject').value = '';
+  document.getElementById('fb-body').value = '';
+  document.getElementById('fb-error').classList.add('hidden');
+  document.getElementById('feedback-form-content').classList.remove('hidden');
+  document.getElementById('feedback-success').classList.add('hidden');
+  document.getElementById('feedback-dialog').classList.remove('hidden');
+}
+function closeFeedbackDialog() { document.getElementById('feedback-dialog').classList.add('hidden'); }
+
+async function submitFeedback() {
+  const name = document.getElementById('fb-name').value.trim();
+  const email = document.getElementById('fb-email').value.trim();
+  const subject = document.getElementById('fb-subject').value.trim();
+  const body = document.getElementById('fb-body').value.trim();
+  const errorEl = document.getElementById('fb-error');
+  const btn = document.getElementById('fb-submit-btn');
+  if (!name || !subject || !body) { errorEl.textContent = 'Please fill in all fields.'; errorEl.classList.remove('hidden'); return; }
+  errorEl.classList.add('hidden');
+  btn.disabled = true; btn.textContent = 'Submitting...';
+  try {
+    const resp = await fetch('/api/feedback', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, email, subject, body }) });
+    if (!resp.ok) { const d = await resp.json(); throw new Error(d.error || 'Failed'); }
+    document.getElementById('feedback-form-content').classList.add('hidden');
+    document.getElementById('feedback-success').classList.remove('hidden');
+    setTimeout(() => closeFeedbackDialog(), 2000);
+  } catch (err) { errorEl.textContent = err.message; errorEl.classList.remove('hidden'); } finally { btn.disabled = false; btn.textContent = 'Submit'; }
+}
+
+async function loadAdminFeedback() {
+  const email = document.getElementById('user-email').textContent;
+  const listEl = document.getElementById('feedback-list');
+  const emptyEl = document.getElementById('feedback-empty');
+  const countEl = document.getElementById('feedback-count');
+  listEl.innerHTML = '<p class="text-center text-gray-400 py-6">Loading...</p>';
+  emptyEl.classList.add('hidden');
+  try {
+    const resp = await fetch(`/api/feedback?email=${encodeURIComponent(email)}`);
+    if (!resp.ok) throw new Error('Failed');
+    const data = await resp.json();
+    const items = data.feedback || [];
+    countEl.textContent = items.length;
+    if (items.length === 0) { listEl.innerHTML = ''; emptyEl.classList.remove('hidden'); return; }
+    listEl.innerHTML = items.map(item => `
+      <div class="border border-gray-200 rounded-xl p-5 mb-3 hover:shadow-sm transition-shadow">
+        <div class="flex items-start justify-between mb-2">
+          <div>
+            <p class="font-bold text-gray-800">${esc(item.subject)}</p>
+            <p class="text-xs text-gray-400">${esc(item.name)} · ${esc(item.email)} · ${fmtDate(item.created_at)}</p>
+          </div>
+          <button onclick="deleteFeedback(${item.id})" class="text-xs text-red-400 hover:text-red-600 cursor-pointer ml-4 shrink-0">Delete</button>
+        </div>
+        <p class="text-sm text-gray-600 whitespace-pre-line">${esc(item.body)}</p>
+      </div>
+    `).join('');
+  } catch (err) { listEl.innerHTML = `<p class="text-center text-red-500 py-6">${esc(err.message)}</p>`; }
+}
+
+async function deleteFeedback(id) {
+  if (!confirm('Delete this feedback?')) return;
+  const email = document.getElementById('user-email').textContent;
+  try {
+    const resp = await fetch(`/api/feedback/${id}?email=${encodeURIComponent(email)}`, { method: 'DELETE' });
+    if (!resp.ok) throw new Error('Failed');
+    loadAdminFeedback();
+  } catch (err) { alert(err.message); }
 }
 
 // ═══════════════════════════════════════════════
-// SHARED: Save Settings & Change Detection
+// Admin Users (shared)
 // ═══════════════════════════════════════════════
-function checkSettingsChanged() {
-  const orig = window._origSettings;
-  if (!orig) return;
-  // Compare current field values against originals
-  const fields = Object.keys(orig);
-  const changed = fields.some(f => {
-    const el = document.getElementById('edit-' + f);
-    return el && el.value !== orig[f];
+let usersData = [];
+let usersSortField = 'first_login';
+
+function sortUsers(field) {
+  usersSortField = field;
+  ['first-login', 'last-login', 'items'].forEach(id => {
+    const btn = document.getElementById('sort-' + id);
+    const isActive = (field === 'first_login' && id === 'first-login') || (field === 'last_login' && id === 'last-login') || (field === 'items' && id === 'items');
+    btn.style.background = isActive ? '#0161B0' : 'transparent';
+    btn.style.color = isActive ? '#fff' : 'rgba(0,109,203,0.95)';
+    btn.style.border = isActive ? 'none' : '1px solid rgba(0,109,203,0.5)';
   });
-  const bar = document.getElementById('save-settings-bar');
-  bar.classList.toggle('hidden', !changed);
-  bar.style.display = changed ? 'block' : 'none';
+  renderUsersRows();
 }
 
-function hideSaveSettingsBar() {
-  const bar = document.getElementById('save-settings-bar');
-  bar.classList.add('hidden');
-  bar.style.display = 'none';
+function renderUsersRows() {
+  const container = document.getElementById('users-rows');
+  const emptyEl = document.getElementById('users-empty');
+  if (usersData.length === 0) { container.innerHTML = ''; emptyEl.classList.remove('hidden'); return; }
+  emptyEl.classList.add('hidden');
+  const sorted = [...usersData].sort((a, b) => {
+    if (usersSortField === 'first_login') return new Date(b.created_at) - new Date(a.created_at);
+    if (usersSortField === 'last_login') return (b.last_login_at ? new Date(b.last_login_at) : 0) - (a.last_login_at ? new Date(a.last_login_at) : 0);
+    return b.item_count - a.item_count;
+  });
+  container.innerHTML = sorted.map(u => {
+    const badge = u.item_count > 0 ? 'background: #E8F5E9; color: #2E7D32;' : 'background: #eee; color: #888;';
+    return `
+    <div style="padding: 12px 20px; background: white; border: 1px solid #d8dde6; border-radius: 8px;">
+      <div style="display: flex; align-items: center;">
+        <span style="flex: 2; font-size: 14px; color: #1C2024; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${esc(u.email)}</span>
+        <span style="flex: 1; font-size: 14px; color: rgba(0,7,20,0.624);">${esc(u.name || '—')}</span>
+        <span style="width: 120px; font-size: 14px; color: rgba(0,7,20,0.624); text-align: center;">${fmtDate(u.created_at)}</span>
+        <span style="width: 120px; font-size: 14px; color: rgba(0,7,20,0.624); text-align: center;">${u.last_login_at ? fmtDate(u.last_login_at) : '—'}</span>
+        <div style="width: 80px; text-align: center;"><span style="display: inline-block; ${badge} padding: 2px 12px; border-radius: 999px; font-size: 12px; font-weight: 700;">${u.item_count}</span></div>
+      </div>
+    </div>`;
+  }).join('');
 }
 
-async function saveItemSettings() {
-  const btn = document.getElementById('save-settings-btn');
-  btn.disabled = true;
-  btn.textContent = 'Saving...';
-
+async function loadUsers() {
+  const email = document.getElementById('user-email').textContent;
+  const container = document.getElementById('users-rows');
+  const emptyEl = document.getElementById('users-empty');
+  container.innerHTML = '<div style="padding: 24px; text-align: center; color: #9ca3af;">Loading...</div>';
+  emptyEl.classList.add('hidden');
   try {
-    // Read current field values — customize field names per app
-    const name = document.getElementById('edit-name').value.trim();
-    const website = document.getElementById('edit-website').value.trim();
-    const description = document.getElementById('edit-description').value.trim();
-
-    if (!name) { alert('Name is required.'); btn.textContent = '💾 Save Settings'; btn.disabled = false; return; }
-
-    // Update currentItemData metadata
-    currentItemData.metadata = currentItemData.metadata || {};
-    currentItemData.metadata.name = name;
-    currentItemData.metadata.website = website || null;
-    currentItemData.metadata.description = description || null;
-
-    const email = document.getElementById('user-email').textContent;
-    const resp = await fetch(`/api/items/${currentItemId}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, data: currentItemData })
-    });
-    if (!resp.ok) throw new Error('Save failed');
-
-    // Update original values to new state
-    window._origSettings = { name, website, description };
-
-    // Update the breadcrumb
-    document.getElementById('detail-breadcrumb').textContent = name;
-
-    hideSaveSettingsBar();
-    btn.textContent = '✓ Saved!';
-    setTimeout(() => { btn.textContent = '💾 Save Settings'; btn.disabled = false; }, 1500);
-  } catch (err) {
-    alert('Failed to save settings: ' + err.message);
-    btn.textContent = '💾 Save Settings';
-    btn.disabled = false;
-  }
+    const resp = await fetch(`/api/users?email=${encodeURIComponent(email)}`);
+    if (!resp.ok) throw new Error('Failed');
+    usersData = await resp.json();
+    document.getElementById('stat-total-users').textContent = usersData.length;
+    document.getElementById('stat-total-items').textContent = usersData.reduce((s, u) => s + (u.item_count || 0), 0);
+    renderUsersRows();
+  } catch (err) { container.innerHTML = `<div style="padding: 24px; text-align: center; color: #ef4444;">${esc(err.message)}</div>`; }
 }
-
-// Attach change listeners to settings fields
-['edit-name', 'edit-website', 'edit-description'].forEach(id => {
-  const el = document.getElementById(id);
-  if (el) el.addEventListener('input', checkSettingsChanged);
-  if (el && el.tagName === 'SELECT') el.addEventListener('change', checkSettingsChanged);
-});
 
 // ═══════════════════════════════════════════════
-// SHARED: Browser Back/Forward Navigation
+// Browser Back/Forward
 // ═══════════════════════════════════════════════
 window.addEventListener('popstate', function(e) {
   const state = e.state;
-  if (state && state.page === 'item-detail' && state.itemId) {
-    viewItem(state.itemId, true);
+  if (state && state.page === 'video-detail' && state.videoId) {
+    viewVideo(state.videoId, true);
   } else if (state && state.page) {
     showPage(state.page, true);
   } else {
-    showPage('items', true);
+    showPage('videos', true);
   }
 });
-
-// Placeholder: Open new item dialog — customize for your app
-function openNewItemDialog() {
-  // TODO: Open a dialog to create a new item
-  alert('openNewItemDialog() — replace this with your create dialog logic');
-}
 </script>
 </body>
 </html>

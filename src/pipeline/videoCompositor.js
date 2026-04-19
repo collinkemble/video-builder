@@ -198,27 +198,49 @@ function normalizeVideoClip(inputPath, outputPath, targetDuration) {
 }
 
 /**
- * Create a video from a still image with a smooth Ken Burns zoom effect.
- * Slowly zooms in from 100% to ~112% over the clip duration, centered.
- * No pan — just a clean, cinematic zoom that feels like a real camera push.
+ * Create a video from a still image with a smooth, slow zoom effect.
+ *
+ * Instead of FFmpeg's `zoompan` filter (which produces sub-pixel jitter),
+ * this uses a loop input + scale + crop pipeline:
+ *   1. Loop the image for the needed duration
+ *   2. Scale it UP by 15% (so we have room to "zoom in")
+ *   3. Crop a 1920x1080 window from the center that slowly shrinks
+ *      (simulating a slow zoom-in)
+ *
+ * The result is a perfectly smooth zoom with no jitter.
  */
 function imageToVideo(imagePath, outputPath, duration) {
+  // Use -loop 1 to create a video stream from the image, then apply
+  // a slow animated crop that gets smaller over time (= zoom in effect).
+  // Scale the source up first so the crop region can shrink smoothly.
+  //
+  // Formula: crop starts at full 1920x1080, ends at ~88% (1689x950).
+  // This creates a ~14% zoom-in over the clip duration.
   const totalFrames = Math.ceil(duration * FPS);
+  const startW = WIDTH;           // 1920
+  const endW = Math.round(WIDTH * 0.86);  // ~1651
+  const startH = HEIGHT;          // 1080
+  const endH = Math.round(HEIGHT * 0.86); // ~929
 
-  // Smooth center zoom: z increases linearly from 1.0 to 1.12
-  // x,y keep the zoom centered on the image (no pan drift)
-  const zoomFilter = `zoompan=z='1+0.12*on/${totalFrames}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=${totalFrames}:s=${WIDTH}x${HEIGHT}:fps=${FPS}`;
+  // Animate the crop: linearly interpolate from start to end size
+  // n = current frame, ${totalFrames} = total frames
+  // Scale image up first so we have pixel headroom for the shrinking crop
+  const scaleUp = `scale=${Math.round(WIDTH * 1.15)}:${Math.round(HEIGHT * 1.15)}`;
+  const cropFilter = `crop='${startW}-((${startW}-${endW})*n/${totalFrames})':'${startH}-((${startH}-${endH})*n/${totalFrames})'`;
+  const scaleBack = `scale=${WIDTH}:${HEIGHT}`;
 
   return runFfmpeg([
     '-y',
+    '-loop', '1',
     '-i', imagePath,
-    '-vf', `${zoomFilter},format=yuv420p`,
+    '-vf', `${scaleUp},${cropFilter},${scaleBack},format=yuv420p`,
     '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '23',
     '-t', String(duration),
+    '-r', String(FPS),
     '-pix_fmt', 'yuv420p',
     '-movflags', '+faststart',
     outputPath,
-  ], `image→video (Ken Burns)`);
+  ], `image→video (smooth zoom)`);
 }
 
 /**

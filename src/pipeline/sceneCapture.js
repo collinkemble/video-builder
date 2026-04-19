@@ -81,12 +81,12 @@ async function setupMessagingInteraction(page) {
 /**
  * WEBSITE scenes (web chat, Agentforce):
  *   - First: click #chatFab or #agentBanner to open the chat panel
- *   - Then: click #chatContent or #chatInputArea to advance messages
- *   - Count chat messages (.msg) in #chatContent to determine click limit
- *   - Customer messages need 2 clicks (1 to type, 1 to send)
+ *   - Then: click #chatInputArea to advance messages
+ *   - Customer messages need 2 clicks (1 to start typing animation, 1 to "send")
+ *   - Agent messages auto-advance after a customer message is sent (no clicks needed)
+ *   - So total clicks = 1 (open) + 2 per customer message
  */
 async function setupWebsiteInteraction(page) {
-  // Count the chat messages to calculate total clicks needed
   const chatInfo = await page.evaluate(() => {
     const chatContent = document.getElementById('chatContent');
     if (!chatContent) return { totalMsgs: 0, customerMsgs: 0, hasChat: false };
@@ -107,20 +107,22 @@ async function setupWebsiteInteraction(page) {
     };
   });
 
-  // For website: 1 click to open chat + (totalMsgs - 1) clicks to advance
-  // Customer messages need an extra click (type + send), so add customerMsgs
-  // But first message auto-shows, so subtract 1
+  // Click budget:
+  //   1 click to open the chat panel
+  //   2 clicks per customer message (click 1 = type animation, click 2 = send)
+  //   Agent messages auto-advance after each customer send — no clicks needed
   let clickLimit;
-  if (chatInfo.hasChat && chatInfo.totalMsgs > 0) {
-    // 1 click to open chat + for each subsequent message: 1 click
-    // customer messages need 2 clicks each (type animation + send)
-    clickLimit = 1 + (chatInfo.totalMsgs - 1) + chatInfo.customerMsgs;
+  if (chatInfo.hasChat && chatInfo.customerMsgs > 0) {
+    clickLimit = 1 + (chatInfo.customerMsgs * 2);
+  } else if (chatInfo.hasChat) {
+    clickLimit = 3; // fallback if no customer msgs found
   } else {
-    clickLimit = 3; // fallback: a few generic clicks
+    clickLimit = 3;
   }
 
-  const clickInterval = 2500;
-  console.log(`[SceneCapture] Website: ${chatInfo.totalMsgs} chat msgs (${chatInfo.customerMsgs} customer), ${clickLimit} total clicks`);
+  // Use a longer interval — agent auto-advance needs time for typing indicators
+  const clickInterval = 3000;
+  console.log(`[SceneCapture] Website: ${chatInfo.totalMsgs} msgs (${chatInfo.customerMsgs} customer), clickLimit=${clickLimit}, interval=${clickInterval}ms`);
 
   return { clickLimit, clickInterval, clickFn: 'website', chatInfo };
 }
@@ -165,18 +167,24 @@ async function performMessagingClick(page, clickIndex) {
 }
 
 /**
- * Website click: first click opens chat, subsequent clicks advance messages.
+ * Website click: first click opens chat, subsequent clicks advance the conversation.
+ *
+ * Pattern:
+ *   Click 0: Open chat panel via #chatFab or #agentBanner
+ *   Click 1: Start customer typing animation (click #chatInputArea)
+ *   Click 2: Send customer message + agent auto-replies (click #chatInputArea)
+ *   Click 3: Start next customer typing... (click #chatInputArea)
+ *   Click 4: Send next customer message + agent auto-replies... etc.
  */
 async function performWebsiteClick(page, clickIndex, chatInfo) {
   if (clickIndex === 0) {
     // First click: open the chat panel
     const opened = await page.evaluate(() => {
-      // Try chat FAB first, then agent banner
       const chatFab = document.getElementById('chatFab');
       if (chatFab) { chatFab.click(); return 'chatFab'; }
       const agentBanner = document.getElementById('agentBanner');
       if (agentBanner) { agentBanner.click(); return 'agentBanner'; }
-      // Try any element with "chat" or "agent" in text
+      // Fallback: look for anything chat/agent related
       const els = document.querySelectorAll('button, [role="button"], a, div[onclick]');
       for (const el of els) {
         const text = (el.textContent || '').toLowerCase();
@@ -189,16 +197,15 @@ async function performWebsiteClick(page, clickIndex, chatInfo) {
     });
     console.log(`[SceneCapture] Website click #1: opened chat via ${opened}`);
   } else {
-    // Subsequent clicks: advance the chat conversation
+    // Subsequent clicks: advance the chat by clicking the input area (send button area)
+    // This triggers advanceChat() which handles both customer typing and sending
     const clicked = await page.evaluate(() => {
-      // Click the chat content area or input area to advance
-      const chatContent = document.getElementById('chatContent');
-      if (chatContent) { chatContent.click(); return 'chatContent'; }
+      // Prefer #chatInputArea — it's the bottom bar with the send button
       const chatInput = document.getElementById('chatInputArea');
       if (chatInput) { chatInput.click(); return 'chatInputArea'; }
-      // Fallback: click the chat panel itself
-      const chatPanel = document.getElementById('chatPanel');
-      if (chatPanel) { chatPanel.click(); return 'chatPanel'; }
+      // Fallback to #chatContent
+      const chatContent = document.getElementById('chatContent');
+      if (chatContent) { chatContent.click(); return 'chatContent'; }
       return null;
     });
     console.log(`[SceneCapture] Website click #${clickIndex + 1}: advance via ${clicked}`);

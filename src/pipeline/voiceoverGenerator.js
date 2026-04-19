@@ -124,12 +124,16 @@ async function generateVoiceover({ segments, voiceId = 'pNInz6obpgDQGcFmaJgB', o
  * Curated voice list — IDs and metadata.
  * preview_url is fetched on-demand from ElevenLabs.
  */
+// Curated from ElevenLabs premade voices (verified April 2026).
+// These are all available on the public /v1/voices endpoint with preview_url.
 const CURATED_VOICES = [
-  { id: 'pNInz6obpgDQGcFmaJgB', name: 'Adam', description: 'Professional male narrator', style: 'deep' },
-  { id: 'EXAVITQu4vr4xnSDxMaL', name: 'Bella', description: 'Professional female narrator', style: 'warm' },
-  { id: 'onwK4e9ZLuTAKqWW03F9', name: 'Daniel', description: 'Warm conversational', style: 'conversational' },
-  { id: 'jsCqWAovK2LkecY7zXl4', name: 'Freya', description: 'Energetic and upbeat', style: 'energetic' },
-  { id: '21m00Tcm4TlvDq8ikWAM', name: 'Rachel', description: 'Calm and clear', style: 'calm' },
+  { id: 'pNInz6obpgDQGcFmaJgB', name: 'Adam', description: 'Dominant, firm male narrator', style: 'deep' },
+  { id: 'EXAVITQu4vr4xnSDxMaL', name: 'Sarah', description: 'Mature, reassuring, confident', style: 'warm' },
+  { id: 'onwK4e9ZLuTAKqWW03F9', name: 'Daniel', description: 'Steady broadcaster', style: 'conversational' },
+  { id: 'cgSgspJ2msm6clMCkdW9', name: 'Jessica', description: 'Playful, bright, warm', style: 'energetic' },
+  { id: 'XrExE9yKIg1WjnnlVkGX', name: 'Matilda', description: 'Knowledgeable, professional', style: 'calm' },
+  { id: 'nPczCjzI2devNBz1zQrb', name: 'Brian', description: 'Deep, resonant, comforting', style: 'deep' },
+  { id: 'pFZP5JQG7iQjIQuC4Bku', name: 'Lily', description: 'Velvety actress', style: 'warm' },
 ];
 
 // Cache for preview URLs (populated on first request, lives for process lifetime)

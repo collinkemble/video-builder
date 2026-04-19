@@ -18,7 +18,13 @@ function getGenAI() {
 // ════════════════════════════════════════════════════════════════
 
 const VIDEO_PROMPT_RULES = `Style: Cinematic b-roll footage. Smooth, slow camera movement. Warm natural lighting. Shallow depth of field. High production value.
-IMPORTANT RULES: No text overlays, no logos, no UI elements, no device screens, no phone screens, no laptop screens, no computer monitors. Never show what is on a screen. It is okay to show a person holding or using a device from a distance, but NEVER from the vantage point of seeing what is displayed on the screen. Focus on people, environments, emotions, and lifestyle moments. Slow cinematic motion only — no rapid movement or jarring transitions.`;
+CRITICAL RULES YOU MUST FOLLOW:
+1. ABSOLUTELY NO screens of any kind — no phone screens, laptop screens, tablet screens, computer monitors, TV screens, smartwatch screens, or any digital display showing content.
+2. ABSOLUTELY NO close-ups of devices — do not show any device screen from an angle where you can see what is displayed.
+3. DO NOT generate images of people looking at screens, typing on keyboards, or using touchscreens in close-up.
+4. INSTEAD focus on: people's faces and emotions, hands gesturing, walking, shopping in stores, outdoor environments, coffee shops, cityscapes, nature, product packaging, storefronts, lifestyle moments.
+5. No text overlays, no logos, no UI mockups.
+6. Slow cinematic motion only — no rapid movement.`;
 
 /**
  * Generate a b-roll VIDEO clip from a description using Google Veo.
@@ -35,11 +41,11 @@ async function generateBrollVideo({ description, brandName, outputDir }) {
 
   const prompt = `Professional cinematic b-roll footage for a ${brandName || 'brand'} customer experience video: ${description}.\n${VIDEO_PROMPT_RULES}`;
 
-  // Veo models in priority order
+  // Veo models in priority order (lite is cheapest, fast is faster, standard is highest quality)
   const veoModels = [
+    'veo-3.1-lite-generate-preview',
     'veo-3.1-fast-generate-preview',
     'veo-3.1-generate-preview',
-    'veo-3.0-generate-preview',
   ];
 
   for (const modelName of veoModels) {
@@ -96,13 +102,16 @@ async function generateBrollVideo({ description, brandName, outputDir }) {
       return outputPath;
 
     } catch (err) {
-      console.warn(`[B-Roll Video] ${modelName} failed: ${err.message}`);
-      // Model not found or not available — try next
-      if (err.message.includes('not found') || err.message.includes('404') ||
-          err.message.includes('not supported') || err.message.includes('not available')) {
-        continue;
+      const errMsg = err.message || String(err);
+      console.warn(`[B-Roll Video] ${modelName} failed: ${errMsg}`);
+      // Log full error details for debugging
+      if (err.status) console.warn(`[B-Roll Video] HTTP status: ${err.status}`);
+      if (err.statusText) console.warn(`[B-Roll Video] Status text: ${err.statusText}`);
+      // Check for billing/permission errors
+      if (errMsg.includes('billing') || errMsg.includes('quota') || errMsg.includes('permission') || errMsg.includes('403')) {
+        console.warn('[B-Roll Video] Veo requires a paid-tier Gemini API key with billing enabled. Skipping all Veo models.');
+        break; // Don't try other models if it's a billing issue
       }
-      // Rate limit, quota, or other error — try next model
       continue;
     }
   }
@@ -126,7 +135,12 @@ async function generateBrollImage({ description, brandName, outputDir }) {
 
   const prompt = `Professional, cinematic b-roll photograph for a ${brandName || 'brand'} customer experience video: ${description}.
 Style: Clean, modern, high-quality stock photography. Warm, inviting lighting. Shallow depth of field.
-IMPORTANT RULES: No text, no logos, no UI elements, no device screens, no phone screens, no laptop screens, no computer monitors. Never show what is on a screen. It is okay to show a person holding or using a device from a distance, but NEVER from the vantage point of seeing what is displayed on the screen. Focus on people, environments, emotions, and lifestyle moments.`;
+CRITICAL RULES YOU MUST FOLLOW:
+1. ABSOLUTELY NO screens of any kind — no phone screens, laptop screens, tablet screens, computer monitors, TV screens, smartwatch screens, or any digital display.
+2. ABSOLUTELY NO close-ups of devices showing screen content.
+3. DO NOT show people looking at screens or using touchscreens in close-up.
+4. INSTEAD focus on: people's faces, emotions, hands, shopping, outdoor scenes, storefronts, lifestyle moments, environments, nature, cityscapes.
+5. No text, no logos, no UI mockups.`;
 
   const modelNames = [
     'gemini-2.5-flash-image',

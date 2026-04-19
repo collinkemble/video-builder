@@ -340,7 +340,7 @@
           </div>
         </div>
         <div id="script-empty" style="text-align: center; padding: 20px;">
-          <p style="color: #999; font-size: 14px;">No narration script yet. Click "Generate Script" to create one from your scenes and demo script.</p>
+          <p style="color: #999; font-size: 14px;">No narration script yet. Import scenes from a PocketSIC project to auto-generate one.</p>
         </div>
         <div id="script-segments" class="hidden"></div>
       </div>
@@ -1088,8 +1088,21 @@ async function viewVideo(id, skipPush) {
     // Script Writer source card
     renderScriptWriterCard(video);
 
-    // Narration Script
-    renderScript(video.narration_script);
+    // Narration Script — auto-generate if scenes exist but no script yet
+    const scriptData = video.narration_script;
+    const hasScript = scriptData && scriptData.segments && scriptData.segments.length > 0;
+    const sceneDataObj = typeof video.scene_data === 'string' ? JSON.parse(video.scene_data || '{}') : (video.scene_data || {});
+    const hasScenes = (sceneDataObj.scenes || []).length > 0;
+
+    if (hasScript) {
+      renderScript(scriptData);
+    } else if (hasScenes && !isProcessing) {
+      // Auto-generate the narration script in the background
+      renderScript(null); // show empty state briefly
+      autoGenerateScript(id);
+    } else {
+      renderScript(null);
+    }
 
     // Pipeline progress
     if (isProcessing) {
@@ -1172,6 +1185,9 @@ function renderScript(script) {
   empty.classList.add('hidden');
   container.classList.remove('hidden');
 
+  // Update button text since script exists
+  document.getElementById('gen-script-btn').textContent = '🔄 Regenerate Script';
+
   // Store the script data for editing
   window._currentScript = data;
 
@@ -1218,7 +1234,39 @@ async function generateScriptOnly() {
     alert(err.message);
   } finally {
     btn.disabled = false;
-    btn.textContent = '📝 Generate Script';
+    btn.textContent = '🔄 Regenerate Script';
+  }
+}
+
+// Auto-generate script when first opening a video that has scenes but no script
+async function autoGenerateScript(videoId) {
+  const email = document.getElementById('user-email').textContent;
+  const btn = document.getElementById('gen-script-btn');
+  const empty = document.getElementById('script-empty');
+
+  btn.disabled = true;
+  btn.textContent = '⏳ Generating...';
+  empty.innerHTML = '<p style="color: #0176D3; font-size: 14px;">✨ Generating narration script...</p>';
+  empty.classList.remove('hidden');
+
+  try {
+    const resp = await fetch(`/api/videos/${videoId}/generate-script`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email }),
+    });
+
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || 'Failed to generate script');
+
+    renderScript(data.script);
+    document.getElementById('save-script-btn').classList.add('hidden');
+  } catch (err) {
+    empty.innerHTML = `<p style="color: #C23934; font-size: 14px;">Failed to generate script: ${esc(err.message)}</p>`;
+    empty.classList.remove('hidden');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '🔄 Regenerate Script';
   }
 }
 

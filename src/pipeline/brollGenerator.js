@@ -25,15 +25,15 @@ async function generateBrollImage({ description, brandName, outputDir }) {
   const ai = getGenAI();
 
   const prompt = `Professional, cinematic b-roll image for a ${brandName || 'brand'} customer experience video: ${description}.
-Style: Clean, modern, high-quality stock photography look. 16:9 aspect ratio.
-Warm, inviting lighting. No text or logos.`;
+Style: Clean, modern, high-quality stock photography look. Warm, inviting lighting. No text or logos.`;
 
   try {
+    console.log(`[B-Roll] Generating image: "${description.substring(0, 60)}..."`);
     const response = await ai.models.generateContent({
       model: 'gemini-2.0-flash-exp',
       contents: prompt,
       config: {
-        responseModalities: ['IMAGE', 'TEXT'],
+        responseModalities: ['TEXT', 'IMAGE'],
       },
     });
 
@@ -46,13 +46,15 @@ Warm, inviting lighting. No text or logos.`;
       const filename = `broll_${Date.now()}.png`;
       const outputPath = path.join(outputDir || os.tmpdir(), filename);
       fs.writeFileSync(outputPath, imageBuffer);
+      console.log(`[B-Roll] AI image generated: ${outputPath} (${(imageBuffer.length / 1024).toFixed(1)}KB)`);
       return outputPath;
     }
 
+    console.warn('[B-Roll] No image in response. Parts:', parts.map(p => p.text ? 'text' : p.inlineData ? 'image' : 'unknown'));
     // Fallback: generate a simple gradient placeholder
     return await generatePlaceholderImage({ description, brandName, outputDir });
   } catch (err) {
-    console.warn(`B-roll generation failed: ${err.message}. Using placeholder.`);
+    console.warn(`[B-Roll] Generation failed: ${err.message}. Using placeholder.`);
     return await generatePlaceholderImage({ description, brandName, outputDir });
   }
 }

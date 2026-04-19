@@ -2,57 +2,41 @@ const ffmpeg = require('fluent-ffmpeg');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
-const { execSync } = require('child_process');
+const { execSync, spawn } = require('child_process');
 
 // ── Find and configure FFmpeg path ──
 function findFfmpegPath() {
-  // Check FFMPEG_PATH env var
   if (process.env.FFMPEG_PATH && fs.existsSync(process.env.FFMPEG_PATH)) return process.env.FFMPEG_PATH;
-  // Check common Heroku buildpack paths
   const candidates = ['/app/vendor/ffmpeg/ffmpeg', '/app/.heroku/vendor/ffmpeg/bin/ffmpeg', '/usr/local/bin/ffmpeg', '/usr/bin/ffmpeg'];
   for (const p of candidates) { if (fs.existsSync(p)) return p; }
   try { return execSync('which ffmpeg', { encoding: 'utf-8' }).trim(); } catch { /* not found */ }
-  return 'ffmpeg'; // hope it's on PATH
+  return 'ffmpeg';
 }
 
 const FFMPEG_PATH = findFfmpegPath();
 console.log(`[Compositor] FFmpeg path: ${FFMPEG_PATH}`);
 ffmpeg.setFfmpegPath(FFMPEG_PATH);
 
-// Check available encoders
-let USE_LIBX264 = true;
-try {
-  const encoders = execSync(`${FFMPEG_PATH} -encoders 2>/dev/null`, { encoding: 'utf-8' });
-  USE_LIBX264 = encoders.includes('libx264');
-  if (!USE_LIBX264) console.warn('[Compositor] libx264 not available, falling back to mpeg4');
-} catch { /* assume available */ }
+// Target resolution
+const WIDTH = 1920;
+const HEIGHT = 1080;
+const FPS = 30;
 
 /**
- * Compose a final video from scene captures, b-roll images, and voiceover audio.
+ * Compose a final video from scene video clips, b-roll images, and voiceover audio.
  *
  * Pipeline:
- *   1. Build an image sequence from the timeline (scene captures + b-roll)
- *   2. Generate a silent video from the image sequence (each image held for its segment duration)
- *   3. Overlay the voiceover audio
- *   4. Add lower-third title cards and crossfade transitions
- *   5. Export H.264 MP4 at 1920×1080
- *
- * @param {object} params
- * @param {Array}  params.segments       - Full timeline segments from the script
- * @param {object} params.timestamps     - { segments: [{ order, startTime, endTime }] }
- * @param {object} params.sceneImages    - Map of sceneId → imagePath
- * @param {object} params.brollImages    - Map of order → imagePath (for intro/transition/outro)
- * @param {string} params.voiceoverPath  - Path to voiceover MP3
- * @param {string} params.brandName      - Brand name for lower-thirds
- * @param {string} params.outputDir      - Directory for output
- * @param {function} params.onProgress   - Progress callback (percent)
- * @returns {Promise<object>} { videoPath, thumbnailPath, duration }
+ *   1. Build timeline: map segments to video clips (scenes) or still images (b-roll)
+ *   2. Normalize each segment into a standardized MP4 clip at 1920x1080
+ *   3. Concatenate all clips into a single silent video
+ *   4. Overlay voiceover audio
+ *   5. Generate thumbnail
  */
 async function composeVideo({
   segments,
   timestamps,
-  sceneImages,
-  brollImages,
+  sceneImages,  // { sceneId: clipPath } — now MP4 clips from scene capture
+  brollImages,  // { order: imagePath } — still PNG images from b-roll generator
   voiceoverPath,
   brandName,
   outputDir,
@@ -61,56 +45,76 @@ async function composeVideo({
   const workDir = outputDir || path.join(os.tmpdir(), `vb_${Date.now()}`);
   if (!fs.existsSync(workDir)) fs.mkdirSync(workDir, { recursive: true });
 
-  // ── Step 1: Build per-segment image list with durations ──
+  // ── Step 1: Build timeline ──
   const timelineEntries = buildTimeline(segments, timestamps, sceneImages, brollImages);
 
   if (timelineEntries.length === 0) {
-    throw new Error('No images available for video composition. Scene capture may have failed — check that PocketSIC scenes are accessible.');
+    throw new Error('No media available for video composition. Scene capture may have failed.');
   }
 
-  // Verify all image files actually exist
+  // Verify all source files exist
   for (const entry of timelineEntries) {
-    if (!fs.existsSync(entry.imagePath)) {
-      throw new Error(`Image file missing for segment ${entry.order}: ${entry.imagePath}`);
+    if (!fs.existsSync(entry.sourcePath)) {
+      throw new Error(`Media file missing for segment ${entry.order}: ${entry.sourcePath}`);
     }
   }
 
-  // ── Step 2: Create concat demuxer file ──
-  // Each image is shown for its calculated duration
-  const concatFilePath = path.join(workDir, 'concat.txt');
-  const concatLines = timelineEntries.map(entry => {
-    const safePath = entry.imagePath.replace(/'/g, "'\\''");
-    return `file '${safePath}'\nduration ${entry.duration.toFixed(3)}`;
-  });
-  // ffmpeg concat requires the last file repeated to avoid truncation
-  const lastEntry = timelineEntries[timelineEntries.length - 1];
-  concatLines.push(`file '${lastEntry.imagePath.replace(/'/g, "'\\''")}'`);
-  fs.writeFileSync(concatFilePath, concatLines.join('\n'));
-  console.log(`[Compositor] concat.txt (${timelineEntries.length} entries):\n${fs.readFileSync(concatFilePath, 'utf-8').substring(0, 500)}`);
+  if (onProgress) onProgress(10);
 
-  // ── Step 3: Generate silent video from images ──
+  // ── Step 2: Normalize each segment into 1920x1080 clips ──
+  const normalizedClips = [];
+  for (let i = 0; i < timelineEntries.length; i++) {
+    const entry = timelineEntries[i];
+    const clipPath = path.join(workDir, `clip_${String(i).padStart(3, '0')}.mp4`);
+
+    if (entry.isVideo) {
+      // Scene capture clip — scale/pad to 1920x1080 and trim/pad to target duration
+      await normalizeVideoClip(entry.sourcePath, clipPath, entry.duration);
+    } else {
+      // B-roll still image — create a video of the image held for the duration
+      await imageToVideo(entry.sourcePath, clipPath, entry.duration);
+    }
+
+    normalizedClips.push(clipPath);
+
+    if (onProgress) {
+      const pct = 10 + Math.round(40 * ((i + 1) / timelineEntries.length));
+      onProgress(pct);
+    }
+  }
+
+  // ── Step 3: Concatenate all clips ──
+  const concatPath = path.join(workDir, 'concat.txt');
+  const concatContent = normalizedClips.map(p => `file '${p.replace(/'/g, "'\\''")}'`).join('\n');
+  fs.writeFileSync(concatPath, concatContent);
+  console.log(`[Compositor] Concatenating ${normalizedClips.length} clips...`);
+
   const silentVideoPath = path.join(workDir, 'silent.mp4');
-  await createSilentVideo(concatFilePath, silentVideoPath, onProgress);
+  await concatClips(concatPath, silentVideoPath, onProgress);
+
+  if (onProgress) onProgress(70);
 
   // ── Step 4: Overlay voiceover audio ──
   const finalVideoPath = path.join(workDir, `video_${Date.now()}.mp4`);
   if (voiceoverPath && fs.existsSync(voiceoverPath)) {
     await overlayAudio(silentVideoPath, voiceoverPath, finalVideoPath, onProgress);
   } else {
-    // No voiceover — just copy the silent video
     fs.copyFileSync(silentVideoPath, finalVideoPath);
   }
 
-  // ── Step 5: Generate thumbnail (frame at 2 seconds) ──
+  if (onProgress) onProgress(90);
+
+  // ── Step 5: Thumbnail ──
   const thumbnailPath = path.join(workDir, 'thumbnail.jpg');
   await generateThumbnail(finalVideoPath, thumbnailPath);
 
   // ── Step 6: Get duration ──
   const duration = await getVideoDuration(finalVideoPath);
 
-  // Clean up intermediate files
+  // Cleanup intermediate files
+  for (const clip of normalizedClips) safeDelete(clip);
   safeDelete(silentVideoPath);
-  safeDelete(concatFilePath);
+  safeDelete(concatPath);
 
   return {
     videoPath: finalVideoPath,
@@ -120,48 +124,44 @@ async function composeVideo({
 }
 
 /**
- * Build the ordered timeline mapping segments to image files with durations.
+ * Build the ordered timeline from script segments, timestamps, and media.
  */
 function buildTimeline(segments, timestamps, sceneImages, brollImages) {
   const tsMap = {};
   if (timestamps && timestamps.segments) {
-    timestamps.segments.forEach(ts => {
-      tsMap[ts.order] = ts;
-    });
+    timestamps.segments.forEach(ts => { tsMap[ts.order] = ts; });
   }
 
   const entries = [];
 
   for (const seg of segments) {
-    // Determine which image to show
-    let imagePath = null;
+    let sourcePath = null;
+    let isVideo = false;
 
+    // Scene capture (now video clips)
     if (seg.visualType === 'scene_capture' && seg.sceneId && sceneImages[seg.sceneId]) {
-      imagePath = sceneImages[seg.sceneId];
-    } else if (brollImages[seg.order]) {
-      imagePath = brollImages[seg.order];
+      sourcePath = sceneImages[seg.sceneId];
+      isVideo = sourcePath.endsWith('.mp4');
+    }
+    // B-roll (still images)
+    else if (brollImages[seg.order]) {
+      sourcePath = brollImages[seg.order];
+      isVideo = sourcePath.endsWith('.mp4');
     }
 
-    if (!imagePath) {
-      console.warn(`No image for segment ${seg.order} (type: ${seg.type}). Skipping.`);
+    if (!sourcePath) {
+      console.warn(`No media for segment ${seg.order} (type: ${seg.type}). Skipping.`);
       continue;
     }
 
-    // Calculate duration from timestamps or fallback to estimated
     const ts = tsMap[seg.order];
-    let duration;
-    if (ts) {
-      duration = ts.endTime - ts.startTime;
-    } else {
-      duration = seg.estimatedDuration || 10;
-    }
-
-    // Ensure minimum duration
+    let duration = ts ? (ts.endTime - ts.startTime) : (seg.estimatedDuration || 10);
     if (duration < 1) duration = 1;
 
     entries.push({
       order: seg.order,
-      imagePath,
+      sourcePath,
+      isVideo,
       duration,
       type: seg.type,
     });
@@ -171,65 +171,58 @@ function buildTimeline(segments, timestamps, sceneImages, brollImages) {
 }
 
 /**
- * Create a silent video from a concat demuxer file (image sequence).
+ * Normalize a video clip to 1920x1080, target duration.
+ * If clip is shorter than target: pad with last frame (freeze).
+ * If clip is longer: trim to target.
  */
-function createSilentVideo(concatFilePath, outputPath, onProgress) {
-  return new Promise((resolve, reject) => {
-    const videoCodecArgs = USE_LIBX264
-      ? ['-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '23']
-      : ['-c:v', 'mpeg4', '-q:v', '5'];
-
-    const args = [
-      '-y',
-      '-f', 'concat', '-safe', '0', '-i', concatFilePath,
-      '-vf', 'scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,format=yuv420p',
-      ...videoCodecArgs,
-      '-r', '30',
-      '-pix_fmt', 'yuv420p',
-      '-movflags', '+faststart',
-      outputPath,
-    ];
-
-    console.log(`[FFmpeg] Running: ${FFMPEG_PATH} ${args.join(' ')}`);
-
-    const { spawn } = require('child_process');
-    const proc = spawn(FFMPEG_PATH, args, { stdio: ['ignore', 'pipe', 'pipe'] });
-
-    // 5-minute timeout to prevent stuck processes on Heroku
-    const timeout = setTimeout(() => {
-      console.error('[FFmpeg] Timeout reached (5 min). Killing process.');
-      proc.kill('SIGKILL');
-    }, 5 * 60 * 1000);
-
-    let stderr = '';
-    proc.stderr.on('data', (chunk) => {
-      const line = chunk.toString();
-      stderr += line;
-      // Parse progress from FFmpeg output
-      const match = line.match(/time=(\d+:\d+:\d+\.\d+)/);
-      if (match && onProgress) {
-        onProgress(30); // rough progress indicator
-      }
-    });
-
-    proc.on('close', (code) => {
-      clearTimeout(timeout);
-      if (code === 0) {
-        resolve();
-      } else {
-        console.error(`[FFmpeg] Exit code ${code}. Stderr:\n${stderr}`);
-        reject(new Error(`FFmpeg silent video failed (exit code ${code}): ${stderr.slice(-500)}`));
-      }
-    });
-
-    proc.on('error', (err) => {
-      reject(new Error(`FFmpeg spawn error: ${err.message}`));
-    });
-  });
+function normalizeVideoClip(inputPath, outputPath, targetDuration) {
+  return runFfmpeg([
+    '-y',
+    '-i', inputPath,
+    '-t', String(targetDuration),
+    '-vf', `scale=${WIDTH}:${HEIGHT}:force_original_aspect_ratio=decrease,pad=${WIDTH}:${HEIGHT}:(ow-iw)/2:(oh-ih)/2:black,format=yuv420p`,
+    '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '23',
+    '-r', String(FPS),
+    '-pix_fmt', 'yuv420p',
+    '-an',
+    '-movflags', '+faststart',
+    outputPath,
+  ], `normalizing clip`);
 }
 
 /**
- * Overlay voiceover audio onto a silent video.
+ * Create a video from a still image held for a given duration.
+ */
+function imageToVideo(imagePath, outputPath, duration) {
+  return runFfmpeg([
+    '-y',
+    '-loop', '1',
+    '-i', imagePath,
+    '-t', String(duration),
+    '-vf', `scale=${WIDTH}:${HEIGHT}:force_original_aspect_ratio=decrease,pad=${WIDTH}:${HEIGHT}:(ow-iw)/2:(oh-ih)/2:black,format=yuv420p`,
+    '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '23',
+    '-r', String(FPS),
+    '-pix_fmt', 'yuv420p',
+    '-movflags', '+faststart',
+    outputPath,
+  ], `image→video`);
+}
+
+/**
+ * Concatenate normalized clips using the concat demuxer.
+ */
+function concatClips(concatFilePath, outputPath, onProgress) {
+  return runFfmpeg([
+    '-y',
+    '-f', 'concat', '-safe', '0', '-i', concatFilePath,
+    '-c', 'copy',
+    '-movflags', '+faststart',
+    outputPath,
+  ], 'concatenating clips');
+}
+
+/**
+ * Overlay voiceover audio onto a video.
  */
 function overlayAudio(videoPath, audioPath, outputPath, onProgress) {
   return new Promise((resolve, reject) => {
@@ -249,18 +242,49 @@ function overlayAudio(videoPath, audioPath, outputPath, onProgress) {
       .on('start', (cmd) => console.log(`[FFmpeg] Audio overlay: ${cmd.substring(0, 120)}...`))
       .on('progress', (progress) => {
         if (onProgress && progress.percent) {
-          onProgress(60 + Math.min(progress.percent * 0.3, 30)); // 60-90% for this step
+          onProgress(70 + Math.min(progress.percent * 0.2, 20));
         }
       })
       .on('error', (err) => reject(new Error(`FFmpeg audio overlay failed: ${err.message}`)))
       .on('end', () => resolve());
-
     cmd.run();
   });
 }
 
 /**
- * Generate a thumbnail image from a video at the 2-second mark.
+ * Run an FFmpeg command via spawn with timeout.
+ */
+function runFfmpeg(args, label) {
+  return new Promise((resolve, reject) => {
+    const proc = spawn(FFMPEG_PATH, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+
+    const timeout = setTimeout(() => {
+      console.error(`[FFmpeg] Timeout (3 min) for ${label}. Killing.`);
+      proc.kill('SIGKILL');
+    }, 3 * 60 * 1000);
+
+    let stderr = '';
+    proc.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
+
+    proc.on('close', (code) => {
+      clearTimeout(timeout);
+      if (code === 0) {
+        resolve();
+      } else {
+        console.error(`[FFmpeg ${label}] Exit code ${code}. Stderr:\n${stderr.slice(-500)}`);
+        reject(new Error(`FFmpeg ${label} failed (exit ${code}): ${stderr.slice(-300)}`));
+      }
+    });
+
+    proc.on('error', (err) => {
+      clearTimeout(timeout);
+      reject(new Error(`FFmpeg spawn error (${label}): ${err.message}`));
+    });
+  });
+}
+
+/**
+ * Generate thumbnail at 2-second mark.
  */
 function generateThumbnail(videoPath, outputPath) {
   return new Promise((resolve, reject) => {
@@ -273,14 +297,14 @@ function generateThumbnail(videoPath, outputPath) {
       })
       .on('error', (err) => {
         console.warn(`Thumbnail generation failed: ${err.message}. Skipping.`);
-        resolve(); // Non-fatal
+        resolve();
       })
       .on('end', () => resolve());
   });
 }
 
 /**
- * Get the duration of a video file in seconds.
+ * Get duration of a video in seconds.
  */
 function getVideoDuration(videoPath) {
   return new Promise((resolve, reject) => {
@@ -292,15 +316,8 @@ function getVideoDuration(videoPath) {
   });
 }
 
-/**
- * Safely delete a file (no throw on failure).
- */
 function safeDelete(filePath) {
-  try {
-    if (filePath && fs.existsSync(filePath)) fs.unlinkSync(filePath);
-  } catch (e) {
-    /* ignore */
-  }
+  try { if (filePath && fs.existsSync(filePath)) fs.unlinkSync(filePath); } catch { /* ignore */ }
 }
 
 module.exports = { composeVideo };

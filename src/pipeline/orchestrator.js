@@ -132,6 +132,7 @@ async function runPipeline(videoId, userId, options = {}) {
       const captureInputs = sceneSegments.map(s => ({
         sceneId: s.sceneId,
         channel: s.channel || 'default',
+        duration: s.estimatedDuration || 10,
       }));
 
       const captures = await captureAllScenes(captureInputs, workDir, (done, total) => {

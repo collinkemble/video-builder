@@ -41,7 +41,8 @@ function shouldInteract(channel) {
 function getSceneType(channel) {
   const ch = normalizeChannel(channel);
   if (ch.includes('imessage') || ch.includes('sms') || ch.includes('text') || ch.includes('whatsapp')) return 'messaging';
-  if (ch.includes('web') || ch.includes('chat') || ch.includes('agent')) return 'website';
+  // PocketSIC uses "site" for website scenes, Gemini script may use "web", "website", "chat", "agent"
+  if (ch.includes('web') || ch.includes('site') || ch.includes('chat') || ch.includes('agent')) return 'website';
   if (ch.includes('retail') || ch.includes('store') || ch.includes('pos')) return 'retail';
   return 'generic';
 }
@@ -421,6 +422,7 @@ async function captureScene({ sceneId, channel, duration, outputDir, browser }) 
 
     if (interactive) {
       const sceneType = getSceneType(channel);
+      console.log(`[SceneCapture] Channel "${channel}" → normalized "${normalizeChannel(channel)}" → sceneType "${sceneType}"`);
       let interactionStrategy;
 
       switch (sceneType) {

@@ -115,7 +115,7 @@ Return ONLY valid JSON in this exact format:
       "visualType": "broll",
       "brollDescription": "Description of a transition image",
       "narration": "Brief transition narration...",
-      "estimatedDuration": 6
+      "estimatedDuration": 10
     }
   ]
 }
@@ -140,6 +140,13 @@ B-ROLL UNIQUENESS RULES (CRITICAL):
 - Transition b-roll should show the specific context change (e.g., "person walking through a shopping district toward a store entrance" vs "hands opening a delivery package at a kitchen counter").
 - The outro b-roll should show a warm conclusion (e.g., satisfied customer, sunset scene, brand celebration).
 - Be specific and detailed in each description — vague descriptions like "happy customer" will produce similar-looking clips.
+
+DURATION RULES:
+- Intro segments should be at least 10-15 seconds with substantive narration (3-4 sentences).
+- Transition segments should be at least 8-10 seconds with meaningful narration (2-3 sentences).
+- Outro segments should be at least 10-15 seconds with a proper wrap-up (3-4 sentences).
+- Scene segments should be 12-20 seconds each.
+- NEVER make any segment shorter than 8 seconds. Short segments create jarring visual cuts.
 
 IMPORTANT: Every PocketSIC scene MUST appear exactly once as a "scene" type segment. Include the scene's sceneId and channel.
 

@@ -61,10 +61,20 @@ async function pollVeoOperation(ai, operation, label, maxWait = 300000) {
  * @param {number} params.targetDuration - Desired clip length in seconds (default 8)
  * @returns {Promise<string|null>} Path to MP4 clip, or null if video gen failed
  */
-async function generateBrollVideo({ description, brandName, outputDir, targetDuration = 8 }) {
+async function generateBrollVideo({ description, brandName, outputDir, targetDuration = 8, segmentType = '', segmentChannel = '' }) {
   const ai = getGenAI();
 
-  const prompt = `Professional cinematic b-roll footage for a ${brandName || 'brand'} customer experience video: ${description}.\n${VIDEO_PROMPT_RULES}`;
+  // Add context about the segment role for more fitting footage
+  let contextHint = '';
+  if (segmentType === 'intro') {
+    contextHint = 'This is the OPENING shot of the video — use a wide, establishing cinematic shot that sets the mood. ';
+  } else if (segmentType === 'outro') {
+    contextHint = 'This is the CLOSING shot of the video — use a warm, conclusive cinematic shot that feels like a satisfying ending. ';
+  } else if (segmentType === 'transition') {
+    contextHint = `This is a TRANSITION shot bridging two scenes${segmentChannel ? ` (coming from: ${segmentChannel})` : ''} — show movement, travel, or passage of time. `;
+  }
+
+  const prompt = `${contextHint}Professional cinematic b-roll footage for a ${brandName || 'brand'} customer experience video: ${description}.\n${VIDEO_PROMPT_RULES}`;
 
   const modelName = 'veo-3.1-generate-preview';
 
@@ -306,9 +316,9 @@ function truncate(str, maxLen) {
  * @param {number} params.targetDuration - Desired clip length in seconds (default 8)
  * @returns {Promise<string>} Path to MP4 video or PNG image
  */
-async function generateBroll({ description, brandName, outputDir, targetDuration = 8 }) {
+async function generateBroll({ description, brandName, outputDir, targetDuration = 8, segmentType = '', segmentChannel = '' }) {
   // Try video generation first (Veo) — with extend for longer clips
-  const videoPath = await generateBrollVideo({ description, brandName, outputDir, targetDuration });
+  const videoPath = await generateBrollVideo({ description, brandName, outputDir, targetDuration, segmentType, segmentChannel });
   if (videoPath) return videoPath;
 
   // Fallback to image generation (Gemini Imagen)
@@ -330,14 +340,17 @@ async function generateAllBroll(segments, brandName, outputDir, onProgress) {
 
   for (let i = 0; i < segments.length; i++) {
     const seg = segments[i];
-    const targetDuration = seg.estimatedDuration || 10;
-    console.log(`[B-Roll] Generating ${i + 1}/${segments.length} (target ${targetDuration}s): ${seg.brollDescription?.substring(0, 50)}...`);
+    // Ensure b-roll is at least 8s (Veo minimum) — short narration shouldn't mean short visuals
+    const targetDuration = Math.max(seg.estimatedDuration || 10, 8);
+    console.log(`[B-Roll] Generating ${i + 1}/${segments.length} (${seg.type || 'broll'}, target ${targetDuration}s): ${seg.brollDescription?.substring(0, 50)}...`);
 
     const mediaPath = await generateBroll({
       description: seg.brollDescription || 'Professional lifestyle image',
       brandName,
       outputDir,
       targetDuration,
+      segmentType: seg.type || '',
+      segmentChannel: seg.channel || '',
     });
 
     if (mediaPath.endsWith('.mp4')) {

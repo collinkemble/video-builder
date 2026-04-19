@@ -184,6 +184,15 @@ function buildTimeline(segments, timestamps, sceneImages, brollImages) {
     let duration = ts ? (ts.endTime - ts.startTime) : (seg.estimatedDuration || 10);
     if (duration < 1) duration = 1;
 
+    // B-roll video clips should never be trimmed shorter than 8 seconds.
+    // The narration may be short, but a 3-second clip looks jarring and repetitive.
+    // The audio overlay step uses the LONGER of video vs audio, so extra video won't cause issues.
+    const isBroll = seg.type === 'intro' || seg.type === 'transition' || seg.type === 'outro';
+    if (isBroll && isVideo && duration < 8) {
+      console.log(`[Compositor] Extending b-roll segment ${seg.order} (${seg.type}) from ${duration}s to 8s minimum`);
+      duration = 8;
+    }
+
     entries.push({
       order: seg.order,
       sourcePath,

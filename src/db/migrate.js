@@ -33,7 +33,9 @@ async function migrate() {
       // APP-SPECIFIC ALTER statements — Video Builder
       // =============================================
       const appAlters = [
-        // Future schema changes go here
+        "ALTER TABLE videos ADD COLUMN scriptwriter_script_id INT DEFAULT NULL",
+        "ALTER TABLE videos ADD COLUMN scriptwriter_script_name VARCHAR(255) DEFAULT NULL",
+        "ALTER TABLE videos ADD COLUMN scriptwriter_data JSON DEFAULT NULL",
       ];
 
       const allAlters = [...sharedAlters, ...appAlters];

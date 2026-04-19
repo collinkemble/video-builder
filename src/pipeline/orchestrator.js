@@ -39,6 +39,9 @@ async function runPipeline(videoId, userId, options = {}) {
 
     const sceneData = typeof video.scene_data === 'string' ? JSON.parse(video.scene_data) : (video.scene_data || {});
     const scenes = sceneData.scenes || [];
+    const scriptWriterData = video.scriptwriter_data
+      ? (typeof video.scriptwriter_data === 'string' ? JSON.parse(video.scriptwriter_data) : video.scriptwriter_data)
+      : null;
 
     if (scenes.length === 0) {
       throw new Error('No scenes found. Import a PocketSIC project first.');
@@ -64,6 +67,7 @@ async function runPipeline(videoId, userId, options = {}) {
           content_summary: s.content_summary || s.description || '',
         })),
         durationTarget: video.duration_target || 180,
+        scriptWriterData,
       });
 
       // Save script to video record

@@ -175,7 +175,7 @@
 
         <div class="nav-desktop flex items-center gap-1">
           <button id="nav-videos" onclick="showPage('videos')" class="cursor-pointer" style="padding: 6px 16px; border-radius: 6px; background: rgba(255,255,255,0.12); border: none; color: #FFFFFF; font-size: 13px; font-weight: 700; transition: background 0.15s ease;">Videos</button>
-          <button id="nav-connections" onclick="showPage('connections')" class="cursor-pointer" style="padding: 6px 16px; border-radius: 6px; background: transparent; border: none; color: rgba(255,255,255,0.7); font-size: 13px; font-weight: 500; transition: background 0.15s ease;" onmouseenter="if(!this.dataset.active)this.style.background='rgba(255,255,255,0.07)'" onmouseleave="if(!this.dataset.active)this.style.background='transparent'">Connections</button>
+          <!-- Connections page removed — app uses server-side API keys -->
           <button id="nav-api-keys" onclick="showPage('api-keys')" class="cursor-pointer" style="padding: 6px 16px; border-radius: 6px; background: transparent; border: none; color: rgba(255,255,255,0.7); font-size: 13px; font-weight: 500; transition: background 0.15s ease;" onmouseenter="if(!this.dataset.active)this.style.background='rgba(255,255,255,0.07)'" onmouseleave="if(!this.dataset.active)this.style.background='transparent'">API Keys</button>
           <button id="nav-feedback" onclick="showPage('feedback')" class="hidden cursor-pointer" style="padding: 6px 16px; border-radius: 6px; background: transparent; border: none; color: rgba(255,255,255,0.7); font-size: 13px; font-weight: 500; transition: background 0.15s ease;" onmouseenter="if(!this.dataset.active)this.style.background='rgba(255,255,255,0.07)'" onmouseleave="if(!this.dataset.active)this.style.background='transparent'">Feedback</button>
           <button id="nav-users" onclick="showPage('users')" class="hidden cursor-pointer" style="padding: 6px 16px; border-radius: 6px; background: transparent; border: none; color: rgba(255,255,255,0.7); font-size: 13px; font-weight: 500; transition: background 0.15s ease;" onmouseenter="if(!this.dataset.active)this.style.background='rgba(255,255,255,0.07)'" onmouseleave="if(!this.dataset.active)this.style.background='transparent'">Users</button>
@@ -195,7 +195,7 @@
 
       <div id="mobile-menu" class="mobile-menu">
         <button id="mob-nav-videos" onclick="showPage('videos'); closeMobileMenu();">🎬 Videos</button>
-        <button id="mob-nav-connections" onclick="showPage('connections'); closeMobileMenu();">🔗 Connections</button>
+        <!-- Connections removed — server-side keys -->
         <button id="mob-nav-api-keys" onclick="showPage('api-keys'); closeMobileMenu();">🔑 API Keys</button>
         <button id="mob-nav-feedback" onclick="showPage('feedback'); closeMobileMenu();" style="display:none;">📋 Feedback</button>
         <button id="mob-nav-users" onclick="showPage('users'); closeMobileMenu();" style="display:none;">👤 Users</button>
@@ -522,7 +522,17 @@
         <select id="new-video-project" class="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm">
           <option value="">— Select a project (optional) —</option>
         </select>
-        <p class="mt-1 text-xs text-gray-400">You can also import scenes later.</p>
+        <p class="mt-1 text-xs text-gray-400">Import scenes from PocketSIC to capture in the video.</p>
+      </div>
+
+      <div class="mb-4">
+        <label class="block text-xs font-bold mb-1" style="color: #032D60;">Demo Script <span class="font-normal text-gray-400">(from Script Writer)</span></label>
+        <div id="script-picker-loading" class="hidden text-sm text-gray-400 py-2">Loading scripts...</div>
+        <div id="script-picker-error" class="hidden text-sm py-2" style="color: #C23934;"></div>
+        <select id="new-video-script" class="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm">
+          <option value="">— Select a script (optional) —</option>
+        </select>
+        <p class="mt-1 text-xs text-gray-400">Use an existing demo script as the basis for video narration.</p>
       </div>
 
       <p id="new-video-error" class="hidden text-sm mb-3" style="color: #C23934;"></p>
@@ -796,7 +806,7 @@ async function showApp(email) {
   document.getElementById('user-email').textContent = email;
 
   const viewMatch = window.location.pathname.match(/^\/views\/(\d+)$/);
-  const pageMap = { '/connections': 'connections', '/api-keys': 'api-keys', '/feedback': 'feedback', '/users': 'users' };
+  const pageMap = { '/api-keys': 'api-keys', '/feedback': 'feedback', '/users': 'users' };
   const urlPage = pageMap[window.location.pathname];
 
   if (viewMatch) {
@@ -883,7 +893,7 @@ function showPage(page, skipPush) {
   document.getElementById('admin-users-section').classList.toggle('hidden', page !== 'users');
 
   const navPage = page === 'video-detail' ? 'videos' : page;
-  ['videos', 'connections', 'api-keys', 'users', 'feedback'].forEach(p => {
+  ['videos', 'api-keys', 'users', 'feedback'].forEach(p => {
     const btn = document.getElementById('nav-' + p);
     if (!btn) return;
     const isActive = p === navPage;
@@ -893,18 +903,17 @@ function showPage(page, skipPush) {
     btn.style.fontWeight = isActive ? '700' : '500';
   });
 
-  ['videos', 'connections', 'api-keys', 'feedback', 'users'].forEach(p => {
+  ['videos', 'api-keys', 'feedback', 'users'].forEach(p => {
     const mobBtn = document.getElementById('mob-nav-' + p);
     if (mobBtn) mobBtn.classList.toggle('mobile-nav-active', p === navPage);
   });
 
   if (!skipPush && page !== 'video-detail') {
-    const urlMap = { 'videos': '/', 'connections': '/connections', 'api-keys': '/api-keys', 'feedback': '/feedback', 'users': '/users' };
+    const urlMap = { 'videos': '/', 'api-keys': '/api-keys', 'feedback': '/feedback', 'users': '/users' };
     history.pushState({ page }, '', urlMap[page] || '/');
   }
 
   if (page === 'videos') loadVideos();
-  if (page === 'connections') loadConnections();
   if (page === 'api-keys') loadApiKeys();
   if (page === 'users') loadUsers();
   if (page === 'feedback') loadAdminFeedback();
@@ -1312,6 +1321,8 @@ async function openNewVideoDialog() {
   document.getElementById('new-video-error').classList.add('hidden');
   document.getElementById('new-video-dialog').classList.remove('hidden');
 
+  const email = document.getElementById('user-email').textContent;
+
   // Load PocketSIC projects
   const select = document.getElementById('new-video-project');
   const loading = document.getElementById('project-picker-loading');
@@ -1321,7 +1332,6 @@ async function openNewVideoDialog() {
   loading.classList.remove('hidden');
   error.classList.add('hidden');
 
-  const email = document.getElementById('user-email').textContent;
   try {
     const resp = await fetch(`/api/pocketsic/projects?email=${encodeURIComponent(email)}`);
     if (!resp.ok) {
@@ -1341,6 +1351,35 @@ async function openNewVideoDialog() {
   } finally {
     loading.classList.add('hidden');
   }
+
+  // Load Script Writer scripts
+  const scriptSelect = document.getElementById('new-video-script');
+  const scriptLoading = document.getElementById('script-picker-loading');
+  const scriptError = document.getElementById('script-picker-error');
+
+  scriptSelect.innerHTML = '<option value="">— Select a script (optional) —</option>';
+  scriptLoading.classList.remove('hidden');
+  scriptError.classList.add('hidden');
+
+  try {
+    const resp = await fetch(`/api/scriptwriter/scripts?email=${encodeURIComponent(email)}`);
+    if (!resp.ok) {
+      const data = await resp.json();
+      throw new Error(data.error || 'Failed to load scripts');
+    }
+    const data = await resp.json();
+    const scripts = data.scripts || [];
+    scripts.forEach(s => {
+      const label = s.script_name || s.brand_name || `Script #${s.id}`;
+      const brand = s.brand_name ? ` (${s.brand_name})` : '';
+      scriptSelect.innerHTML += `<option value="${s.id}" data-name="${esc(label)}" data-brand="${esc(s.brand_name || '')}">${esc(label)}${esc(brand)}</option>`;
+    });
+  } catch (err) {
+    scriptError.textContent = err.message;
+    scriptError.classList.remove('hidden');
+  } finally {
+    scriptLoading.classList.add('hidden');
+  }
 }
 
 function closeNewVideoDialog() {
@@ -1353,6 +1392,10 @@ async function createNewVideo() {
   const projectSelect = document.getElementById('new-video-project');
   const projectId = projectSelect.value;
   const projectName = projectSelect.selectedOptions[0]?.dataset?.name || '';
+  const scriptSelect = document.getElementById('new-video-script');
+  const scriptId = scriptSelect.value;
+  const scriptName = scriptSelect.selectedOptions[0]?.dataset?.name || '';
+  const scriptBrand = scriptSelect.selectedOptions[0]?.dataset?.brand || '';
   const errorEl = document.getElementById('new-video-error');
 
   if (!name) {
@@ -1381,16 +1424,32 @@ async function createNewVideo() {
       }
     }
 
+    // If script selected, fetch its full data
+    let scriptData = null;
+    if (scriptId) {
+      const swResp = await fetch(`/api/scriptwriter/scripts/${scriptId}?email=${encodeURIComponent(email)}`);
+      if (swResp.ok) {
+        const swData = await swResp.json();
+        scriptData = swData.script || swData;
+      }
+    }
+
+    // Use script brand name if no brand name entered
+    const effectiveBrand = brandName || scriptBrand || null;
+
     const resp = await fetch('/api/videos', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         email,
         name,
-        brandName: brandName || null,
+        brandName: effectiveBrand,
         pocketsicProjectId: projectId || null,
         pocketsicProjectName: projectName || null,
         sceneData,
+        scriptWriterScriptId: scriptId || null,
+        scriptWriterScriptName: scriptName || null,
+        scriptWriterData: scriptData,
       }),
     });
 

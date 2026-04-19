@@ -58,6 +58,11 @@ CREATE TABLE IF NOT EXISTS videos (
   scene_data JSON,
   scene_ids JSON,
 
+  -- Source data from Script Writer
+  scriptwriter_script_id INT DEFAULT NULL,
+  scriptwriter_script_name VARCHAR(255) DEFAULT NULL,
+  scriptwriter_data JSON DEFAULT NULL,
+
   -- Generated assets
   narration_script JSON,
   voiceover_url TEXT,

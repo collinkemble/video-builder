@@ -22,7 +22,7 @@ function getGenAI() {
  * @param {number} params.durationTarget - Target duration in seconds (default 180)
  * @returns {Promise<object>} Structured narration timeline
  */
-async function generateScript({ brandName, brandDescription, personaName, personaDescription, synopsis, scenes, durationTarget = 180 }) {
+async function generateScript({ brandName, brandDescription, personaName, personaDescription, synopsis, scenes, durationTarget = 180, scriptWriterData = null }) {
   const ai = getGenAI();
   const model = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
 
@@ -30,13 +30,45 @@ async function generateScript({ brandName, brandDescription, personaName, person
     `  ${i + 1}. Scene ID ${s.id} — Channel: ${s.channel}${s.content_summary ? ` — ${s.content_summary}` : ''}`
   ).join('\n');
 
+  // Build Script Writer reference section if we have data from the Script Writer app
+  let scriptWriterSection = '';
+  if (scriptWriterData) {
+    const swParts = [];
+    if (scriptWriterData.title) swParts.push(`SCRIPT TITLE: ${scriptWriterData.title}`);
+    if (scriptWriterData.script_data) {
+      const sd = typeof scriptWriterData.script_data === 'string'
+        ? JSON.parse(scriptWriterData.script_data)
+        : scriptWriterData.script_data;
+      // Extract key narrative elements from the Script Writer output
+      if (sd.opening) swParts.push(`OPENING: ${sd.opening}`);
+      if (sd.narrative_arc) swParts.push(`NARRATIVE ARC: ${sd.narrative_arc}`);
+      if (sd.closing) swParts.push(`CLOSING: ${sd.closing}`);
+      if (sd.key_messages && Array.isArray(sd.key_messages)) {
+        swParts.push(`KEY MESSAGES:\n${sd.key_messages.map((m, i) => `  ${i + 1}. ${m}`).join('\n')}`);
+      }
+      if (sd.tone) swParts.push(`TONE: ${sd.tone}`);
+      if (sd.full_script) swParts.push(`REFERENCE SCRIPT:\n${sd.full_script}`);
+      // Fallback: if script_data is a simple string or has a body/content field
+      if (typeof sd === 'string') swParts.push(`REFERENCE SCRIPT:\n${sd}`);
+      if (sd.body) swParts.push(`REFERENCE SCRIPT:\n${sd.body}`);
+      if (sd.content) swParts.push(`REFERENCE SCRIPT:\n${sd.content}`);
+    }
+    if (swParts.length > 0) {
+      scriptWriterSection = `\n\nDEMO SCRIPT (from Script Writer — use this as the primary narrative basis):\n${swParts.join('\n')}`;
+    }
+  }
+
+  const scriptWriterInstruction = scriptWriterData
+    ? `\n- IMPORTANT: A demo script has been provided from Script Writer. Use it as the primary narrative basis — adapt its language, tone, key messages, and story arc to fit the video timeline. Do NOT ignore it.`
+    : '';
+
   const prompt = `You are a CX story narrator writing a script for a short video (~${Math.round(durationTarget / 60)} minutes).
 
 BRAND: ${brandName}
 ${brandDescription ? `BRAND DESCRIPTION: ${brandDescription}` : ''}
 ${personaName ? `PERSONA: ${personaName}` : ''}
 ${personaDescription ? `PERSONA BACKGROUND: ${personaDescription}` : ''}
-${synopsis ? `DEMO STORY SYNOPSIS: ${synopsis}` : ''}
+${synopsis ? `DEMO STORY SYNOPSIS: ${synopsis}` : ''}${scriptWriterSection}
 
 SCENES (in order):
 ${sceneList}
@@ -48,7 +80,7 @@ Write a narration script that tells a connected customer experience story. The n
 - End with a wrap-up that ties the experience together
 - Be conversational and compelling, NOT a feature walkthrough
 - Each segment's narration should be 2-4 sentences
-- Target ~${durationTarget} seconds total (about ${Math.round(durationTarget / 15)} segments at ~15 seconds each)
+- Target ~${durationTarget} seconds total (about ${Math.round(durationTarget / 15)} segments at ~15 seconds each)${scriptWriterInstruction}
 
 Return ONLY valid JSON in this exact format:
 {

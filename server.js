@@ -7,7 +7,6 @@ const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
 const { query } = require('./src/db/connection');
 const { migrate } = require('./src/db/migrate');
-const { encrypt, decrypt } = require('./src/utils/encryption');
 const { runPipeline, getPipelineStatus } = require('./src/pipeline/orchestrator');
 const { getAvailableVoices } = require('./src/pipeline/voiceoverGenerator');
 
@@ -20,12 +19,30 @@ const JWT_SECRET = process.env.JWT_SECRET || (process.env.MAGIC_LINK_SECRET
   : 'dev-jwt-secret');
 const JWT_EXPIRY = '30d';
 
+// Cross-app SSO: try JWT secrets from other aubreydemo apps when validating session cookies.
+// Each app derives its JWT secret from the shared MAGIC_LINK_SECRET with a unique prefix.
+const CROSS_APP_SECRETS = (() => {
+  const secrets = [JWT_SECRET];
+  const magicSecret = process.env.MAGIC_LINK_SECRET || process.env.MAGIC_SECRET_KEY;
+  if (magicSecret) {
+    const prefixes = ['demoforge-session:', 'pocketsic-session:', 'saleo-session:', 'brandkit-session:', 'orgbuilder-session:', 'scriptwriter-session:', 'installer-session:'];
+    for (const prefix of prefixes) {
+      const derived = crypto.createHash('sha256').update(prefix + magicSecret).digest('hex');
+      if (derived !== JWT_SECRET) secrets.push(derived);
+    }
+  }
+  return secrets;
+})();
+
 function issueSessionToken(userId, email) {
   return jwt.sign({ userId, email }, JWT_SECRET, { expiresIn: JWT_EXPIRY });
 }
 
 function verifySessionToken(token) {
-  try { return jwt.verify(token, JWT_SECRET); } catch { return null; }
+  for (const secret of CROSS_APP_SECRETS) {
+    try { return jwt.verify(token, secret); } catch { /* try next */ }
+  }
+  return null;
 }
 
 // ─── Middleware ───
@@ -470,7 +487,7 @@ app.get('/api/videos/:id', async (req, res) => {
 // POST /api/videos — create a new video
 app.post('/api/videos', async (req, res) => {
   try {
-    const { email, name, brandName, pocketsicProjectId, pocketsicProjectName, sceneData, voiceId, durationTarget } = req.body;
+    const { email, name, brandName, pocketsicProjectId, pocketsicProjectName, sceneData, voiceId, durationTarget, scriptWriterScriptId, scriptWriterScriptName, scriptWriterData } = req.body;
     if (!email || !name) {
       return res.status(400).json({ error: 'Missing required fields: email, name' });
     }
@@ -479,8 +496,8 @@ app.post('/api/videos', async (req, res) => {
 
     const result = await query(
       `INSERT INTO videos (user_id, name, brand_name, pocketsic_project_id, pocketsic_project_name,
-        scene_data, voice_id, duration_target, status)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'draft')`,
+        scene_data, voice_id, duration_target, scriptwriter_script_id, scriptwriter_script_name, scriptwriter_data, status)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft')`,
       [
         user.id,
         name.trim(),
@@ -490,6 +507,9 @@ app.post('/api/videos', async (req, res) => {
         sceneData ? JSON.stringify(sceneData) : null,
         voiceId || 'default',
         durationTarget || 180,
+        scriptWriterScriptId || null,
+        scriptWriterScriptName || null,
+        scriptWriterData ? JSON.stringify(scriptWriterData) : null,
       ]
     );
 
@@ -656,144 +676,23 @@ app.get('/api/voices', (req, res) => {
 });
 
 // ═══════════════════════════════════════════════
-// VIDEO BUILDER — App Connections (PocketSIC)
+// VIDEO BUILDER — PocketSIC Proxy (server-side API key)
 // ═══════════════════════════════════════════════
 
-// GET /api/connections — list connections for a user
-app.get('/api/connections', async (req, res) => {
-  try {
-    const email = req.query.email;
-    if (!email) return res.status(400).json({ error: 'Email required' });
-
-    const user = await getOrCreateUser(email);
-    const connections = await query(
-      `SELECT id, app_slug, app_name, api_key_prefix, last_tested_at, test_status, created_at
-       FROM app_connections WHERE user_id = ? ORDER BY created_at DESC`,
-      [user.id]
-    );
-    res.json({ connections });
-  } catch (err) {
-    console.error('Failed to list connections:', err);
-    res.status(500).json({ error: 'Failed to list connections' });
-  }
-});
-
-// POST /api/connections — save an app connection
-app.post('/api/connections', async (req, res) => {
-  try {
-    const { email, appSlug, appName, apiKey } = req.body;
-    if (!email || !appSlug || !apiKey) {
-      return res.status(400).json({ error: 'Missing required fields: email, appSlug, apiKey' });
-    }
-
-    const user = await getOrCreateUser(email);
-
-    // Encrypt the API key
-    const { encrypted, iv, tag } = encrypt(apiKey);
-    const keyPrefix = apiKey.substring(0, 8);
-
-    // Upsert: replace existing connection for same app
-    await query('DELETE FROM app_connections WHERE user_id = ? AND app_slug = ?', [user.id, appSlug]);
-
-    await query(
-      `INSERT INTO app_connections (user_id, app_slug, app_name, api_key_encrypted, api_key_iv, api_key_tag, api_key_prefix)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [user.id, appSlug, appName || appSlug, encrypted, iv, tag, keyPrefix]
-    );
-
-    res.status(201).json({ success: true, appSlug, keyPrefix });
-  } catch (err) {
-    console.error('Failed to save connection:', err);
-    res.status(500).json({ error: 'Failed to save connection' });
-  }
-});
-
-// DELETE /api/connections/:id — remove a connection
-app.delete('/api/connections/:id', async (req, res) => {
-  try {
-    const email = req.query.email;
-    if (!email) return res.status(400).json({ error: 'Email required' });
-
-    const user = await getOrCreateUser(email);
-    const result = await query(
-      'DELETE FROM app_connections WHERE id = ? AND user_id = ?',
-      [req.params.id, user.id]
-    );
-
-    if (result.affectedRows === 0) {
-      return res.status(404).json({ error: 'Connection not found' });
-    }
-
-    res.json({ success: true });
-  } catch (err) {
-    console.error('Failed to delete connection:', err);
-    res.status(500).json({ error: 'Failed to delete connection' });
-  }
-});
-
-// POST /api/connections/test — test a PocketSIC connection
-app.post('/api/connections/test', async (req, res) => {
-  try {
-    const { email, appSlug } = req.body;
-    if (!email || !appSlug) {
-      return res.status(400).json({ error: 'email and appSlug required' });
-    }
-
-    const user = await getOrCreateUser(email);
-    const rows = await query(
-      'SELECT * FROM app_connections WHERE user_id = ? AND app_slug = ?',
-      [user.id, appSlug]
-    );
-
-    if (rows.length === 0) {
-      return res.status(404).json({ error: 'Connection not found' });
-    }
-
-    const conn = rows[0];
-    const apiKey = decrypt(conn.api_key_encrypted, conn.api_key_iv, conn.api_key_tag);
-
-    // Test by fetching PocketSIC projects
-    const baseUrl = process.env.POCKETSIC_BASE_URL || 'https://pocketsic.aubreydemo.com';
-    const testResp = await fetch(`${baseUrl}/api/projects?email=${encodeURIComponent(email)}`, {
-      headers: { 'X-API-Key': apiKey },
-    });
-
-    const testStatus = testResp.ok ? 'connected' : 'failed';
-    await query(
-      'UPDATE app_connections SET last_tested_at = NOW(), test_status = ? WHERE id = ?',
-      [testStatus, conn.id]
-    );
-
-    if (!testResp.ok) {
-      return res.json({ success: false, status: testStatus, error: `PocketSIC returned ${testResp.status}` });
-    }
-
-    res.json({ success: true, status: testStatus });
-  } catch (err) {
-    console.error('Connection test failed:', err);
-    res.status(500).json({ error: 'Connection test failed: ' + err.message });
-  }
-});
-
-// ═══════════════════════════════════════════════
-// VIDEO BUILDER — PocketSIC Proxy
-// ═══════════════════════════════════════════════
+const POCKETSIC_BASE_URL = process.env.POCKETSIC_BASE_URL || 'https://pocketsic.aubreydemo.com';
+const POCKETSIC_API_KEY = process.env.POCKETSIC_API_KEY;
+const SCRIPTWRITER_BASE_URL = process.env.SCRIPTWRITER_BASE_URL || 'https://scriptwriter.aubreydemo.com';
+const SCRIPTWRITER_API_KEY = process.env.SCRIPTWRITER_API_KEY;
 
 // GET /api/pocketsic/projects — fetch projects from PocketSIC
 app.get('/api/pocketsic/projects', async (req, res) => {
   try {
     const email = req.query.email;
     if (!email) return res.status(400).json({ error: 'Email required' });
+    if (!POCKETSIC_API_KEY) return res.status(500).json({ error: 'PocketSIC API key not configured on server.' });
 
-    const user = await getOrCreateUser(email);
-    const apiKey = await getUserPocketsicKey(user.id);
-    if (!apiKey) {
-      return res.status(400).json({ error: 'PocketSIC not connected. Add your API key in Connections.' });
-    }
-
-    const baseUrl = process.env.POCKETSIC_BASE_URL || 'https://pocketsic.aubreydemo.com';
-    const pResp = await fetch(`${baseUrl}/api/projects?email=${encodeURIComponent(email)}`, {
-      headers: { 'X-API-Key': apiKey },
+    const pResp = await fetch(`${POCKETSIC_BASE_URL}/api/projects?email=${encodeURIComponent(email)}`, {
+      headers: { 'X-API-Key': POCKETSIC_API_KEY },
     });
 
     if (!pResp.ok) {
@@ -814,16 +713,10 @@ app.get('/api/pocketsic/projects/:id', async (req, res) => {
   try {
     const email = req.query.email;
     if (!email) return res.status(400).json({ error: 'Email required' });
+    if (!POCKETSIC_API_KEY) return res.status(500).json({ error: 'PocketSIC API key not configured on server.' });
 
-    const user = await getOrCreateUser(email);
-    const apiKey = await getUserPocketsicKey(user.id);
-    if (!apiKey) {
-      return res.status(400).json({ error: 'PocketSIC not connected. Add your API key in Connections.' });
-    }
-
-    const baseUrl = process.env.POCKETSIC_BASE_URL || 'https://pocketsic.aubreydemo.com';
-    const pResp = await fetch(`${baseUrl}/api/projects/${req.params.id}?email=${encodeURIComponent(email)}`, {
-      headers: { 'X-API-Key': apiKey },
+    const pResp = await fetch(`${POCKETSIC_BASE_URL}/api/projects/${req.params.id}?email=${encodeURIComponent(email)}`, {
+      headers: { 'X-API-Key': POCKETSIC_API_KEY },
     });
 
     if (!pResp.ok) {
@@ -839,15 +732,57 @@ app.get('/api/pocketsic/projects/:id', async (req, res) => {
   }
 });
 
-// Helper: get decrypted PocketSIC API key for a user
-async function getUserPocketsicKey(userId) {
-  const rows = await query(
-    'SELECT api_key_encrypted, api_key_iv, api_key_tag FROM app_connections WHERE user_id = ? AND app_slug = ?',
-    [userId, 'pocketsic']
-  );
-  if (rows.length === 0) return null;
-  return decrypt(rows[0].api_key_encrypted, rows[0].api_key_iv, rows[0].api_key_tag);
-}
+// ═══════════════════════════════════════════════
+// VIDEO BUILDER — Script Writer Proxy (server-side API key)
+// ═══════════════════════════════════════════════
+
+// GET /api/scriptwriter/scripts — list user's scripts from Script Writer
+app.get('/api/scriptwriter/scripts', async (req, res) => {
+  try {
+    const email = req.query.email;
+    if (!email) return res.status(400).json({ error: 'Email required' });
+    if (!SCRIPTWRITER_API_KEY) return res.status(500).json({ error: 'Script Writer API key not configured on server.' });
+
+    const swResp = await fetch(`${SCRIPTWRITER_BASE_URL}/api/scripts?email=${encodeURIComponent(email)}`, {
+      headers: { 'X-API-Key': SCRIPTWRITER_API_KEY },
+    });
+
+    if (!swResp.ok) {
+      const errText = await swResp.text();
+      return res.status(swResp.status).json({ error: `Script Writer error: ${errText}` });
+    }
+
+    const data = await swResp.json();
+    res.json(data);
+  } catch (err) {
+    console.error('Script Writer proxy failed:', err);
+    res.status(500).json({ error: 'Failed to fetch scripts' });
+  }
+});
+
+// GET /api/scriptwriter/scripts/:id — get single script with full data
+app.get('/api/scriptwriter/scripts/:id', async (req, res) => {
+  try {
+    const email = req.query.email;
+    if (!email) return res.status(400).json({ error: 'Email required' });
+    if (!SCRIPTWRITER_API_KEY) return res.status(500).json({ error: 'Script Writer API key not configured on server.' });
+
+    const swResp = await fetch(`${SCRIPTWRITER_BASE_URL}/api/scripts/${req.params.id}?email=${encodeURIComponent(email)}`, {
+      headers: { 'X-API-Key': SCRIPTWRITER_API_KEY },
+    });
+
+    if (!swResp.ok) {
+      const errText = await swResp.text();
+      return res.status(swResp.status).json({ error: `Script Writer error: ${errText}` });
+    }
+
+    const data = await swResp.json();
+    res.json(data);
+  } catch (err) {
+    console.error('Script Writer proxy failed:', err);
+    res.status(500).json({ error: 'Failed to fetch script' });
+  }
+});
 
 // ═══════════════════════════════════════════════
 // VIDEO BUILDER — Share Videos
@@ -860,8 +795,9 @@ async function createSharedVideoCopy(sourceVideo, senderEmail, recipientEmail) {
   const result = await query(
     `INSERT INTO videos (user_id, name, brand_name, pocketsic_project_id, pocketsic_project_name,
       scene_data, narration_script, voiceover_timestamps, video_url, thumbnail_url, voiceover_url,
-      voice_id, duration_target, duration_actual, status, shared_by, shared_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
+      voice_id, duration_target, duration_actual, scriptwriter_script_id, scriptwriter_script_name, scriptwriter_data,
+      status, shared_by, shared_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
     [
       recipientUser.id,
       sourceVideo.name,
@@ -877,6 +813,9 @@ async function createSharedVideoCopy(sourceVideo, senderEmail, recipientEmail) {
       sourceVideo.voice_id,
       sourceVideo.duration_target,
       sourceVideo.duration_actual,
+      sourceVideo.scriptwriter_script_id || null,
+      sourceVideo.scriptwriter_script_name || null,
+      sourceVideo.scriptwriter_data ? (typeof sourceVideo.scriptwriter_data === 'string' ? sourceVideo.scriptwriter_data : JSON.stringify(sourceVideo.scriptwriter_data)) : null,
       sourceVideo.status === 'completed' ? 'completed' : 'draft',
       senderEmail,
     ]

@@ -1,55 +1,55 @@
 /**
  * Curated royalty-free background music tracks.
- * Pixabay license — free for commercial use, no attribution required.
+ * SoundHelix — free for use, public domain.
  */
 const MUSIC_TRACKS = [
   {
     id: 'inspiring-cinematic',
     name: 'Inspiring Cinematic',
     mood: 'Uplifting, motivational',
-    url: 'https://cdn.pixabay.com/audio/2024/11/28/audio_3eca3db467.mp3',
-    preview_url: 'https://cdn.pixabay.com/audio/2024/11/28/audio_3eca3db467.mp3',
-    duration: 132,
+    url: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3',
+    preview_url: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3',
+    duration: 372,
   },
   {
     id: 'corporate-technology',
     name: 'Corporate Technology',
     mood: 'Modern, professional',
-    url: 'https://cdn.pixabay.com/audio/2024/09/10/audio_6e6a40e982.mp3',
-    preview_url: 'https://cdn.pixabay.com/audio/2024/09/10/audio_6e6a40e982.mp3',
-    duration: 162,
+    url: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-2.mp3',
+    preview_url: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-2.mp3',
+    duration: 318,
   },
   {
     id: 'ambient-piano',
     name: 'Ambient Piano',
     mood: 'Calm, elegant',
-    url: 'https://cdn.pixabay.com/audio/2024/02/14/audio_08d0da7dfd.mp3',
-    preview_url: 'https://cdn.pixabay.com/audio/2024/02/14/audio_08d0da7dfd.mp3',
-    duration: 138,
+    url: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-3.mp3',
+    preview_url: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-3.mp3',
+    duration: 291,
   },
   {
     id: 'documentary-background',
     name: 'Documentary',
     mood: 'Storytelling, cinematic',
-    url: 'https://cdn.pixabay.com/audio/2024/06/11/audio_4abfd0ff1d.mp3',
-    preview_url: 'https://cdn.pixabay.com/audio/2024/06/11/audio_4abfd0ff1d.mp3',
-    duration: 188,
+    url: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-4.mp3',
+    preview_url: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-4.mp3',
+    duration: 370,
   },
   {
     id: 'soft-corporate',
     name: 'Soft Corporate',
     mood: 'Gentle, warm',
-    url: 'https://cdn.pixabay.com/audio/2024/03/22/audio_2a847ee815.mp3',
-    preview_url: 'https://cdn.pixabay.com/audio/2024/03/22/audio_2a847ee815.mp3',
-    duration: 132,
+    url: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-5.mp3',
+    preview_url: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-5.mp3',
+    duration: 337,
   },
   {
     id: 'future-tech',
     name: 'Future Tech',
     mood: 'Innovation, futuristic',
-    url: 'https://cdn.pixabay.com/audio/2024/10/01/audio_6b50ce9f05.mp3',
-    preview_url: 'https://cdn.pixabay.com/audio/2024/10/01/audio_6b50ce9f05.mp3',
-    duration: 145,
+    url: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-6.mp3',
+    preview_url: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-6.mp3',
+    duration: 295,
   },
 ];
 

@@ -100,8 +100,9 @@ function findChromePath() {
   if (process.env.GOOGLE_CHROME_BIN) return process.env.GOOGLE_CHROME_BIN;
   if (process.env.CHROME_BIN) return process.env.CHROME_BIN;
 
-  // Check common Heroku paths
+  // Check common Heroku paths (chrome-for-testing buildpack, apt-based buildpacks)
   const candidates = [
+    '/app/.chrome-for-testing/chrome-linux64/chrome',
     '/app/.apt/usr/bin/google-chrome',
     '/app/.apt/usr/bin/google-chrome-stable',
     '/app/.apt/usr/bin/chromium-browser',

@@ -10,8 +10,8 @@ const POCKETSIC_BASE = process.env.POCKETSIC_BASE_URL || 'https://pocketsic.aubr
 // is the ideal, but we enforce a min/max to keep captures reasonable.
 const MIN_CAPTURE_SECS = 5;
 const MAX_CAPTURE_SECS = 30;
-const FRAME_RATE = 24; // capture frames per second — smooth video capture
-const OUTPUT_FPS = 30; // final output video fps
+const FRAME_RATE = 15; // capture fps — balanced between smoothness and Heroku memory
+const OUTPUT_FPS = 30; // final output video fps (FFmpeg interpolates)
 
 /**
  * Channel-specific interaction patterns for PocketSIC scenes.
@@ -176,7 +176,7 @@ async function captureScene({ sceneId, channel, duration, outputDir, browser }) 
 
   try {
     // Set viewport — phone portrait for PocketSIC scenes
-    await page.setViewport({ width: 430, height: 932, deviceScaleFactor: 2 });
+    await page.setViewport({ width: 430, height: 932, deviceScaleFactor: 1 });
 
     // Navigate to scene
     const sceneUrl = `${POCKETSIC_BASE}/scene/${sceneId}`;
@@ -218,29 +218,43 @@ async function captureScene({ sceneId, channel, duration, outputDir, browser }) 
     const intervalMs = 1000 / FRAME_RATE;
     console.log(`[SceneCapture] Capturing ${totalFrames} frames at ${FRAME_RATE}fps...`);
 
+    let capturedFrames = 0;
     for (let i = 0; i < totalFrames; i++) {
       const framePath = path.join(frameDir, `frame_${String(i).padStart(5, '0')}.jpg`);
-      await page.screenshot({
-        path: framePath,
-        type: 'jpeg',
-        quality: 90,
-        fullPage: false,
-      });
+      try {
+        await page.screenshot({
+          path: framePath,
+          type: 'jpeg',
+          quality: 85,
+          fullPage: false,
+        });
+        capturedFrames++;
+      } catch (screenshotErr) {
+        // Page may have crashed — stop capturing but use whatever frames we have
+        console.warn(`[SceneCapture] Screenshot failed at frame ${i}: ${screenshotErr.message}. Using ${capturedFrames} captured frames.`);
+        break;
+      }
 
       // Wait the frame interval (minus a small offset for screenshot overhead)
       if (i < totalFrames - 1) {
-        await new Promise(r => setTimeout(r, intervalMs * 0.75));
+        await new Promise(r => setTimeout(r, intervalMs * 0.8));
       }
     }
 
     // Stop interactions
     if (interactionTimer) clearInterval(interactionTimer);
 
-    console.log(`[SceneCapture] Captured ${totalFrames} frames (${clickCount} interactions performed)`);
+    console.log(`[SceneCapture] Captured ${capturedFrames}/${totalFrames} frames (${clickCount} interactions performed)`);
+
+    if (capturedFrames < 3) {
+      throw new Error(`Only captured ${capturedFrames} frames — not enough for video`);
+    }
 
     // ── Stitch frames into MP4 with FFmpeg ──
+    // Use actual captured duration if we got fewer frames than planned
+    const actualDuration = capturedFrames / FRAME_RATE;
     const outputPath = path.join(outputDir || os.tmpdir(), `scene_${sceneId}_${channel}.mp4`);
-    await stitchFramesToVideo(frameDir, outputPath, captureDuration);
+    await stitchFramesToVideo(frameDir, outputPath, actualDuration);
 
     // Cleanup frame directory
     try {
@@ -345,7 +359,7 @@ async function captureSceneStatic({ sceneId, channel, outputDir, browser }) {
 
   const page = await browser.newPage();
   try {
-    await page.setViewport({ width: 430, height: 932, deviceScaleFactor: 2 });
+    await page.setViewport({ width: 430, height: 932, deviceScaleFactor: 1 });
     const sceneUrl = `${POCKETSIC_BASE}/scene/${sceneId}`;
     await page.goto(sceneUrl, { waitUntil: 'networkidle0', timeout: 30000 });
     await new Promise(r => setTimeout(r, 2000));
@@ -367,7 +381,7 @@ async function captureSceneStatic({ sceneId, channel, outputDir, browser }) {
  * @returns {Promise<Array>} Array of { sceneId, channel, clipPath }
  */
 async function captureAllScenes(scenes, outputDir, onProgress) {
-  const browser = await launchBrowser();
+  let browser = await launchBrowser();
   const results = [];
 
   try {
@@ -376,26 +390,55 @@ async function captureAllScenes(scenes, outputDir, onProgress) {
       const scene = scenes[i];
       console.log(`Capturing scene ${i + 1}/${scenes.length}: ${scene.sceneId} (${scene.channel})`);
 
-      const clipPath = await captureScene({
-        sceneId: scene.sceneId,
-        channel: scene.channel,
-        duration: scene.duration || 10,
-        outputDir,
-        browser,
-      });
+      try {
+        const clipPath = await captureScene({
+          sceneId: scene.sceneId,
+          channel: scene.channel,
+          duration: scene.duration || 10,
+          outputDir,
+          browser,
+        });
 
-      results.push({
-        sceneId: scene.sceneId,
-        channel: scene.channel,
-        clipPath,
-        // Keep backward compat — imagePath points to clip for compositor
-        imagePath: clipPath,
-      });
+        results.push({
+          sceneId: scene.sceneId,
+          channel: scene.channel,
+          clipPath,
+          imagePath: clipPath,
+        });
+      } catch (err) {
+        // If Chrome crashed ("Connection closed"), relaunch and retry this scene once
+        if (err.message.includes('Connection closed') || err.message.includes('Target closed') || err.message.includes('Session closed')) {
+          console.warn(`[SceneCapture] Browser crashed on scene ${scene.sceneId}. Relaunching Chrome and retrying...`);
+          try { await browser.close(); } catch { /* already dead */ }
+          browser = await launchBrowser();
+
+          try {
+            const clipPath = await captureScene({
+              sceneId: scene.sceneId,
+              channel: scene.channel,
+              duration: scene.duration || 10,
+              outputDir,
+              browser,
+            });
+
+            results.push({
+              sceneId: scene.sceneId,
+              channel: scene.channel,
+              clipPath,
+              imagePath: clipPath,
+            });
+          } catch (retryErr) {
+            console.error(`[SceneCapture] Retry also failed for scene ${scene.sceneId}: ${retryErr.message}. Skipping.`);
+          }
+        } else {
+          console.error(`[SceneCapture] Failed to capture scene ${scene.sceneId}: ${err.message}. Skipping.`);
+        }
+      }
 
       if (onProgress) onProgress(i + 1, scenes.length);
     }
   } finally {
-    await browser.close();
+    try { await browser.close(); } catch { /* ignore */ }
   }
 
   return results;
@@ -446,7 +489,12 @@ async function launchBrowser() {
       '--disable-setuid-sandbox',
       '--disable-gpu',
       '--disable-dev-shm-usage',
-      '--single-process',
+      // Note: removed --single-process — it causes entire browser to die on OOM
+      // instead of just the renderer tab. Multi-process is more resilient on Heroku.
+      '--disable-extensions',
+      '--disable-background-networking',
+      '--disable-default-apps',
+      '--js-flags=--max-old-space-size=256',
     ],
     defaultViewport: null,
   });

@@ -176,7 +176,7 @@ function buildTimeline(segments, timestamps, sceneImages, brollImages) {
 function createSilentVideo(concatFilePath, outputPath, onProgress) {
   return new Promise((resolve, reject) => {
     const videoCodecArgs = USE_LIBX264
-      ? ['-c:v', 'libx264', '-preset', 'medium', '-crf', '23']
+      ? ['-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '23']
       : ['-c:v', 'mpeg4', '-q:v', '5'];
 
     const args = [
@@ -195,6 +195,12 @@ function createSilentVideo(concatFilePath, outputPath, onProgress) {
     const { spawn } = require('child_process');
     const proc = spawn(FFMPEG_PATH, args, { stdio: ['ignore', 'pipe', 'pipe'] });
 
+    // 5-minute timeout to prevent stuck processes on Heroku
+    const timeout = setTimeout(() => {
+      console.error('[FFmpeg] Timeout reached (5 min). Killing process.');
+      proc.kill('SIGKILL');
+    }, 5 * 60 * 1000);
+
     let stderr = '';
     proc.stderr.on('data', (chunk) => {
       const line = chunk.toString();
@@ -207,6 +213,7 @@ function createSilentVideo(concatFilePath, outputPath, onProgress) {
     });
 
     proc.on('close', (code) => {
+      clearTimeout(timeout);
       if (code === 0) {
         resolve();
       } else {

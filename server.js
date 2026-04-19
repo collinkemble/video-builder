@@ -677,8 +677,10 @@ app.post('/api/videos/:id/generate', async (req, res) => {
     }
 
     const video = rows[0];
-    if (['scripting', 'voiceover', 'capturing', 'compositing', 'uploading'].includes(video.status)) {
-      return res.status(409).json({ error: 'Video is already being generated', status: video.status });
+    // Allow force-restart if stuck (client sends force=true)
+    const isProcessing = ['scripting', 'voiceover', 'capturing', 'compositing', 'uploading'].includes(video.status);
+    if (isProcessing && !req.body.force) {
+      return res.status(409).json({ error: 'Video is already being generated. Click again to force restart.', status: video.status });
     }
 
     // Reset status and clear previous jobs

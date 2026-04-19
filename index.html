@@ -1374,7 +1374,7 @@ function renderPipelineSteps(jobs) {
 // ═══════════════════════════════════════════════
 // Video Generation
 // ═══════════════════════════════════════════════
-async function startGeneration() {
+async function startGeneration(force = false) {
   if (!currentVideoId) return;
   const email = document.getElementById('user-email').textContent;
   const btn = document.getElementById('generate-btn');
@@ -1385,10 +1385,22 @@ async function startGeneration() {
     const resp = await fetch(`/api/videos/${currentVideoId}/generate`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email }),
+      body: JSON.stringify({ email, force }),
     });
 
     const data = await resp.json();
+
+    // If pipeline is already running, offer to force-restart
+    if (resp.status === 409 && !force) {
+      if (confirm('Pipeline appears stuck. Force restart?')) {
+        btn.disabled = false;
+        return startGeneration(true);
+      }
+      btn.disabled = false;
+      btn.textContent = '🎬 Generate Video';
+      return;
+    }
+
     if (!resp.ok) throw new Error(data.error || 'Failed to start generation');
 
     document.getElementById('video-error-banner').classList.add('hidden');

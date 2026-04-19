@@ -250,8 +250,20 @@
       </div>
 
       <!-- Video Player (shown when completed) -->
-      <div id="video-player-wrap" class="hidden mb-6" style="background: #000; border-radius: 12px; overflow: hidden; aspect-ratio: 16/9;">
-        <video id="video-player" controls style="width: 100%; height: 100%; object-fit: contain;"></video>
+      <div id="video-player-wrap" class="hidden mb-6">
+        <div style="background: #000; border-radius: 12px; overflow: hidden; aspect-ratio: 16/9;">
+          <video id="video-player" controls style="width: 100%; height: 100%; object-fit: contain;"></video>
+        </div>
+        <div id="video-download-bar" class="hidden flex items-center justify-between mt-3" style="background: white; border-radius: 10px; padding: 12px 18px; box-shadow: 0 1px 3px rgba(0,0,0,0.08);">
+          <div class="flex items-center gap-2">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#0176D3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="8 12 12 16 16 12"/><line x1="12" y1="8" x2="12" y2="16"/></svg>
+            <span id="video-duration-label" class="text-sm" style="color: #6B7280;">Video ready</span>
+          </div>
+          <button id="video-download-link" onclick="downloadVideo()" class="flex items-center gap-2 cursor-pointer" style="background: #0176D3; color: white; font-size: 13px; font-weight: 600; padding: 8px 16px; border-radius: 8px; text-decoration: none; border: none;">
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            Download MP4
+          </button>
+        </div>
       </div>
 
       <!-- Pipeline Progress (shown during generation) -->
@@ -1078,14 +1090,29 @@ async function viewVideo(id, skipPush) {
     };
     hideSaveSettingsBar();
 
-    // Video player
+    // Video player + download bar
     const playerWrap = document.getElementById('video-player-wrap');
     const player = document.getElementById('video-player');
+    const downloadBar = document.getElementById('video-download-bar');
+    const downloadLink = document.getElementById('video-download-link');
+    const durationLabel = document.getElementById('video-duration-label');
     if (video.status === 'completed' && video.video_url) {
       player.src = video.video_url;
       playerWrap.classList.remove('hidden');
+      // Show download bar
+      downloadLink.setAttribute('data-video-url', video.video_url);
+      downloadLink.setAttribute('data-filename', `${(video.name || 'video').replace(/[^a-zA-Z0-9_-]/g, '_')}.mp4`);
+      if (video.duration_actual) {
+        const mins = Math.floor(video.duration_actual / 60);
+        const secs = Math.round(video.duration_actual % 60);
+        durationLabel.textContent = `${mins}:${String(secs).padStart(2, '0')} • Video ready`;
+      } else {
+        durationLabel.textContent = 'Video ready';
+      }
+      downloadBar.classList.remove('hidden');
     } else {
       playerWrap.classList.add('hidden');
+      downloadBar.classList.add('hidden');
       player.src = '';
     }
 
@@ -1662,6 +1689,41 @@ document.getElementById('edit-music')?.addEventListener('change', () => {
   stopMusicPreview();
   updateMusicPreviewButton();
 });
+
+// ═══════════════════════════════════════════════
+// Download Video
+// ═══════════════════════════════════════════════
+async function downloadVideo() {
+  const link = document.getElementById('video-download-link');
+  const videoUrl = link.getAttribute('data-video-url');
+  const filename = link.getAttribute('data-filename') || 'video.mp4';
+  if (!videoUrl) return;
+
+  // Show downloading state
+  const origHTML = link.innerHTML;
+  link.innerHTML = `<svg class="animate-spin" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10" stroke-opacity="0.3"/><path d="M12 2a10 10 0 0 1 10 10"/></svg> Downloading...`;
+  link.style.pointerEvents = 'none';
+
+  try {
+    const resp = await fetch(videoUrl);
+    const blob = await resp.blob();
+    const blobUrl = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = blobUrl;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(blobUrl);
+  } catch (err) {
+    console.error('Download failed:', err);
+    // Fallback: open in new tab
+    window.open(videoUrl, '_blank');
+  } finally {
+    link.innerHTML = origHTML;
+    link.style.pointerEvents = 'auto';
+  }
+}
 
 // ═══════════════════════════════════════════════
 // New Video Dialog

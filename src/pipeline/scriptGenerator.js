@@ -133,6 +133,14 @@ B-ROLL / TRANSITION PLACEMENT RULES (CRITICAL):
 - When in doubt, if two scenes are part of the same immediate interaction flow (same session, same moment), do NOT add b-roll between them.
 - Typically a 3-minute video should have at most 2-3 b-roll transitions (intro, maybe 1-2 time-passage moments, outro).
 
+B-ROLL UNIQUENESS RULES (CRITICAL):
+- Every brollDescription MUST be completely unique and visually distinct from every other brollDescription.
+- Do NOT repeat or closely paraphrase the same description. Each b-roll clip is generated as a separate video — if descriptions are similar, the clips look identical and the video appears to repeat itself.
+- The intro b-roll should show a wide establishing shot (e.g., cityscape, storefront exterior, lifestyle moment).
+- Transition b-roll should show the specific context change (e.g., "person walking through a shopping district toward a store entrance" vs "hands opening a delivery package at a kitchen counter").
+- The outro b-roll should show a warm conclusion (e.g., satisfied customer, sunset scene, brand celebration).
+- Be specific and detailed in each description — vague descriptions like "happy customer" will produce similar-looking clips.
+
 IMPORTANT: Every PocketSIC scene MUST appear exactly once as a "scene" type segment. Include the scene's sceneId and channel.
 
 CRITICAL ORDERING RULE: Scene segments MUST appear in the EXACT same order as the SCENES list above. Do NOT reorder scenes. The scenes are already in the correct customer journey sequence — scene 1 happens first, scene 2 happens second, etc. You may insert b-roll transitions BETWEEN scenes, but never swap or rearrange the scenes themselves.`;

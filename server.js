@@ -770,7 +770,28 @@ app.get('/api/music-tracks', (req, res) => {
 app.get('/api/music-tracks/:id/preview', (req, res) => {
   const track = MUSIC_TRACKS.find(t => t.id === req.params.id);
   if (!track) return res.status(404).json({ error: 'Track not found' });
-  res.json({ preview_url: track.preview_url });
+  // Return a server-proxied URL so CORS/auth issues don't block browser playback
+  res.json({ preview_url: `/api/music-tracks/${track.id}/stream` });
+});
+
+// GET /api/music-tracks/:id/stream — proxy the audio file for browser playback
+app.get('/api/music-tracks/:id/stream', async (req, res) => {
+  const track = MUSIC_TRACKS.find(t => t.id === req.params.id);
+  if (!track) return res.status(404).json({ error: 'Track not found' });
+
+  try {
+    const audioResp = await fetch(track.url);
+    if (!audioResp.ok) {
+      return res.status(502).json({ error: `Upstream returned ${audioResp.status}` });
+    }
+    res.set('Content-Type', 'audio/mpeg');
+    res.set('Cache-Control', 'public, max-age=86400'); // cache 24h
+    const buffer = Buffer.from(await audioResp.arrayBuffer());
+    res.send(buffer);
+  } catch (err) {
+    console.error(`Music stream error for ${track.id}:`, err.message);
+    res.status(502).json({ error: 'Failed to stream music' });
+  }
 });
 
 // ═══════════════════════════════════════════════

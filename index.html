@@ -1076,11 +1076,11 @@ async function viewVideo(id, skipPush) {
       errorBanner.classList.add('hidden');
     }
 
-    // Generate button state
+    // Generate button state — always clickable so user can force-restart stuck pipelines
     const genBtn = document.getElementById('generate-btn');
     const isProcessing = ['scripting','voiceover','capturing','compositing','uploading'].includes(video.status);
-    genBtn.disabled = isProcessing;
-    genBtn.textContent = isProcessing ? '⏳ Generating...' : (video.status === 'completed' ? '🔄 Regenerate' : '🎬 Generate Video');
+    genBtn.disabled = false;
+    genBtn.textContent = isProcessing ? '⚠️ Pipeline Running (click to restart)' : (video.status === 'completed' ? '🔄 Regenerate' : '🎬 Generate Video');
 
     // Scenes
     renderScenes(video.scene_data);

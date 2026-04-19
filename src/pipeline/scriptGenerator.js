@@ -133,7 +133,9 @@ B-ROLL / TRANSITION PLACEMENT RULES (CRITICAL):
 - When in doubt, if two scenes are part of the same immediate interaction flow (same session, same moment), do NOT add b-roll between them.
 - Typically a 3-minute video should have at most 2-3 b-roll transitions (intro, maybe 1-2 time-passage moments, outro).
 
-IMPORTANT: Every PocketSIC scene MUST appear exactly once as a "scene" type segment. Include the scene's sceneId and channel.`;
+IMPORTANT: Every PocketSIC scene MUST appear exactly once as a "scene" type segment. Include the scene's sceneId and channel.
+
+CRITICAL ORDERING RULE: Scene segments MUST appear in the EXACT same order as the SCENES list above. Do NOT reorder scenes. The scenes are already in the correct customer journey sequence — scene 1 happens first, scene 2 happens second, etc. You may insert b-roll transitions BETWEEN scenes, but never swap or rearrange the scenes themselves.`;
 
   const response = await ai.models.generateContent({
     model,
@@ -160,6 +162,69 @@ IMPORTANT: Every PocketSIC scene MUST appear exactly once as a "scene" type segm
   const missingScenes = scenes.filter(s => !scriptSceneIds.includes(s.id));
   if (missingScenes.length > 0) {
     console.warn(`Warning: ${missingScenes.length} scene(s) missing from script: ${missingScenes.map(s => s.id).join(', ')}`);
+  }
+
+  // ── Enforce scene ordering matches input order ──
+  // Gemini sometimes reorders scenes despite being told not to.
+  // Re-sort: keep non-scene segments in their relative positions around scenes,
+  // but ensure scene segments follow the original input order.
+  const inputSceneOrder = scenes.map(s => s.id);
+  const sceneSegments = script.segments.filter(s => s.type === 'scene');
+  const sceneOrderInScript = sceneSegments.map(s => s.sceneId);
+
+  const isCorrectOrder = inputSceneOrder.every((id, idx) => {
+    const scriptIdx = sceneOrderInScript.indexOf(id);
+    if (scriptIdx === -1) return true; // missing scene, already warned
+    if (idx === 0) return true;
+    const prevId = inputSceneOrder[idx - 1];
+    const prevScriptIdx = sceneOrderInScript.indexOf(prevId);
+    return prevScriptIdx === -1 || prevScriptIdx < scriptIdx;
+  });
+
+  if (!isCorrectOrder) {
+    console.warn('[ScriptGenerator] Scene order does not match input. Re-sorting to enforce correct sequence.');
+    // Rebuild segments: extract scenes and non-scenes, then interleave correctly
+    const nonSceneSegments = script.segments.filter(s => s.type !== 'scene');
+    const sceneMap = {};
+    sceneSegments.forEach(s => { sceneMap[s.sceneId] = s; });
+
+    const reordered = [];
+    let nonSceneIdx = 0;
+
+    // Add intro/transition segments that appear before the first scene
+    const firstScenePos = script.segments.findIndex(s => s.type === 'scene');
+    for (let i = 0; i < firstScenePos && i < script.segments.length; i++) {
+      if (script.segments[i].type !== 'scene') reordered.push(script.segments[i]);
+    }
+
+    // Interleave scenes in correct order with transitions between them
+    const scenesInScript = inputSceneOrder.filter(id => sceneMap[id]);
+    for (let i = 0; i < scenesInScript.length; i++) {
+      reordered.push(sceneMap[scenesInScript[i]]);
+
+      // Find transition/broll that was between this scene and the next in the original script
+      if (i < scenesInScript.length - 1) {
+        const curSceneOrigIdx = script.segments.findIndex(s => s.sceneId === scenesInScript[i]);
+        const nextSceneOrigIdx = script.segments.findIndex(s => s.sceneId === scenesInScript[i + 1]);
+        if (curSceneOrigIdx !== -1 && nextSceneOrigIdx !== -1) {
+          for (let j = curSceneOrigIdx + 1; j < nextSceneOrigIdx; j++) {
+            if (script.segments[j].type !== 'scene') reordered.push(script.segments[j]);
+          }
+        }
+      }
+    }
+
+    // Add outro/trailing segments after the last scene
+    const lastScenePos = script.segments.length - 1 - [...script.segments].reverse().findIndex(s => s.type === 'scene');
+    for (let i = lastScenePos + 1; i < script.segments.length; i++) {
+      if (script.segments[i].type !== 'scene') reordered.push(script.segments[i]);
+    }
+
+    // Re-number orders
+    reordered.forEach((seg, idx) => { seg.order = idx + 1; });
+    script.segments = reordered;
+    script.totalSegments = reordered.length;
+    console.log(`[ScriptGenerator] Re-sorted ${reordered.length} segments. Scene order now: ${reordered.filter(s => s.type === 'scene').map(s => s.sceneId).join(', ')}`);
   }
 
   return script;

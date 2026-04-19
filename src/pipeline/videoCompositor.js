@@ -38,6 +38,7 @@ async function composeVideo({
   sceneImages,  // { sceneId: clipPath } — now MP4 clips from scene capture
   brollImages,  // { order: imagePath } — still PNG images from b-roll generator
   voiceoverPath,
+  musicTrackUrl, // URL to a background music MP3 (optional)
   brandName,
   outputDir,
   onProgress,
@@ -94,10 +95,34 @@ async function composeVideo({
 
   if (onProgress) onProgress(70);
 
-  // ── Step 4: Overlay voiceover audio ──
+  // ── Step 3b: Download background music if specified ──
+  let musicPath = null;
+  if (musicTrackUrl) {
+    try {
+      console.log(`[Compositor] Downloading background music from: ${musicTrackUrl.substring(0, 80)}...`);
+      musicPath = path.join(workDir, 'bgmusic.mp3');
+      const musicResp = await fetch(musicTrackUrl);
+      if (musicResp.ok) {
+        const musicBuffer = Buffer.from(await musicResp.arrayBuffer());
+        fs.writeFileSync(musicPath, musicBuffer);
+        console.log(`[Compositor] Background music downloaded: ${(musicBuffer.length / 1024).toFixed(0)}KB`);
+      } else {
+        console.warn(`[Compositor] Music download failed (${musicResp.status}). Skipping background music.`);
+        musicPath = null;
+      }
+    } catch (err) {
+      console.warn(`[Compositor] Music download error: ${err.message}. Skipping background music.`);
+      musicPath = null;
+    }
+  }
+
+  // ── Step 4: Overlay voiceover audio (+ background music if available) ──
   const finalVideoPath = path.join(workDir, `video_${Date.now()}.mp4`);
   if (voiceoverPath && fs.existsSync(voiceoverPath)) {
-    await overlayAudio(silentVideoPath, voiceoverPath, finalVideoPath, onProgress);
+    await overlayAudio(silentVideoPath, voiceoverPath, finalVideoPath, onProgress, musicPath);
+  } else if (musicPath) {
+    // No voiceover but has music — overlay just the music
+    await overlayMusicOnly(silentVideoPath, musicPath, finalVideoPath, onProgress);
   } else {
     fs.copyFileSync(silentVideoPath, finalVideoPath);
   }
@@ -115,6 +140,7 @@ async function composeVideo({
   for (const clip of normalizedClips) safeDelete(clip);
   safeDelete(silentVideoPath);
   safeDelete(concatPath);
+  if (musicPath) safeDelete(musicPath);
 
   return {
     videoPath: finalVideoPath,
@@ -179,14 +205,17 @@ function buildTimeline(segments, timestamps, sceneImages, brollImages) {
 
 /**
  * Normalize a video clip to 1920x1080, target duration.
- * If clip is shorter than target: pad with last frame (freeze).
+ * If clip is shorter than target: LOOP the clip to fill the duration (no frozen frames).
  * If clip is longer: trim to target.
  */
 function normalizeVideoClip(inputPath, outputPath, targetDuration) {
+  // Use -stream_loop to loop the input if it's shorter than target duration.
+  // This seamlessly replays the clip rather than freezing on the last frame.
   return runFfmpeg([
     '-y',
+    '-stream_loop', '-1',       // loop input indefinitely
     '-i', inputPath,
-    '-t', String(targetDuration),
+    '-t', String(targetDuration), // trim to exact target
     '-vf', `scale=${WIDTH}:${HEIGHT}:force_original_aspect_ratio=decrease,pad=${WIDTH}:${HEIGHT}:(ow-iw)/2:(oh-ih)/2:black,format=yuv420p`,
     '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '23',
     '-r', String(FPS),
@@ -270,50 +299,67 @@ function getAudioDuration(audioPath) {
 }
 
 /**
- * Overlay voiceover audio onto a video.
- * Uses the LONGER of the two streams so narration never gets cut off.
- * If audio is longer than video, the last video frame freezes until audio finishes.
+ * Overlay voiceover audio onto a video, optionally mixing with background music.
+ * Uses the LONGER of the two audio streams so narration never gets cut off.
+ * Background music is mixed at low volume (-18dB) and looped to fill the video.
  */
-function overlayAudio(videoPath, audioPath, outputPath, onProgress) {
-  return new Promise(async (resolve, reject) => {
-    try {
-      // Get audio duration to ensure video covers the full narration
-      const audioDur = await getAudioDuration(audioPath);
-      const videoDur = await getVideoDuration(videoPath);
-      console.log(`[FFmpeg] Audio overlay: video=${videoDur.toFixed(1)}s, audio=${audioDur.toFixed(1)}s`);
+async function overlayAudio(videoPath, audioPath, outputPath, onProgress, musicPath) {
+  const audioDur = await getAudioDuration(audioPath);
+  const videoDur = await getVideoDuration(videoPath);
+  const targetDuration = Math.max(videoDur, audioDur + 1.0);
+  console.log(`[FFmpeg] Audio overlay: video=${videoDur.toFixed(1)}s, audio=${audioDur.toFixed(1)}s, music=${musicPath ? 'yes' : 'no'}`);
 
-      // Pad with 1 second of silence after narration so it doesn't feel abrupt
-      const targetDuration = Math.max(videoDur, audioDur + 1.0);
+  if (musicPath && fs.existsSync(musicPath)) {
+    // Mix voiceover + background music using amix filter
+    // Voiceover at full volume, music at ~12% volume (subtle background)
+    return runFfmpeg([
+      '-y',
+      '-i', videoPath,
+      '-i', audioPath,
+      '-stream_loop', '-1', '-i', musicPath,
+      '-filter_complex',
+      '[1:a]volume=1.0[voice];[2:a]volume=0.12[music];[voice][music]amix=inputs=2:duration=longest:dropout_transition=3[aout]',
+      '-map', '0:v:0',
+      '-map', '[aout]',
+      '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '23',
+      '-c:a', 'aac', '-b:a', '192k',
+      '-t', String(Math.ceil(targetDuration)),
+      '-movflags', '+faststart',
+      outputPath,
+    ], 'audio overlay + music mix');
+  } else {
+    // Voiceover only (no background music)
+    return runFfmpeg([
+      '-y',
+      '-i', videoPath,
+      '-i', audioPath,
+      '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '23',
+      '-c:a', 'aac', '-b:a', '192k',
+      '-map', '0:v:0', '-map', '1:a:0',
+      '-t', String(Math.ceil(targetDuration)),
+      '-movflags', '+faststart',
+      outputPath,
+    ], 'audio overlay (voiceover only)');
+  }
+}
 
-      const cmd = ffmpeg()
-        .input(videoPath)
-        .input(audioPath)
-        .outputOptions([
-          '-c:v', 'libx264',
-          '-preset', 'ultrafast',
-          '-crf', '23',
-          '-c:a', 'aac',
-          '-b:a', '192k',
-          '-map', '0:v:0',
-          '-map', '1:a:0',
-          // Use -t to set exact duration — no -shortest so audio isn't cut off
-          '-t', String(Math.ceil(targetDuration)),
-          '-movflags', '+faststart',
-        ])
-        .output(outputPath)
-        .on('start', (cmd) => console.log(`[FFmpeg] Audio overlay: ${cmd.substring(0, 120)}...`))
-        .on('progress', (progress) => {
-          if (onProgress && progress.percent) {
-            onProgress(70 + Math.min(progress.percent * 0.2, 20));
-          }
-        })
-        .on('error', (err) => reject(new Error(`FFmpeg audio overlay failed: ${err.message}`)))
-        .on('end', () => resolve());
-      cmd.run();
-    } catch (err) {
-      reject(err);
-    }
-  });
+/**
+ * Overlay only background music (no voiceover) onto a video.
+ */
+function overlayMusicOnly(videoPath, musicPath, outputPath, onProgress) {
+  return runFfmpeg([
+    '-y',
+    '-i', videoPath,
+    '-stream_loop', '-1', '-i', musicPath,
+    '-filter_complex', '[1:a]volume=0.3[music]',
+    '-map', '0:v:0',
+    '-map', '[music]',
+    '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '23',
+    '-c:a', 'aac', '-b:a', '192k',
+    '-shortest',
+    '-movflags', '+faststart',
+    outputPath,
+  ], 'music-only overlay');
 }
 
 /**

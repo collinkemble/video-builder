@@ -533,7 +533,7 @@ app.post('/api/videos', async (req, res) => {
 // PUT /api/videos/:id — update video settings
 app.put('/api/videos/:id', async (req, res) => {
   try {
-    const { email, name, brandName, voiceId, durationTarget, sceneData, narrationScript } = req.body;
+    const { email, name, brandName, voiceId, durationTarget, sceneData, narrationScript, musicTrackId } = req.body;
     if (!email) return res.status(400).json({ error: 'Email required' });
 
     const user = await getOrCreateUser(email);
@@ -572,6 +572,10 @@ app.put('/api/videos/:id', async (req, res) => {
     if (narrationScript !== undefined && narrationScript !== null) {
       sets.push('narration_script = ?');
       params.push(typeof narrationScript === 'string' ? narrationScript : JSON.stringify(narrationScript));
+    }
+    if (musicTrackId !== undefined && musicTrackId !== null) {
+      sets.push('music_track_id = ?');
+      params.push(musicTrackId === '' ? 'none' : musicTrackId);
     }
 
     if (sets.length > 0) {
@@ -742,6 +746,31 @@ app.get('/api/voices', async (req, res) => {
     console.error('Failed to get voices:', err);
     res.status(500).json({ error: 'Failed to load voices' });
   }
+});
+
+// ═══════════════════════════════════════════════
+// MUSIC TRACKS — Curated royalty-free background music
+// ═══════════════════════════════════════════════
+
+const { MUSIC_TRACKS } = require('./src/pipeline/musicTracks');
+
+// GET /api/music-tracks — list available background music tracks
+app.get('/api/music-tracks', (req, res) => {
+  res.json({
+    tracks: MUSIC_TRACKS.map(t => ({
+      id: t.id,
+      name: t.name,
+      mood: t.mood,
+      duration: t.duration,
+    })),
+  });
+});
+
+// GET /api/music-tracks/:id/preview — get preview URL for a track
+app.get('/api/music-tracks/:id/preview', (req, res) => {
+  const track = MUSIC_TRACKS.find(t => t.id === req.params.id);
+  if (!track) return res.status(404).json({ error: 'Track not found' });
+  res.json({ preview_url: track.preview_url });
 });
 
 // ═══════════════════════════════════════════════

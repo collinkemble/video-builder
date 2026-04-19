@@ -175,26 +175,74 @@ async function setupWebsiteInteraction(page) {
 }
 
 /**
- * RETAIL scenes (POS, store):
- *   - Similar click-to-advance pattern with product cards
- *   - Generic smart click approach works here
+ * RETAIL scenes (POS, store, Retail Cloud):
+ *   PocketSIC retail scenes have 4 screens navigated via goTo(n):
+ *     Screen 1: Home (tiles, search bar)
+ *     Screen 2: Customer profile (clienteling — metrics, loyalty, recommendations, etc.)
+ *     Screen 3: Product Detail Page (PDP — image, price, "Add to Cart")
+ *     Screen 4: Cart / Checkout (items, coupon, order summary)
+ *
+ *   Desired interaction sequence:
+ *     1. Start on screen 1 (already visible) — pause to show it
+ *     2. Navigate to screen 2 (customer profile)
+ *     3. Scroll down screen 2 to show recommendations section
+ *     4. Click first recommendation product card → goes to screen 3 (PDP)
+ *     5. Click "Add to Cart" button on screen 3
+ *     6. Click cart icon in header → goes to screen 4 (checkout)
+ *     7. Pause on checkout screen
+ *
+ *   Uses a step-based schedule (not uniform clicks).
  */
 async function setupRetailInteraction(page) {
-  const interactiveCount = await page.evaluate(() => {
-    let count = 0;
-    document.querySelectorAll('button, [role="button"], [onclick]').forEach(el => {
-      const rect = el.getBoundingClientRect();
-      const style = window.getComputedStyle(el);
-      if (rect.width > 10 && rect.height > 10 && style.display !== 'none' && style.visibility !== 'hidden') count++;
-    });
-    return count;
+  // Verify this is a multi-screen retail scene
+  const retailInfo = await page.evaluate(() => {
+    const screen1 = document.getElementById('screen-1');
+    const screen2 = document.getElementById('screen-2');
+    const screen3 = document.getElementById('screen-3');
+    const screen4 = document.getElementById('screen-4');
+    const hasGoTo = typeof window.goTo === 'function';
+
+    return {
+      hasScreens: !!(screen1 && screen2 && screen3 && screen4),
+      hasGoTo,
+      hasRecommendations: !!document.querySelector('#screen-2 .prod-card-wide, #screen-2 .h-scroll'),
+      hasAddToCart: !!document.querySelector('#screen-3 .action-btn.btn-filled, #screen-3 .sticky-btn button'),
+      hasCartIcon: !!document.querySelector('.cart-badge, .hdr-icon-btn'),
+    };
   });
 
-  const clickLimit = Math.max(interactiveCount - 1, 2);
-  const clickInterval = 3000;
-  console.log(`[SceneCapture] Retail: ${interactiveCount} interactive elements, ${clickLimit} clicks`);
+  console.log(`[SceneCapture] Retail: screens=${retailInfo.hasScreens}, goTo=${retailInfo.hasGoTo}, recs=${retailInfo.hasRecommendations}, cart=${retailInfo.hasAddToCart}`);
 
-  return { clickLimit, clickInterval, clickFn: 'generic' };
+  if (!retailInfo.hasScreens || !retailInfo.hasGoTo) {
+    // Fallback to generic if it's not the expected retail layout
+    console.log(`[SceneCapture] Retail scene doesn't have expected 4-screen layout. Using generic interaction.`);
+    return { clickLimit: 4, clickInterval: 3000, clickFn: 'generic' };
+  }
+
+  // Build a step-based interaction schedule
+  // Each step has: time offset (seconds), action type
+  const steps = [
+    { time: 2.0,  action: 'goToScreen2' },        // Navigate to customer profile
+    { time: 5.0,  action: 'scrollProfile' },       // Scroll down to recommendations
+    { time: 8.0,  action: 'clickRecommendation' }, // Click first product → screen 3
+    { time: 12.0, action: 'addToCart' },            // Click "Add to Cart"
+    { time: 14.5, action: 'goToCart' },             // Click cart icon → screen 4
+  ];
+
+  const clickSchedule = steps.map((step, i) => ({
+    frame: Math.round(step.time * FRAME_RATE),
+    clickIndex: i,
+    action: step.action,
+  }));
+
+  console.log(`[SceneCapture] Retail click schedule: ${clickSchedule.map(c => `${c.action}@${(c.frame/FRAME_RATE).toFixed(1)}s`).join(', ')}`);
+
+  return {
+    clickLimit: steps.length,
+    clickInterval: 3000,
+    clickFn: 'retail',
+    chatInfo: { clickSchedule, retailInfo },
+  };
 }
 
 
@@ -282,8 +330,123 @@ async function performWebsiteClick(page, clickIndex, chatInfo) {
 }
 
 /**
+ * Retail click: step-based navigation through the 4-screen retail flow.
+ * Each click is a distinct action (navigate screen, scroll, click button).
+ */
+async function performRetailClick(page, clickIndex, chatInfo) {
+  const step = chatInfo.clickSchedule[clickIndex];
+  if (!step) return;
+
+  try {
+    switch (step.action) {
+      case 'goToScreen2':
+        // Navigate from home to customer profile
+        await page.evaluate(() => {
+          if (typeof goTo === 'function') goTo(2);
+        });
+        await new Promise(r => setTimeout(r, 400));
+        console.log(`[SceneCapture] Retail step: navigated to screen 2 (customer profile)`);
+        break;
+
+      case 'scrollProfile':
+        // Scroll down screen 2 to show recommendations section
+        await page.evaluate(() => {
+          const scrollable = document.querySelector('#screen-2 .scrollable');
+          if (scrollable) {
+            // Scroll to ~60% to reveal recommendations
+            const target = scrollable.scrollHeight * 0.55;
+            scrollable.scrollTo({ top: target, behavior: 'smooth' });
+          }
+        });
+        await new Promise(r => setTimeout(r, 800));
+        console.log(`[SceneCapture] Retail step: scrolled profile to recommendations`);
+        break;
+
+      case 'clickRecommendation':
+        // Click the first recommendation product card → triggers viewProduct() → screen 3
+        await page.evaluate(() => {
+          // Try product cards in the recommendations horizontal scroll
+          const recCards = document.querySelectorAll('#screen-2 .prod-card-wide, #screen-2 .h-scroll .prod-card, #screen-2 .card-grid .prod-card');
+          if (recCards.length > 0) {
+            recCards[0].click();
+            return 'recommendation-card';
+          }
+          // Fallback: call viewProduct directly
+          if (typeof viewProduct === 'function') {
+            viewProduct(0);
+            return 'viewProduct(0)';
+          }
+          // Last resort: navigate to screen 3
+          if (typeof goTo === 'function') {
+            goTo(3);
+            return 'goTo(3)';
+          }
+          return null;
+        });
+        await new Promise(r => setTimeout(r, 400));
+        console.log(`[SceneCapture] Retail step: clicked recommendation → PDP (screen 3)`);
+        break;
+
+      case 'addToCart':
+        // Click "Add to Cart" button on screen 3
+        await page.evaluate(() => {
+          const addBtn = document.querySelector('#screen-3 .sticky-btn .action-btn.btn-filled') ||
+                         document.querySelector('#screen-3 .action-btn.btn-filled') ||
+                         document.querySelector('#screen-3 button.btn-filled');
+          if (addBtn) {
+            addBtn.click();
+            return 'addToCart-button';
+          }
+          // Fallback: call addToCart function directly
+          if (typeof addToCart === 'function') {
+            addToCart();
+            return 'addToCart()';
+          }
+          return null;
+        });
+        await new Promise(r => setTimeout(r, 600));
+        console.log(`[SceneCapture] Retail step: clicked "Add to Cart"`);
+        break;
+
+      case 'goToCart':
+        // Click cart icon in header → navigate to checkout (screen 4)
+        await page.evaluate(() => {
+          // Try clicking the cart icon with badge
+          const cartBadge = document.querySelector('#screen-3 .cart-badge, #badge-3');
+          if (cartBadge) {
+            const cartBtn = cartBadge.closest('.hdr-icon-btn') || cartBadge.parentElement;
+            if (cartBtn) { cartBtn.click(); return 'cart-icon'; }
+          }
+          // Try any header icon button that has a cart SVG
+          const headerBtns = document.querySelectorAll('#screen-3 .hdr-icon-btn, .home-header .hdr-icon-btn');
+          for (const btn of headerBtns) {
+            if (btn.querySelector('.cart-badge') || btn.innerHTML.includes('cart') || btn.innerHTML.includes('bag')) {
+              btn.click();
+              return 'header-cart-btn';
+            }
+          }
+          // Fallback: navigate directly
+          if (typeof goTo === 'function') {
+            goTo(4);
+            return 'goTo(4)';
+          }
+          return null;
+        });
+        await new Promise(r => setTimeout(r, 400));
+        console.log(`[SceneCapture] Retail step: navigated to cart/checkout (screen 4)`);
+        break;
+
+      default:
+        console.warn(`[SceneCapture] Retail: unknown action "${step.action}"`);
+    }
+  } catch (err) {
+    console.warn(`[SceneCapture] Retail step "${step.action}" failed: ${err.message}`);
+  }
+}
+
+/**
  * Generic smart click: find the best clickable element and click it.
- * Used for retail and unknown scene types.
+ * Used for unknown scene types.
  */
 async function performGenericClick(page, clickIndex) {
   const clicked = await page.evaluate((idx) => {
@@ -444,9 +607,9 @@ async function captureScene({ sceneId, channel, duration, outputDir, browser }) 
       chatInfo = interactionStrategy.chatInfo;
       clickIntervalSecs = interactionStrategy.clickInterval / 1000;
 
-      // For website scenes with a click schedule, extend capture duration
+      // For scenes with a click schedule (website or retail), extend capture duration
       // to ensure all clicks fit within the recording window
-      if (clickFn === 'website' && chatInfo && chatInfo.clickSchedule && chatInfo.clickSchedule.length > 0) {
+      if ((clickFn === 'website' || clickFn === 'retail') && chatInfo && chatInfo.clickSchedule && chatInfo.clickSchedule.length > 0) {
         const lastClickFrame = chatInfo.clickSchedule[chatInfo.clickSchedule.length - 1].frame;
         const lastClickTime = lastClickFrame / FRAME_RATE;
         const minDuration = lastClickTime + 8; // 8s buffer after last click for final agent response
@@ -471,7 +634,7 @@ async function captureScene({ sceneId, channel, duration, outputDir, browser }) 
     // need variable timing) or from a uniform interval (messaging/generic scenes).
     const clickFrames = new Set();
     const clickStrategy = interactive ? (
-      clickFn === 'website' && chatInfo && chatInfo.clickSchedule
+      (clickFn === 'website' || clickFn === 'retail') && chatInfo && chatInfo.clickSchedule
         ? 'schedule'
         : 'uniform'
     ) : 'none';
@@ -504,6 +667,9 @@ async function captureScene({ sceneId, channel, duration, outputDir, browser }) 
               break;
             case 'website':
               await performWebsiteClick(page, clickCount, chatInfo);
+              break;
+            case 'retail':
+              await performRetailClick(page, clickCount, chatInfo);
               break;
             default:
               await performGenericClick(page, clickCount);

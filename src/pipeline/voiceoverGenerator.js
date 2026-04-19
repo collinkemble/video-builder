@@ -10,7 +10,7 @@ const os = require('os');
  * @param {string} params.outputDir - Directory to save audio file
  * @returns {Promise<object>} { audioPath, timestamps, totalDuration }
  */
-async function generateVoiceover({ segments, voiceId = 'pNInz6obpgDQGcFmaJgB', outputDir }) {
+async function generateVoiceover({ segments, voiceId = 'XrExE9yKIg1WjnnlVkGX', outputDir }) {
   const apiKey = process.env.ELEVENLABS_API_KEY;
   if (!apiKey) throw new Error('ELEVENLABS_API_KEY not configured');
 

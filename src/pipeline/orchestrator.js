@@ -191,12 +191,25 @@ async function runPipeline(videoId, userId, options = {}) {
     try {
       await updateJob(compositeJobId, 'running');
 
+      // Resolve background music track URL if set
+      let musicTrackUrl = null;
+      if (video.music_track_id && video.music_track_id !== 'none') {
+        try {
+          const { getMusicTrackUrl } = require('./musicTracks');
+          musicTrackUrl = getMusicTrackUrl(video.music_track_id);
+          if (musicTrackUrl) console.log(`[Pipeline] Background music: ${video.music_track_id}`);
+        } catch (err) {
+          console.warn(`[Pipeline] Failed to resolve music track: ${err.message}`);
+        }
+      }
+
       compositeResult = await composeVideo({
         segments: script.segments,
         timestamps: voiceoverResult.timestamps,
         sceneImages,
         brollImages,
         voiceoverPath: voiceoverResult.audioPath,
+        musicTrackUrl,
         brandName: video.brand_name || sceneData.brand_name || '',
         outputDir: workDir,
         onProgress: (percent) => {

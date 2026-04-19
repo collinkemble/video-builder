@@ -283,7 +283,7 @@
             <label class="block text-xs font-bold mb-1" style="color: #032D60;">Voice</label>
             <div class="flex items-center gap-2">
               <select id="edit-voice" class="flex-1 px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm">
-                <option value="default">Default (Adam)</option>
+                <option value="default">Default (Matilda)</option>
               </select>
               <button id="voice-preview-btn" type="button" title="Preview voice" onclick="toggleVoicePreview()" class="flex items-center justify-center w-9 h-9 rounded-lg border border-gray-300 hover:bg-gray-100 transition-colors" style="min-width: 36px;">
                 <svg id="voice-preview-play" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#032D60" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
@@ -298,6 +298,18 @@
               <option value="180" selected>~3 minutes</option>
               <option value="300">~5 minutes</option>
             </select>
+          </div>
+          <div>
+            <label class="block text-xs font-bold mb-1" style="color: #032D60;">Background Music</label>
+            <div class="flex items-center gap-2">
+              <select id="edit-music" class="flex-1 px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm">
+                <option value="none">None</option>
+              </select>
+              <button id="music-preview-btn" type="button" title="Preview track" onclick="toggleMusicPreview()" class="flex items-center justify-center w-9 h-9 rounded-lg border border-gray-300 hover:bg-gray-100 transition-colors" style="min-width: 36px; opacity: 0.35; pointer-events: none;">
+                <svg id="music-preview-play" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#032D60" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                <svg id="music-preview-stop" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#032D60" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="display:none;"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
+              </button>
+            </div>
           </div>
         </div>
 
@@ -852,8 +864,9 @@ async function showApp(email) {
     : { page: urlPage || 'videos' };
   history.replaceState(initState, '', window.location.pathname);
 
-  // Load voices
+  // Load voices and music tracks
   loadVoices();
+  loadMusicTracks();
 
   try {
     const resp = await fetch(`/api/is-admin?email=${encodeURIComponent(email)}`);
@@ -1052,6 +1065,8 @@ async function viewVideo(id, skipPush) {
     document.getElementById('edit-brand').value = video.brand_name || '';
     document.getElementById('edit-voice').value = video.voice_id || 'default';
     document.getElementById('edit-duration').value = String(video.duration_target || 180);
+    document.getElementById('edit-music').value = video.music_track_id || 'none';
+    updateMusicPreviewButton();
 
     // Store originals
     window._origSettings = {
@@ -1059,6 +1074,7 @@ async function viewVideo(id, skipPush) {
       brand: video.brand_name || '',
       voice: video.voice_id || 'default',
       duration: String(video.duration_target || 180),
+      music: video.music_track_id || 'none',
     };
     hideSaveSettingsBar();
 
@@ -1425,7 +1441,7 @@ async function startGeneration(force = false) {
 function checkSettingsChanged() {
   const orig = window._origSettings;
   if (!orig) return;
-  const changed = ['name', 'brand', 'voice', 'duration'].some(f => {
+  const changed = ['name', 'brand', 'voice', 'duration', 'music'].some(f => {
     const el = document.getElementById('edit-' + f);
     return el && el.value !== orig[f];
   });
@@ -1450,6 +1466,7 @@ async function saveVideoSettings() {
     const brandName = document.getElementById('edit-brand').value.trim();
     const voiceId = document.getElementById('edit-voice').value;
     const durationTarget = parseInt(document.getElementById('edit-duration').value);
+    const musicTrackId = document.getElementById('edit-music').value;
 
     if (!name) { alert('Name is required.'); btn.textContent = '💾 Save Settings'; btn.disabled = false; return; }
 
@@ -1457,11 +1474,11 @@ async function saveVideoSettings() {
     const resp = await fetch(`/api/videos/${currentVideoId}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, name, brandName, voiceId, durationTarget }),
+      body: JSON.stringify({ email, name, brandName, voiceId, durationTarget, musicTrackId }),
     });
     if (!resp.ok) throw new Error('Save failed');
 
-    window._origSettings = { name, brand: brandName, voice: voiceId, duration: String(durationTarget) };
+    window._origSettings = { name, brand: brandName, voice: voiceId, duration: String(durationTarget), music: musicTrackId };
     document.getElementById('detail-breadcrumb').textContent = name;
     hideSaveSettingsBar();
     btn.textContent = '✓ Saved!';
@@ -1473,7 +1490,7 @@ async function saveVideoSettings() {
   }
 }
 
-['edit-name', 'edit-brand', 'edit-voice', 'edit-duration'].forEach(id => {
+['edit-name', 'edit-brand', 'edit-voice', 'edit-duration', 'edit-music'].forEach(id => {
   const el = document.getElementById(id);
   if (el) {
     el.addEventListener('input', checkSettingsChanged);
@@ -1493,15 +1510,15 @@ async function loadVoices() {
     const resp = await fetch('/api/voices');
     const data = await resp.json();
     const select = document.getElementById('edit-voice');
-    select.innerHTML = '<option value="default">Default (Adam)</option>';
+    select.innerHTML = '<option value="default">Default (Matilda)</option>';
     voicePreviewUrls = {};
     (data.voices || []).forEach(v => {
       select.innerHTML += `<option value="${esc(v.id)}">${esc(v.name)} — ${esc(v.description)}</option>`;
       if (v.preview_url) voicePreviewUrls[v.id] = v.preview_url;
     });
-    // Map "default" to Adam's preview
-    if (voicePreviewUrls['pNInz6obpgDQGcFmaJgB']) {
-      voicePreviewUrls['default'] = voicePreviewUrls['pNInz6obpgDQGcFmaJgB'];
+    // Map "default" to Matilda's preview
+    if (voicePreviewUrls['XrExE9yKIg1WjnnlVkGX']) {
+      voicePreviewUrls['default'] = voicePreviewUrls['XrExE9yKIg1WjnnlVkGX'];
     }
     updatePreviewButton();
   } catch (err) { console.log('Failed to load voices:', err.message); }
@@ -1563,6 +1580,87 @@ function setPreviewIcon(playing) {
 document.getElementById('edit-voice')?.addEventListener('change', () => {
   stopVoicePreview();
   updatePreviewButton();
+});
+
+// ═══════════════════════════════════════════════
+// Background Music & Music Preview
+// ═══════════════════════════════════════════════
+let musicPreviewAudio = null;
+let musicPreviewPlaying = false;
+
+async function loadMusicTracks() {
+  try {
+    const resp = await fetch('/api/music-tracks');
+    const data = await resp.json();
+    const select = document.getElementById('edit-music');
+    select.innerHTML = '<option value="none">None</option>';
+    (data.tracks || []).forEach(t => {
+      select.innerHTML += `<option value="${esc(t.id)}">${esc(t.name)} — ${esc(t.mood)}</option>`;
+    });
+    updateMusicPreviewButton();
+  } catch (err) { console.log('Failed to load music tracks:', err.message); }
+}
+
+function updateMusicPreviewButton() {
+  const select = document.getElementById('edit-music');
+  const btn = document.getElementById('music-preview-btn');
+  if (!select || !btn) return;
+  const hasTrack = select.value !== 'none';
+  btn.style.opacity = hasTrack ? '1' : '0.35';
+  btn.style.pointerEvents = hasTrack ? 'auto' : 'none';
+  btn.title = hasTrack ? 'Preview track' : 'Select a track first';
+}
+
+function toggleMusicPreview() {
+  if (musicPreviewPlaying) {
+    stopMusicPreview();
+    return;
+  }
+  const select = document.getElementById('edit-music');
+  const trackId = select.value;
+  if (trackId === 'none') return;
+
+  // Fetch preview URL from API
+  fetch(`/api/music-tracks/${encodeURIComponent(trackId)}/preview`)
+    .then(r => r.json())
+    .then(data => {
+      if (!data.preview_url) return;
+      musicPreviewAudio = new Audio(data.preview_url);
+      musicPreviewAudio.volume = 0.5;
+      musicPreviewPlaying = true;
+      setMusicPreviewIcon(true);
+      musicPreviewAudio.play().catch(err => {
+        console.warn('Music preview failed:', err.message);
+        stopMusicPreview();
+      });
+      musicPreviewAudio.addEventListener('ended', () => stopMusicPreview());
+      musicPreviewAudio.addEventListener('error', () => stopMusicPreview());
+    })
+    .catch(err => {
+      console.warn('Music preview fetch failed:', err.message);
+    });
+}
+
+function stopMusicPreview() {
+  if (musicPreviewAudio) {
+    musicPreviewAudio.pause();
+    musicPreviewAudio.currentTime = 0;
+    musicPreviewAudio = null;
+  }
+  musicPreviewPlaying = false;
+  setMusicPreviewIcon(false);
+}
+
+function setMusicPreviewIcon(playing) {
+  const playIcon = document.getElementById('music-preview-play');
+  const stopIcon = document.getElementById('music-preview-stop');
+  if (playIcon) playIcon.style.display = playing ? 'none' : 'block';
+  if (stopIcon) stopIcon.style.display = playing ? 'block' : 'none';
+}
+
+document.getElementById('edit-music')?.addEventListener('change', () => {
+  stopMusicPreview();
+  updateMusicPreviewButton();
 });
 
 // ═══════════════════════════════════════════════

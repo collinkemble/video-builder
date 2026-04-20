@@ -1159,6 +1159,7 @@ async function viewVideo(id, skipPush) {
     if (!resp.ok) throw new Error('Video not found');
     const data = await resp.json();
     const video = data.video;
+    console.log('[viewVideo] API returned video, persona_image_url:', video.persona_image_url);
 
     currentVideoId = video.id;
     currentVideoData = video;
@@ -1759,6 +1760,7 @@ async function saveVideoSettings() {
 // ═══════════════════════════════════════════════
 
 function renderPersonaImage(video) {
+  console.log('[Persona] renderPersonaImage called, persona_image_url:', video.persona_image_url);
   const sceneData = typeof video.scene_data === 'string' ? JSON.parse(video.scene_data || '{}') : (video.scene_data || {});
   const personaName = sceneData.persona_name || '';
   const personaDesc = sceneData.persona_description || '';

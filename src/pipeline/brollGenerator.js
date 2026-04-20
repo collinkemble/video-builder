@@ -62,9 +62,10 @@ async function pollVeoOperation(ai, operation, label, maxWait = 120000) {
  * @param {string} params.outputDir - Directory to save the clip
  * @param {string} params.segmentType - Segment type (intro/transition/outro) for prompt context
  * @param {string} params.segmentChannel - Channel name for prompt context
+ * @param {string} params.personaImageUrl - Optional persona image URL for character consistency
  * @returns {Promise<string|null>} Path to MP4 clip, or null if video gen failed
  */
-async function generateBrollVideo({ description, brandName, outputDir, segmentType = '', segmentChannel = '' }) {
+async function generateBrollVideo({ description, brandName, outputDir, segmentType = '', segmentChannel = '', personaImageUrl = null }) {
   const ai = getGenAI();
 
   // Add context about the segment role for more fitting footage
@@ -82,21 +83,55 @@ async function generateBrollVideo({ description, brandName, outputDir, segmentTy
   const modelName = 'veo-3.1-generate-preview';
 
   try {
-    console.log(`[B-Roll Video] Generating 8s clip with ${modelName}: "${description.substring(0, 60)}..."`);
+    console.log(`[B-Roll Video] Generating 8s clip with ${modelName}: "${description.substring(0, 60)}..."${personaImageUrl ? ' (with persona reference)' : ''}`);
+
+    // Build Veo config
+    const veoConfig = {
+      aspectRatio: '16:9',
+      resolution: '720p',
+      durationSeconds: 8,
+      numberOfVideos: 1,
+      personGeneration: 'allow_all',
+    };
+
+    // If persona image is provided, download and pass as reference image for character consistency
+    let referenceImages;
+    if (personaImageUrl) {
+      try {
+        console.log(`[B-Roll Video] Downloading persona image for reference...`);
+        const imgResp = await fetch(personaImageUrl);
+        if (imgResp.ok) {
+          const imgBuffer = Buffer.from(await imgResp.arrayBuffer());
+          const base64Data = imgBuffer.toString('base64');
+          // Detect mime type from URL or default to png
+          const mimeType = personaImageUrl.match(/\.jpe?g/i) ? 'image/jpeg' : 'image/png';
+          referenceImages = [{
+            image: {
+              imageBytes: base64Data,
+              mimeType,
+            },
+            referenceType: 'STYLE',
+          }];
+          console.log(`[B-Roll Video] Persona reference image ready (${(imgBuffer.length / 1024).toFixed(0)}KB)`);
+        } else {
+          console.warn(`[B-Roll Video] Persona image download failed (${imgResp.status}). Proceeding without reference.`);
+        }
+      } catch (err) {
+        console.warn(`[B-Roll Video] Persona image download error: ${err.message}. Proceeding without reference.`);
+      }
+    }
 
     // Generate a single 8-second clip (max for one Veo generation)
-    // The compositor uses -stream_loop to seamlessly loop it if the segment is longer
-    let operation = await ai.models.generateVideos({
+    const generateParams = {
       model: modelName,
       prompt,
-      config: {
-        aspectRatio: '16:9',
-        resolution: '720p',
-        durationSeconds: 8,
-        numberOfVideos: 1,
-        personGeneration: 'allow_all',
-      },
-    });
+      config: veoConfig,
+    };
+    if (referenceImages) {
+      generateParams.referenceImages = referenceImages;
+    }
+
+    let operation = await ai.models.generateVideos(generateParams);
 
     operation = await pollVeoOperation(ai, operation, 'generation');
 
@@ -274,11 +309,12 @@ function truncate(str, maxLen) {
  * @param {string} params.brandName - Brand name for context
  * @param {string} params.outputDir - Directory to save the clip
  * @param {number} params.targetDuration - Desired clip length in seconds (default 8)
+ * @param {string} params.personaImageUrl - Optional persona image URL for character consistency
  * @returns {Promise<string>} Path to MP4 video or PNG image
  */
-async function generateBroll({ description, brandName, outputDir, segmentType = '', segmentChannel = '' }) {
+async function generateBroll({ description, brandName, outputDir, segmentType = '', segmentChannel = '', personaImageUrl = null }) {
   // Try video generation first (Veo) — generates 8s clips
-  const videoPath = await generateBrollVideo({ description, brandName, outputDir, segmentType, segmentChannel });
+  const videoPath = await generateBrollVideo({ description, brandName, outputDir, segmentType, segmentChannel, personaImageUrl });
   if (videoPath) return videoPath;
 
   // Fallback to image generation (Gemini Imagen)
@@ -291,9 +327,10 @@ async function generateBroll({ description, brandName, outputDir, segmentType = 
  * @param {string} brandName
  * @param {string} outputDir
  * @param {function} onProgress
+ * @param {string} personaImageUrl - Optional persona image for character consistency across clips
  * @returns {Promise<Array>} Array of { order, imagePath }
  */
-async function generateAllBroll(segments, brandName, outputDir, onProgress) {
+async function generateAllBroll(segments, brandName, outputDir, onProgress, personaImageUrl = null) {
   let videoCount = 0;
   let imageCount = 0;
 
@@ -311,6 +348,7 @@ async function generateAllBroll(segments, brandName, outputDir, onProgress) {
       outputDir,
       segmentType: seg.type || '',
       segmentChannel: seg.channel || '',
+      personaImageUrl,
     }).then(mediaPath => {
       completed++;
       if (mediaPath.endsWith('.mp4')) {

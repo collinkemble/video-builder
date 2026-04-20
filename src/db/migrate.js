@@ -37,6 +37,7 @@ async function migrate() {
         "ALTER TABLE videos ADD COLUMN scriptwriter_script_name VARCHAR(255) DEFAULT NULL",
         "ALTER TABLE videos ADD COLUMN scriptwriter_data JSON DEFAULT NULL",
         "ALTER TABLE videos ADD COLUMN music_track_id VARCHAR(100) DEFAULT 'none'",
+        "ALTER TABLE videos ADD COLUMN persona_image_url TEXT DEFAULT NULL",
       ];
 
       const allAlters = [...sharedAlters, ...appAlters];

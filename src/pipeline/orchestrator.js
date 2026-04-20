@@ -168,7 +168,8 @@ async function runPipeline(videoId, userId, options = {}) {
           workDir,
           (done, total) => {
             updateJobProgress(brollJobId, done, total);
-          }
+          },
+          video.persona_image_url || null
         );
 
         brolls.forEach(b => {

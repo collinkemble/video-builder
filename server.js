@@ -578,6 +578,13 @@ app.put('/api/videos/:id', async (req, res) => {
       params.push(musicTrackId === '' ? 'none' : musicTrackId);
     }
 
+    // Three-state guard for persona_image_url: truthy → use it, empty string → clear to null, null/undefined → keep existing
+    const { personaImageUrl } = req.body;
+    if (personaImageUrl !== undefined && personaImageUrl !== null) {
+      sets.push('persona_image_url = ?');
+      params.push(personaImageUrl === '' ? null : personaImageUrl);
+    }
+
     if (sets.length > 0) {
       sets.push('updated_at = NOW()');
       params.push(req.params.id, user.id);
@@ -795,6 +802,160 @@ app.get('/api/music-tracks/:id/stream', async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════
+// VIDEO BUILDER — Persona Image (generate / upload / delete)
+// ═══════════════════════════════════════════════
+
+// POST /api/videos/:id/generate-persona-image — generate a persona image using Gemini
+app.post('/api/videos/:id/generate-persona-image', async (req, res) => {
+  try {
+    const { email } = req.body;
+    if (!email) return res.status(400).json({ error: 'Email required' });
+
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) return res.status(500).json({ error: 'Image generation not configured' });
+
+    const user = await getOrCreateUser(email);
+    const rows = await query('SELECT * FROM videos WHERE id = ? AND user_id = ?', [req.params.id, user.id]);
+    if (rows.length === 0) return res.status(404).json({ error: 'Video not found' });
+
+    const video = rows[0];
+    const sceneData = typeof video.scene_data === 'string' ? JSON.parse(video.scene_data || '{}') : (video.scene_data || {});
+
+    const personaName = sceneData.persona_name || 'a professional person';
+    const personaDesc = sceneData.persona_description || '';
+    const brandName = video.brand_name || sceneData.brand_name || '';
+
+    // Build a prompt for a professional headshot/portrait of the persona
+    const prompt = `Professional headshot portrait photograph of ${personaName}${personaDesc ? `, described as: ${personaDesc}` : ''}.
+Style: Clean, modern corporate headshot. Warm, natural lighting. Soft background bokeh. Shot from chest up, slightly angled. Genuine, friendly smile. High-quality DSLR photography look.
+${brandName ? `This person is a customer of ${brandName}.` : ''}
+RULES:
+1. Single person only — no groups.
+2. No text, logos, or overlays.
+3. No screens or devices visible.
+4. Professional but approachable appearance.
+5. Neutral or warm-toned background.`;
+
+    const { GoogleGenAI } = require('@google/genai');
+    const ai = new GoogleGenAI({ apiKey });
+
+    // Try image generation models — ordered newest to oldest
+    const modelNames = [
+      'gemini-3.1-flash-image-preview',
+      'gemini-2.5-flash-image',
+      'gemini-2.0-flash-exp-image-generation',
+    ];
+
+    let imageBuffer = null;
+    let usedModel = null;
+
+    for (const modelName of modelNames) {
+      try {
+        console.log(`[Persona Image] Generating with ${modelName} for video ${req.params.id}...`);
+        const response = await ai.models.generateContent({
+          model: modelName,
+          contents: prompt,
+          config: { responseModalities: ['TEXT', 'IMAGE'] },
+        });
+
+        const parts = response.candidates?.[0]?.content?.parts || [];
+        const imagePart = parts.find(p => p.inlineData);
+
+        if (imagePart && imagePart.inlineData) {
+          imageBuffer = Buffer.from(imagePart.inlineData.data, 'base64');
+          usedModel = modelName;
+          console.log(`[Persona Image] Generated with ${modelName}: ${(imageBuffer.length / 1024).toFixed(1)}KB`);
+          break;
+        }
+        console.warn(`[Persona Image] No image from ${modelName}`);
+      } catch (err) {
+        console.warn(`[Persona Image] ${modelName} failed: ${err.message}`);
+      }
+    }
+
+    if (!imageBuffer) {
+      return res.status(500).json({ error: 'Failed to generate persona image. All models failed.' });
+    }
+
+    // Upload to R2
+    const { uploadFile } = require('./src/utils/r2');
+    const key = `videos/${user.id}/${req.params.id}/persona_${Date.now()}.png`;
+    const imageUrl = await uploadFile(key, imageBuffer, 'image/png');
+
+    // Save to DB
+    await query('UPDATE videos SET persona_image_url = ?, updated_at = NOW() WHERE id = ?', [imageUrl, req.params.id]);
+
+    res.json({ success: true, persona_image_url: imageUrl, model: usedModel });
+  } catch (err) {
+    console.error('Persona image generation failed:', err);
+    res.status(500).json({ error: 'Failed to generate persona image: ' + err.message });
+  }
+});
+
+// POST /api/videos/:id/upload-persona-image — upload a custom persona image
+app.post('/api/videos/:id/upload-persona-image', async (req, res) => {
+  try {
+    const { email, imageData } = req.body;
+    if (!email) return res.status(400).json({ error: 'Email required' });
+    if (!imageData) return res.status(400).json({ error: 'Image data required (base64)' });
+
+    const user = await getOrCreateUser(email);
+    const rows = await query('SELECT id FROM videos WHERE id = ? AND user_id = ?', [req.params.id, user.id]);
+    if (rows.length === 0) return res.status(404).json({ error: 'Video not found' });
+
+    // Parse base64 data URI — supports data:image/png;base64,... or raw base64
+    let buffer;
+    let ext = 'png';
+    if (imageData.startsWith('data:')) {
+      const match = imageData.match(/^data:image\/(\w+);base64,(.+)$/);
+      if (!match) return res.status(400).json({ error: 'Invalid image data format' });
+      ext = match[1] === 'jpeg' ? 'jpg' : match[1];
+      buffer = Buffer.from(match[2], 'base64');
+    } else {
+      buffer = Buffer.from(imageData, 'base64');
+    }
+
+    // Validate size — max 5MB
+    if (buffer.length > 5 * 1024 * 1024) {
+      return res.status(400).json({ error: 'Image too large (max 5MB)' });
+    }
+
+    // Upload to R2
+    const { uploadFile } = require('./src/utils/r2');
+    const contentType = ext === 'jpg' ? 'image/jpeg' : `image/${ext}`;
+    const key = `videos/${user.id}/${req.params.id}/persona_${Date.now()}.${ext}`;
+    const imageUrl = await uploadFile(key, buffer, contentType);
+
+    // Save to DB
+    await query('UPDATE videos SET persona_image_url = ?, updated_at = NOW() WHERE id = ?', [imageUrl, req.params.id]);
+
+    res.json({ success: true, persona_image_url: imageUrl });
+  } catch (err) {
+    console.error('Persona image upload failed:', err);
+    res.status(500).json({ error: 'Failed to upload persona image: ' + err.message });
+  }
+});
+
+// DELETE /api/videos/:id/persona-image — remove persona image
+app.delete('/api/videos/:id/persona-image', async (req, res) => {
+  try {
+    const email = req.query.email;
+    if (!email) return res.status(400).json({ error: 'Email required' });
+
+    const user = await getOrCreateUser(email);
+    const rows = await query('SELECT id FROM videos WHERE id = ? AND user_id = ?', [req.params.id, user.id]);
+    if (rows.length === 0) return res.status(404).json({ error: 'Video not found' });
+
+    await query('UPDATE videos SET persona_image_url = NULL, updated_at = NOW() WHERE id = ?', [req.params.id]);
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Persona image delete failed:', err);
+    res.status(500).json({ error: 'Failed to remove persona image' });
+  }
+});
+
+// ═══════════════════════════════════════════════
 // ADMIN — Veo Diagnostics (test video generation capability)
 // ═══════════════════════════════════════════════
 
@@ -979,8 +1140,8 @@ async function createSharedVideoCopy(sourceVideo, senderEmail, recipientEmail) {
     `INSERT INTO videos (user_id, name, brand_name, pocketsic_project_id, pocketsic_project_name,
       scene_data, narration_script, voiceover_timestamps, video_url, thumbnail_url, voiceover_url,
       voice_id, duration_target, duration_actual, scriptwriter_script_id, scriptwriter_script_name, scriptwriter_data,
-      status, shared_by, shared_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
+      persona_image_url, status, shared_by, shared_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
     [
       recipientUser.id,
       sourceVideo.name,
@@ -999,6 +1160,7 @@ async function createSharedVideoCopy(sourceVideo, senderEmail, recipientEmail) {
       sourceVideo.scriptwriter_script_id || null,
       sourceVideo.scriptwriter_script_name || null,
       sourceVideo.scriptwriter_data ? (typeof sourceVideo.scriptwriter_data === 'string' ? sourceVideo.scriptwriter_data : JSON.stringify(sourceVideo.scriptwriter_data)) : null,
+      sourceVideo.persona_image_url || null,
       sourceVideo.status === 'completed' ? 'completed' : 'draft',
       senderEmail,
     ]

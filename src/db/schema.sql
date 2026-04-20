@@ -70,6 +70,9 @@ CREATE TABLE IF NOT EXISTS videos (
   video_url TEXT,
   thumbnail_url TEXT,
 
+  -- Persona image (generated or uploaded, used as Veo reference for consistent character)
+  persona_image_url TEXT DEFAULT NULL,
+
   -- Settings
   voice_id VARCHAR(100) DEFAULT 'default',
   duration_target INT DEFAULT 180,

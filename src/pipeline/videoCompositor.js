@@ -223,25 +223,48 @@ function buildTimeline(segments, timestamps, sceneImages, brollImages) {
 
 /**
  * Normalize a video clip to 1920x1080, target duration.
- * If clip is shorter than target: LOOP the clip to fill the duration (no frozen frames).
+ * If clip is shorter than target: slow the clip down to fill the duration.
+ *   An 8s clip stretched to 12s = 1.5x slowdown (barely noticeable on cinematic b-roll).
+ *   This avoids both looping (obvious repetition) and frame-freezing (looks broken).
  * If clip is longer: trim to target.
  */
 function normalizeVideoClip(inputPath, outputPath, targetDuration) {
-  // Use -stream_loop to loop the input if it's shorter than target duration.
-  // This seamlessly replays the clip rather than freezing on the last frame.
-  return runFfmpeg([
-    '-y',
-    '-stream_loop', '-1',       // loop input indefinitely
-    '-i', inputPath,
-    '-t', String(targetDuration), // trim to exact target
-    '-vf', `scale=${WIDTH}:${HEIGHT}:force_original_aspect_ratio=decrease,pad=${WIDTH}:${HEIGHT}:(ow-iw)/2:(oh-ih)/2:black,format=yuv420p`,
-    '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '23',
-    '-r', String(FPS),
-    '-pix_fmt', 'yuv420p',
-    '-an',
-    '-movflags', '+faststart',
-    outputPath,
-  ], `normalizing clip`);
+  // Calculate slowdown factor — setpts multiplier stretches the clip.
+  // For an 8s Veo clip with a 12s target: factor = 12/8 = 1.5 (gentle slowdown).
+  // Cap at 2.5x to avoid extreme slow-motion on very long segments.
+  const VEO_CLIP_DURATION = 8;
+  const factor = Math.min(2.5, targetDuration / VEO_CLIP_DURATION);
+
+  if (factor > 1.05) {
+    // Clip is shorter than target — apply slow-motion
+    console.log(`[Compositor] Slowing b-roll clip ${(1/factor*100).toFixed(0)}% speed to fill ${targetDuration}s (factor ${factor.toFixed(2)}x)`);
+    return runFfmpeg([
+      '-y',
+      '-i', inputPath,
+      '-vf', `setpts=${factor.toFixed(4)}*PTS,scale=${WIDTH}:${HEIGHT}:force_original_aspect_ratio=decrease,pad=${WIDTH}:${HEIGHT}:(ow-iw)/2:(oh-ih)/2:black,format=yuv420p`,
+      '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '23',
+      '-t', String(targetDuration),
+      '-r', String(FPS),
+      '-pix_fmt', 'yuv420p',
+      '-an',
+      '-movflags', '+faststart',
+      outputPath,
+    ], `normalizing clip (slow-motion ${factor.toFixed(1)}x)`);
+  } else {
+    // Clip is equal or longer — just trim
+    return runFfmpeg([
+      '-y',
+      '-i', inputPath,
+      '-vf', `scale=${WIDTH}:${HEIGHT}:force_original_aspect_ratio=decrease,pad=${WIDTH}:${HEIGHT}:(ow-iw)/2:(oh-ih)/2:black,format=yuv420p`,
+      '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '23',
+      '-t', String(targetDuration),
+      '-r', String(FPS),
+      '-pix_fmt', 'yuv420p',
+      '-an',
+      '-movflags', '+faststart',
+      outputPath,
+    ], `normalizing clip (trim)`);
+  }
 }
 
 /**

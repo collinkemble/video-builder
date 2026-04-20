@@ -877,10 +877,31 @@ RULES:
       return res.status(500).json({ error: 'Failed to generate persona image. All models failed.' });
     }
 
-    // Upload to R2
+    // Upload to R2 — write buffer to temp file first (matches the pattern
+    // that works for video uploads; direct Buffer uploads return 404 from R2 public URL)
     const { uploadFile } = require('./src/utils/r2');
+    const tmpPath = require('path').join(require('os').tmpdir(), `persona_${Date.now()}.png`);
+    require('fs').writeFileSync(tmpPath, imageBuffer);
+    console.log(`[Persona Image] Wrote ${imageBuffer.length} bytes to temp file: ${tmpPath}`);
+
     const key = `videos/${user.id}/${req.params.id}/persona_${Date.now()}.png`;
-    const imageUrl = await uploadFile(key, imageBuffer, 'image/png');
+    console.log(`[Persona Image] Uploading to R2: key=${key}, size=${imageBuffer.length}`);
+    const imageUrl = await uploadFile(key, tmpPath, 'image/png');
+    console.log(`[Persona Image] Upload returned URL: ${imageUrl}`);
+
+    // Clean up temp file
+    try { require('fs').unlinkSync(tmpPath); } catch (e) { /* ignore */ }
+
+    // Verify the upload worked by checking HTTP HEAD
+    try {
+      const verifyResp = await fetch(imageUrl, { method: 'HEAD' });
+      console.log(`[Persona Image] Verify upload: HTTP ${verifyResp.status} for ${imageUrl}`);
+      if (!verifyResp.ok) {
+        console.warn(`[Persona Image] ⚠️ Upload verification FAILED — file not accessible at ${imageUrl}`);
+      }
+    } catch (verifyErr) {
+      console.warn(`[Persona Image] Upload verify error: ${verifyErr.message}`);
+    }
 
     // Save to DB
     await query('UPDATE videos SET persona_image_url = ?, updated_at = NOW() WHERE id = ?', [imageUrl, req.params.id]);
@@ -920,11 +941,14 @@ app.post('/api/videos/:id/upload-persona-image', async (req, res) => {
       return res.status(400).json({ error: 'Image too large (max 5MB)' });
     }
 
-    // Upload to R2
+    // Upload to R2 — write buffer to temp file first (direct Buffer uploads return 404 from R2)
     const { uploadFile } = require('./src/utils/r2');
     const contentType = ext === 'jpg' ? 'image/jpeg' : `image/${ext}`;
     const key = `videos/${user.id}/${req.params.id}/persona_${Date.now()}.${ext}`;
-    const imageUrl = await uploadFile(key, buffer, contentType);
+    const tmpPath = require('path').join(require('os').tmpdir(), `persona_upload_${Date.now()}.${ext}`);
+    require('fs').writeFileSync(tmpPath, buffer);
+    const imageUrl = await uploadFile(key, tmpPath, contentType);
+    try { require('fs').unlinkSync(tmpPath); } catch (e) { /* ignore */ }
 
     // Save to DB
     await query('UPDATE videos SET persona_image_url = ?, updated_at = NOW() WHERE id = ?', [imageUrl, req.params.id]);

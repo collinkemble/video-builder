@@ -46,12 +46,36 @@ async function uploadFile(key, body, contentType) {
     fileBody = fs.readFileSync(body);
   }
 
-  await client.send(new PutObjectCommand({
+  // Ensure fileBody is a Buffer for reliable upload with explicit ContentLength
+  if (!Buffer.isBuffer(fileBody)) {
+    fileBody = Buffer.from(fileBody);
+  }
+
+  const putResult = await client.send(new PutObjectCommand({
     Bucket: BUCKET,
     Key: key,
     Body: fileBody,
     ContentType: contentType,
+    ContentLength: fileBody.length,
+    CacheControl: 'public, max-age=31536000',
   }));
+
+  console.log(`[R2] PutObject: key=${key}, size=${fileBody.length}, etag=${putResult.ETag || 'none'}, status=${putResult.$metadata?.httpStatusCode}`);
+
+  // Verify the object exists in R2 after upload
+  try {
+    const headResult = await client.send(new GetObjectCommand({
+      Bucket: BUCKET,
+      Key: key,
+    }));
+    // Just read and discard — we're verifying it exists
+    if (headResult.Body) {
+      headResult.Body.destroy?.();
+    }
+    console.log(`[R2] ✅ Verified object exists: key=${key}, contentLength=${headResult.ContentLength}`);
+  } catch (verifyErr) {
+    console.warn(`[R2] ⚠️ Object verification FAILED after upload: key=${key}, error=${verifyErr.message}`);
+  }
 
   return `${PUBLIC_URL}/${key}`;
 }

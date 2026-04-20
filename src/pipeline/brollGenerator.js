@@ -32,7 +32,7 @@ CRITICAL RULES YOU MUST FOLLOW:
  * Poll a Veo video operation until done.
  * @returns {Promise<object>} The completed operation
  */
-async function pollVeoOperation(ai, operation, label, maxWait = 300000) {
+async function pollVeoOperation(ai, operation, label, maxWait = 120000) {
   const pollInterval = 10000;
   const startTime = Date.now();
 

@@ -1204,10 +1204,39 @@ async function checkVeoCapability() {
 // START SERVER
 // ═══════════════════════════════════════════════
 
+/**
+ * On startup, mark any videos stuck in 'processing' as 'failed'.
+ * This handles the case where a Heroku dyno restart killed in-progress pipelines.
+ */
+async function recoverStaleJobs() {
+  try {
+    const stale = await query(
+      "SELECT id, name FROM videos WHERE status = 'processing'"
+    );
+    if (stale.length > 0) {
+      console.log(`[Recovery] Found ${stale.length} stuck video(s) — marking as failed so they can be retried.`);
+      for (const v of stale) {
+        await query(
+          "UPDATE videos SET status = 'failed', error = 'Server restarted during processing. Please retry.' WHERE id = ?",
+          [v.id]
+        );
+        await query(
+          "UPDATE video_jobs SET status = 'failed', error = 'Server restarted', completed_at = NOW() WHERE video_id = ? AND status IN ('pending', 'running')",
+          [v.id]
+        );
+        console.log(`[Recovery] Video ${v.id} ("${v.name}") marked as failed.`);
+      }
+    }
+  } catch (err) {
+    console.warn('[Recovery] Stale job recovery failed:', err.message);
+  }
+}
+
 async function start() {
   try {
     await migrate();
     console.log('✓ Database ready');
+    await recoverStaleJobs();
   } catch (err) {
     console.error('⚠️  Database migration failed:', err.message);
     console.warn('  Features requiring a database will not work until JAWSDB_URL is configured');

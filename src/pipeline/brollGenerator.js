@@ -78,12 +78,18 @@ async function generateBrollVideo({ description, brandName, outputDir, segmentTy
     contextHint = `This is a TRANSITION shot bridging two scenes${segmentChannel ? ` (coming from: ${segmentChannel})` : ''} — show movement, travel, or passage of time. `;
   }
 
-  const prompt = `${contextHint}Professional cinematic b-roll footage for a ${brandName || 'brand'} customer experience video: ${description}.\n${VIDEO_PROMPT_RULES}`;
+  // If persona image is provided, enhance the prompt to explicitly mention the person
+  let personaPromptHint = '';
+  if (personaImageUrl) {
+    personaPromptHint = 'The person shown in the reference image should appear as the main character in this clip. Keep their appearance, face, and features exactly consistent with the reference image. ';
+  }
+
+  const prompt = `${contextHint}${personaPromptHint}Professional cinematic b-roll footage for a ${brandName || 'brand'} customer experience video: ${description}.\n${VIDEO_PROMPT_RULES}`;
 
   const modelName = 'veo-3.1-generate-preview';
 
   try {
-    console.log(`[B-Roll Video] Generating 8s clip with ${modelName}: "${description.substring(0, 60)}..."${personaImageUrl ? ' (with persona reference)' : ''}`);
+    console.log(`[B-Roll Video] Generating 8s clip with ${modelName}: "${description.substring(0, 60)}..."${personaImageUrl ? ' (with persona reference image)' : ''}`);
 
     // Build Veo config
     const veoConfig = {
@@ -94,27 +100,28 @@ async function generateBrollVideo({ description, brandName, outputDir, segmentTy
       personGeneration: 'allow_all',
     };
 
-    // If persona image is provided, download and pass as reference image for character consistency
-    let referenceImages;
+    // If persona image is provided, download and pass as reference image for character consistency.
+    // Uses referenceType: "asset" which tells Veo to preserve the subject's appearance across the video.
+    // referenceImages goes INSIDE config per the Gemini API spec.
     if (personaImageUrl) {
       try {
-        console.log(`[B-Roll Video] Downloading persona image for reference...`);
+        console.log(`[B-Roll Video] Downloading persona image for Veo reference...`);
         const imgResp = await fetch(personaImageUrl);
         if (imgResp.ok) {
           const imgBuffer = Buffer.from(await imgResp.arrayBuffer());
           const base64Data = imgBuffer.toString('base64');
           // Detect mime type from URL or default to png
           const mimeType = personaImageUrl.match(/\.jpe?g/i) ? 'image/jpeg' : 'image/png';
-          referenceImages = [{
+          veoConfig.referenceImages = [{
             image: {
               imageBytes: base64Data,
               mimeType,
             },
-            referenceType: 'STYLE',
+            referenceType: 'asset',
           }];
-          console.log(`[B-Roll Video] Persona reference image ready (${(imgBuffer.length / 1024).toFixed(0)}KB)`);
+          console.log(`[B-Roll Video] Persona reference image attached (${(imgBuffer.length / 1024).toFixed(0)}KB, type=${mimeType}, referenceType=asset)`);
         } else {
-          console.warn(`[B-Roll Video] Persona image download failed (${imgResp.status}). Proceeding without reference.`);
+          console.warn(`[B-Roll Video] Persona image download failed (HTTP ${imgResp.status}). Proceeding without reference.`);
         }
       } catch (err) {
         console.warn(`[B-Roll Video] Persona image download error: ${err.message}. Proceeding without reference.`);
@@ -122,16 +129,11 @@ async function generateBrollVideo({ description, brandName, outputDir, segmentTy
     }
 
     // Generate a single 8-second clip (max for one Veo generation)
-    const generateParams = {
+    let operation = await ai.models.generateVideos({
       model: modelName,
       prompt,
       config: veoConfig,
-    };
-    if (referenceImages) {
-      generateParams.referenceImages = referenceImages;
-    }
-
-    let operation = await ai.models.generateVideos(generateParams);
+    });
 
     operation = await pollVeoOperation(ai, operation, 'generation');
 
@@ -336,7 +338,7 @@ async function generateAllBroll(segments, brandName, outputDir, onProgress, pers
 
   // Launch ALL b-roll generations in parallel — Veo clips take ~60-70s each,
   // so parallel execution cuts total time from ~6min to ~1.5min for 5 clips.
-  console.log(`[B-Roll] Launching ${segments.length} generations in parallel...`);
+  console.log(`[B-Roll] Launching ${segments.length} generations in parallel...${personaImageUrl ? ' (with persona reference image for character consistency)' : ''}`);
   let completed = 0;
 
   const promises = segments.map((seg, i) => {

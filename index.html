@@ -998,6 +998,19 @@ document.getElementById('login-email').addEventListener('keydown', function(e) {
 // Utility
 // ═══════════════════════════════════════════════
 function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+
+function showToast(msg, duration = 3000) {
+  const el = document.createElement('div');
+  el.textContent = msg;
+  Object.assign(el.style, {
+    position: 'fixed', bottom: '24px', left: '50%', transform: 'translateX(-50%)',
+    background: '#1F2937', color: 'white', padding: '10px 24px', borderRadius: '10px',
+    fontSize: '14px', fontWeight: '600', zIndex: '9999', boxShadow: '0 4px 16px rgba(0,0,0,0.2)',
+    transition: 'opacity 0.3s', opacity: '1',
+  });
+  document.body.appendChild(el);
+  setTimeout(() => { el.style.opacity = '0'; setTimeout(() => el.remove(), 300); }, duration);
+}
 function fmtDate(d) { return d ? new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—'; }
 
 function statusText(s) {
@@ -1233,7 +1246,11 @@ async function viewVideo(id, skipPush) {
     renderScenes(video.scene_data);
 
     // Persona Image
-    renderPersonaImage(video);
+    try {
+      renderPersonaImage(video);
+    } catch (err) {
+      console.error('[viewVideo] renderPersonaImage error:', err);
+    }
 
     // Script Writer source card
     renderScriptWriterCard(video);
@@ -1825,9 +1842,12 @@ async function generatePersonaImage() {
     }
 
     const result = await resp.json();
+    console.log('[Persona] Generated and saved:', result.persona_image_url);
     // Update in-memory data and re-render
     if (currentVideoData) currentVideoData.persona_image_url = result.persona_image_url;
     renderPersonaImage(currentVideoData || { persona_image_url: result.persona_image_url, scene_data: {} });
+    // Show brief save confirmation
+    showToast('✅ Persona image saved');
   } catch (err) {
     alert('Failed to generate persona image: ' + err.message);
     // Restore previous state
@@ -1878,8 +1898,10 @@ async function uploadPersonaImage(event) {
     }
 
     const result = await resp.json();
+    console.log('[Persona] Uploaded and saved:', result.persona_image_url);
     if (currentVideoData) currentVideoData.persona_image_url = result.persona_image_url;
     renderPersonaImage(currentVideoData || { persona_image_url: result.persona_image_url, scene_data: {} });
+    showToast('✅ Persona image saved');
   } catch (err) {
     alert('Failed to upload persona image: ' + err.message);
     renderPersonaImage(currentVideoData || { scene_data: {} });

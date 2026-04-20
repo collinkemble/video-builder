@@ -77,8 +77,9 @@ async function composeVideo({
     console.log(`[Compositor] Normalizing clip ${i}: type=${entry.type}, duration=${entry.duration}s, isVideo=${entry.isVideo}`);
 
     if (entry.isVideo) {
-      // Video clip — scale/pad to 1920x1080 and trim/loop to target duration
-      await normalizeVideoClip(entry.sourcePath, clipPath, entry.duration);
+      // Video clip — scale/pad to 1920x1080 and adjust to target duration
+      const isBrollEntry = entry.type === 'intro' || entry.type === 'transition' || entry.type === 'outro';
+      await normalizeVideoClip(entry.sourcePath, clipPath, entry.duration, isBrollEntry);
     } else {
       // B-roll still image — create a video of the image held for the duration
       await imageToVideo(entry.sourcePath, clipPath, entry.duration);
@@ -223,48 +224,76 @@ function buildTimeline(segments, timestamps, sceneImages, brollImages) {
 
 /**
  * Normalize a video clip to 1920x1080, target duration.
- * If clip is shorter than target: slow the clip down to fill the duration.
- *   An 8s clip stretched to 12s = 1.5x slowdown (barely noticeable on cinematic b-roll).
- *   This avoids both looping (obvious repetition) and frame-freezing (looks broken).
- * If clip is longer: trim to target.
+ *
+ * For B-ROLL clips (isBroll=true):
+ *   Short clip → gentle slow-motion to fill (8s clip → 12s = 1.5x, barely noticeable)
+ *   This avoids both looping (obvious repetition) and frame-freezing.
+ *
+ * For SCENE CAPTURE clips (isBroll=false):
+ *   If clip is LONGER than target → speed up to fit all content in the time window.
+ *     e.g. 45s capture in a 21s slot = 2.1x speed (shows entire conversation).
+ *     Capped at 3x to stay watchable.
+ *   If clip is shorter/equal → play at normal speed, trim to target.
  */
-function normalizeVideoClip(inputPath, outputPath, targetDuration) {
-  // Calculate slowdown factor — setpts multiplier stretches the clip.
-  // For an 8s Veo clip with a 12s target: factor = 12/8 = 1.5 (gentle slowdown).
-  // Cap at 2.5x to avoid extreme slow-motion on very long segments.
-  const VEO_CLIP_DURATION = 8;
-  const factor = Math.min(2.5, targetDuration / VEO_CLIP_DURATION);
+async function normalizeVideoClip(inputPath, outputPath, targetDuration, isBroll = false) {
+  if (isBroll) {
+    // B-roll: apply slow-motion to stretch the 8s Veo clip to fill the segment
+    const VEO_CLIP_DURATION = 8;
+    const factor = Math.min(2.5, targetDuration / VEO_CLIP_DURATION);
 
-  if (factor > 1.05) {
-    // Clip is shorter than target — apply slow-motion
-    console.log(`[Compositor] Slowing b-roll clip ${(1/factor*100).toFixed(0)}% speed to fill ${targetDuration}s (factor ${factor.toFixed(2)}x)`);
-    return runFfmpeg([
-      '-y',
-      '-i', inputPath,
-      '-vf', `setpts=${factor.toFixed(4)}*PTS,scale=${WIDTH}:${HEIGHT}:force_original_aspect_ratio=decrease,pad=${WIDTH}:${HEIGHT}:(ow-iw)/2:(oh-ih)/2:black,format=yuv420p`,
-      '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '23',
-      '-t', String(targetDuration),
-      '-r', String(FPS),
-      '-pix_fmt', 'yuv420p',
-      '-an',
-      '-movflags', '+faststart',
-      outputPath,
-    ], `normalizing clip (slow-motion ${factor.toFixed(1)}x)`);
+    if (factor > 1.05) {
+      console.log(`[Compositor] Slowing b-roll clip ${(1/factor*100).toFixed(0)}% speed to fill ${targetDuration}s (factor ${factor.toFixed(2)}x)`);
+      return runFfmpeg([
+        '-y',
+        '-i', inputPath,
+        '-vf', `setpts=${factor.toFixed(4)}*PTS,scale=${WIDTH}:${HEIGHT}:force_original_aspect_ratio=decrease,pad=${WIDTH}:${HEIGHT}:(ow-iw)/2:(oh-ih)/2:black,format=yuv420p`,
+        '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '23',
+        '-t', String(targetDuration),
+        '-r', String(FPS),
+        '-pix_fmt', 'yuv420p',
+        '-an',
+        '-movflags', '+faststart',
+        outputPath,
+      ], `normalizing b-roll (slow-motion ${factor.toFixed(1)}x)`);
+    }
   } else {
-    // Clip is equal or longer — just trim
-    return runFfmpeg([
-      '-y',
-      '-i', inputPath,
-      '-vf', `scale=${WIDTH}:${HEIGHT}:force_original_aspect_ratio=decrease,pad=${WIDTH}:${HEIGHT}:(ow-iw)/2:(oh-ih)/2:black,format=yuv420p`,
-      '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '23',
-      '-t', String(targetDuration),
-      '-r', String(FPS),
-      '-pix_fmt', 'yuv420p',
-      '-an',
-      '-movflags', '+faststart',
-      outputPath,
-    ], `normalizing clip (trim)`);
+    // Scene capture: if the recorded clip is longer than the narration window,
+    // speed it up so the entire interaction (all clicks, responses) fits.
+    const clipDuration = await getVideoDuration(inputPath);
+    if (clipDuration > targetDuration * 1.1) {
+      // Speed up factor — e.g. 45s clip in 21s slot = 0.467 PTS multiplier (2.14x speed)
+      const speedup = clipDuration / targetDuration;
+      const cappedSpeedup = Math.min(speedup, 3.0); // cap at 3x to stay watchable
+      const ptsFactor = 1 / cappedSpeedup;
+      console.log(`[Compositor] Speeding up scene capture ${cappedSpeedup.toFixed(2)}x to fit ${clipDuration.toFixed(1)}s clip into ${targetDuration.toFixed(1)}s`);
+      return runFfmpeg([
+        '-y',
+        '-i', inputPath,
+        '-vf', `setpts=${ptsFactor.toFixed(4)}*PTS,scale=${WIDTH}:${HEIGHT}:force_original_aspect_ratio=decrease,pad=${WIDTH}:${HEIGHT}:(ow-iw)/2:(oh-ih)/2:black,format=yuv420p`,
+        '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '23',
+        '-t', String(targetDuration),
+        '-r', String(FPS),
+        '-pix_fmt', 'yuv420p',
+        '-an',
+        '-movflags', '+faststart',
+        outputPath,
+      ], `normalizing scene (${cappedSpeedup.toFixed(1)}x speed-up)`);
+    }
   }
+
+  // Default: trim to target at normal speed
+  return runFfmpeg([
+    '-y',
+    '-i', inputPath,
+    '-vf', `scale=${WIDTH}:${HEIGHT}:force_original_aspect_ratio=decrease,pad=${WIDTH}:${HEIGHT}:(ow-iw)/2:(oh-ih)/2:black,format=yuv420p`,
+    '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '23',
+    '-t', String(targetDuration),
+    '-r', String(FPS),
+    '-pix_fmt', 'yuv420p',
+    '-an',
+    '-movflags', '+faststart',
+    outputPath,
+  ], `normalizing clip (trim at 1x speed)`);
 }
 
 /**

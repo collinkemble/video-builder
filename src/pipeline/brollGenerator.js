@@ -81,7 +81,7 @@ async function generateBrollVideo({ description, brandName, outputDir, segmentTy
   // If persona image is provided, enhance the prompt to explicitly mention the person
   let personaPromptHint = '';
   if (personaImageUrl) {
-    personaPromptHint = 'The person shown in the reference image should appear as the main character in this clip. Keep their appearance, face, and features exactly consistent with the reference image. ';
+    personaPromptHint = 'IMPORTANT: You MUST feature the exact person from the provided reference image as the main character in this clip. Match their face, hair, skin tone, body type, and all physical features precisely from the reference image. Do not change their appearance in any way. ';
   }
 
   const prompt = `${contextHint}${personaPromptHint}Professional cinematic b-roll footage for a ${brandName || 'brand'} customer experience video: ${description}.\n${VIDEO_PROMPT_RULES}`;
@@ -101,34 +101,47 @@ async function generateBrollVideo({ description, brandName, outputDir, segmentTy
     };
 
     // If persona image is provided, download and pass as reference image for character consistency.
-    // Uses referenceType: "asset" which tells Veo to preserve the subject's appearance across the video.
+    // Uses referenceType: "ASSET" (uppercase per SDK enum) to preserve the subject's appearance.
     // referenceImages goes INSIDE config per the Gemini API spec.
     if (personaImageUrl) {
       try {
-        console.log(`[B-Roll Video] Downloading persona image for Veo reference...`);
+        console.log(`[B-Roll Video] Downloading persona image for Veo reference: ${personaImageUrl.substring(0, 80)}...`);
         const imgResp = await fetch(personaImageUrl);
         if (imgResp.ok) {
-          const imgBuffer = Buffer.from(await imgResp.arrayBuffer());
+          let imgBuffer = Buffer.from(await imgResp.arrayBuffer());
+          console.log(`[B-Roll Video] Downloaded persona image: ${(imgBuffer.length / 1024).toFixed(0)}KB`);
+
+          // If image is very large (>2MB), resize to avoid API limits
+          if (imgBuffer.length > 2 * 1024 * 1024) {
+            console.log(`[B-Roll Video] Image too large (${(imgBuffer.length / 1024 / 1024).toFixed(1)}MB), will proceed but may hit size limits`);
+          }
+
           const base64Data = imgBuffer.toString('base64');
-          // Detect mime type from URL or default to png
-          const mimeType = personaImageUrl.match(/\.jpe?g/i) ? 'image/jpeg' : 'image/png';
+          // Detect mime type from content-type header or URL
+          const contentType = imgResp.headers.get('content-type') || '';
+          const mimeType = contentType.includes('jpeg') || contentType.includes('jpg') || personaImageUrl.match(/\.jpe?g/i)
+            ? 'image/jpeg'
+            : 'image/png';
+
           veoConfig.referenceImages = [{
             image: {
               imageBytes: base64Data,
               mimeType,
             },
-            referenceType: 'asset',
+            referenceType: 'ASSET',
           }];
-          console.log(`[B-Roll Video] Persona reference image attached (${(imgBuffer.length / 1024).toFixed(0)}KB, type=${mimeType}, referenceType=asset)`);
+          console.log(`[B-Roll Video] ✅ Persona reference image attached (${(imgBuffer.length / 1024).toFixed(0)}KB, type=${mimeType}, referenceType=ASSET, base64Length=${base64Data.length})`);
         } else {
-          console.warn(`[B-Roll Video] Persona image download failed (HTTP ${imgResp.status}). Proceeding without reference.`);
+          console.warn(`[B-Roll Video] ❌ Persona image download failed (HTTP ${imgResp.status}). Proceeding without reference.`);
         }
       } catch (err) {
-        console.warn(`[B-Roll Video] Persona image download error: ${err.message}. Proceeding without reference.`);
+        console.warn(`[B-Roll Video] ❌ Persona image download error: ${err.message}. Proceeding without reference.`);
       }
     }
 
     // Generate a single 8-second clip (max for one Veo generation)
+    const hasRefImages = veoConfig.referenceImages && veoConfig.referenceImages.length > 0;
+    console.log(`[B-Roll Video] Calling ${modelName}.generateVideos (hasReferenceImages=${hasRefImages}, configKeys=${Object.keys(veoConfig).join(',')})...`);
     let operation = await ai.models.generateVideos({
       model: modelName,
       prompt,

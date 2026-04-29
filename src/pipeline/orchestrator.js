@@ -175,11 +175,14 @@ async function runPipeline(videoId, userId, options = {}) {
           (done, total) => {
             updateJobProgress(brollJobId, done, total);
           },
-          video.persona_image_url || null
+          video.persona_image_url || null,
+          voiceoverResult.timestamps,  // Pass timestamps so b-roll knows required durations
+          script.segments              // Pass all segments for next-segment-start calculation
         );
 
         brolls.forEach(b => {
-          brollImages[b.order] = b.imagePath;
+          // mediaPaths is an array of clip paths (may be 1 or more)
+          brollImages[b.order] = b.mediaPaths || [b.imagePath];
         });
       }
 

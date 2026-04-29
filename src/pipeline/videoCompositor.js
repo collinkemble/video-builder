@@ -55,8 +55,10 @@ async function composeVideo({
 
   // Verify all source files exist
   for (const entry of timelineEntries) {
-    if (!fs.existsSync(entry.sourcePath)) {
-      throw new Error(`Media file missing for segment ${entry.order}: ${entry.sourcePath}`);
+    for (const sp of entry.sourcePaths) {
+      if (!fs.existsSync(sp)) {
+        throw new Error(`Media file missing for segment ${entry.order}: ${sp}`);
+      }
     }
   }
 
@@ -74,12 +76,17 @@ async function composeVideo({
     const entry = timelineEntries[i];
     const clipPath = path.join(workDir, `clip_${String(i).padStart(3, '0')}.mp4`);
 
-    console.log(`[Compositor] Normalizing clip ${i}: type=${entry.type}, duration=${entry.duration}s, isVideo=${entry.isVideo}`);
+    console.log(`[Compositor] Normalizing clip ${i}: type=${entry.type}, duration=${entry.duration}s, isVideo=${entry.isVideo}, clips=${entry.sourcePaths.length}`);
 
-    if (entry.isVideo) {
-      // Video clip — scale/pad to 1920x1080 and adjust to target duration
-      const isBrollEntry = entry.type === 'intro' || entry.type === 'transition' || entry.type === 'outro';
-      await normalizeVideoClip(entry.sourcePath, clipPath, entry.duration, isBrollEntry);
+    const isBrollEntry = entry.type === 'intro' || entry.type === 'transition' || entry.type === 'outro'
+                      || entry.type === 'broll';
+
+    if (entry.isVideo && isBrollEntry && entry.sourcePaths.length > 1) {
+      // Multiple b-roll video clips — concatenate them then trim to target duration
+      await concatBrollClips(entry.sourcePaths, clipPath, entry.duration, workDir, i);
+    } else if (entry.isVideo) {
+      // Single video clip — scale/pad to 1920x1080 and trim to target duration
+      await normalizeVideoClip(entry.sourcePath, clipPath, entry.duration, false);
     } else {
       // B-roll still image — create a video of the image held for the duration
       await imageToVideo(entry.sourcePath, clipPath, entry.duration);
@@ -180,21 +187,27 @@ function buildTimeline(segments, timestamps, sceneImages, brollImages) {
   const entries = [];
 
   for (const seg of segments) {
-    let sourcePath = null;
+    // B-roll media may be an array of paths (multiple clips) or a single path
+    let sourcePaths = null;
     let isVideo = false;
 
     // Scene capture (now video clips)
     if (seg.visualType === 'scene_capture' && seg.sceneId && sceneImages[seg.sceneId]) {
-      sourcePath = sceneImages[seg.sceneId];
-      isVideo = sourcePath.endsWith('.mp4');
+      sourcePaths = [sceneImages[seg.sceneId]];
+      isVideo = sceneImages[seg.sceneId].endsWith('.mp4');
     }
-    // B-roll (still images)
+    // B-roll — may be a single path (string) or array of paths
     else if (brollImages[seg.order]) {
-      sourcePath = brollImages[seg.order];
-      isVideo = sourcePath.endsWith('.mp4');
+      const brollEntry = brollImages[seg.order];
+      if (Array.isArray(brollEntry)) {
+        sourcePaths = brollEntry;
+      } else {
+        sourcePaths = [brollEntry];
+      }
+      isVideo = sourcePaths[0].endsWith('.mp4');
     }
 
-    if (!sourcePath) {
+    if (!sourcePaths || sourcePaths.length === 0) {
       console.warn(`No media for segment ${seg.order} (type: ${seg.type}). Skipping.`);
       continue;
     }
@@ -216,7 +229,7 @@ function buildTimeline(segments, timestamps, sceneImages, brollImages) {
         duration = nextTs.startTime - ts.startTime;
         console.log(`[Compositor] Segment ${seg.order}: audio ${ts.startTime.toFixed(1)}s-${ts.endTime.toFixed(1)}s, next starts ${nextTs.startTime.toFixed(1)}s → visual ${duration.toFixed(1)}s`);
       } else {
-        // Last segment with timestamps — use its own narration duration + padding
+        // Last segment with timestamps — use its own narration duration
         duration = ts.endTime - ts.startTime;
         console.log(`[Compositor] Segment ${seg.order} (last): audio ${ts.startTime.toFixed(1)}s-${ts.endTime.toFixed(1)}s → visual ${duration.toFixed(1)}s`);
       }
@@ -226,19 +239,13 @@ function buildTimeline(segments, timestamps, sceneImages, brollImages) {
 
     if (duration < 1) duration = 1;
 
-    // B-roll segments (intro/transition/outro) should never be shorter than 8 seconds.
-    // Short narration (3-4s) shouldn't mean a 3-second visual — it looks jarring.
-    // This applies to BOTH video clips AND still images (imageToVideo).
-    const isBroll = seg.type === 'intro' || seg.type === 'transition' || seg.type === 'outro'
-                 || seg.visualType === 'broll';
-    if (isBroll && duration < 8) {
-      console.log(`[Compositor] Extending b-roll segment ${seg.order} (${seg.type}) from ${duration.toFixed(1)}s to 8s minimum`);
-      duration = 8;
-    }
+    // NOTE: No b-roll minimum override — visual duration MUST match audio timeline
+    // to prevent scenes from drifting ahead of their narration.
 
     entries.push({
       order: seg.order,
-      sourcePath,
+      sourcePaths,  // Array of paths (multiple clips for b-roll, single for scene capture)
+      sourcePath: sourcePaths[0],  // Backward compat — primary clip
       isVideo,
       duration,
       type: seg.type,
@@ -258,60 +265,36 @@ function buildTimeline(segments, timestamps, sceneImages, brollImages) {
 /**
  * Normalize a video clip to 1920x1080, target duration.
  *
- * For B-ROLL clips (isBroll=true):
- *   Short clip → gentle slow-motion to fill (8s clip → 12s = 1.5x, barely noticeable)
- *   This avoids both looping (obvious repetition) and frame-freezing.
- *
- * For SCENE CAPTURE clips (isBroll=false):
+ * For SCENE CAPTURE clips:
  *   If clip is LONGER than target → speed up to fit all content in the time window.
  *     e.g. 45s capture in a 21s slot = 2.1x speed (shows entire conversation).
  *     Capped at 3x to stay watchable.
  *   If clip is shorter/equal → play at normal speed, trim to target.
+ *
+ * No slow-motion is applied. B-roll clips that need more time use multiple
+ * clips (generated by the b-roll generator) instead of slowing down.
  */
-async function normalizeVideoClip(inputPath, outputPath, targetDuration, isBroll = false) {
-  if (isBroll) {
-    // B-roll: apply slow-motion to stretch the 8s Veo clip to fill the segment
-    const VEO_CLIP_DURATION = 8;
-    const factor = Math.min(2.5, targetDuration / VEO_CLIP_DURATION);
-
-    if (factor > 1.05) {
-      console.log(`[Compositor] Slowing b-roll clip ${(1/factor*100).toFixed(0)}% speed to fill ${targetDuration}s (factor ${factor.toFixed(2)}x)`);
-      return runFfmpeg([
-        '-y',
-        '-i', inputPath,
-        '-vf', `setpts=${factor.toFixed(4)}*PTS,scale=${WIDTH}:${HEIGHT}:force_original_aspect_ratio=decrease,pad=${WIDTH}:${HEIGHT}:(ow-iw)/2:(oh-ih)/2:black,format=yuv420p`,
-        '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '23',
-        '-t', String(targetDuration),
-        '-r', String(FPS),
-        '-pix_fmt', 'yuv420p',
-        '-an',
-        '-movflags', '+faststart',
-        outputPath,
-      ], `normalizing b-roll (slow-motion ${factor.toFixed(1)}x)`);
-    }
-  } else {
-    // Scene capture: if the recorded clip is longer than the narration window,
-    // speed it up so the entire interaction (all clicks, responses) fits.
-    const clipDuration = await getVideoDuration(inputPath);
-    if (clipDuration > targetDuration * 1.1) {
-      // Speed up factor — e.g. 45s clip in 21s slot = 0.467 PTS multiplier (2.14x speed)
-      const speedup = clipDuration / targetDuration;
-      const cappedSpeedup = Math.min(speedup, 3.0); // cap at 3x to stay watchable
-      const ptsFactor = 1 / cappedSpeedup;
-      console.log(`[Compositor] Speeding up scene capture ${cappedSpeedup.toFixed(2)}x to fit ${clipDuration.toFixed(1)}s clip into ${targetDuration.toFixed(1)}s`);
-      return runFfmpeg([
-        '-y',
-        '-i', inputPath,
-        '-vf', `setpts=${ptsFactor.toFixed(4)}*PTS,scale=${WIDTH}:${HEIGHT}:force_original_aspect_ratio=decrease,pad=${WIDTH}:${HEIGHT}:(ow-iw)/2:(oh-ih)/2:black,format=yuv420p`,
-        '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '23',
-        '-t', String(targetDuration),
-        '-r', String(FPS),
-        '-pix_fmt', 'yuv420p',
-        '-an',
-        '-movflags', '+faststart',
-        outputPath,
-      ], `normalizing scene (${cappedSpeedup.toFixed(1)}x speed-up)`);
-    }
+async function normalizeVideoClip(inputPath, outputPath, targetDuration, _unused = false) {
+  // Scene capture: if the recorded clip is longer than the narration window,
+  // speed it up so the entire interaction (all clicks, responses) fits.
+  const clipDuration = await getVideoDuration(inputPath);
+  if (clipDuration > targetDuration * 1.1) {
+    const speedup = clipDuration / targetDuration;
+    const cappedSpeedup = Math.min(speedup, 3.0); // cap at 3x to stay watchable
+    const ptsFactor = 1 / cappedSpeedup;
+    console.log(`[Compositor] Speeding up clip ${cappedSpeedup.toFixed(2)}x to fit ${clipDuration.toFixed(1)}s into ${targetDuration.toFixed(1)}s`);
+    return runFfmpeg([
+      '-y',
+      '-i', inputPath,
+      '-vf', `setpts=${ptsFactor.toFixed(4)}*PTS,scale=${WIDTH}:${HEIGHT}:force_original_aspect_ratio=decrease,pad=${WIDTH}:${HEIGHT}:(ow-iw)/2:(oh-ih)/2:black,format=yuv420p`,
+      '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '23',
+      '-t', String(targetDuration),
+      '-r', String(FPS),
+      '-pix_fmt', 'yuv420p',
+      '-an',
+      '-movflags', '+faststart',
+      outputPath,
+    ], `normalizing clip (${cappedSpeedup.toFixed(1)}x speed-up)`);
   }
 
   // Default: trim to target at normal speed
@@ -327,6 +310,55 @@ async function normalizeVideoClip(inputPath, outputPath, targetDuration, isBroll
     '-movflags', '+faststart',
     outputPath,
   ], `normalizing clip (trim at 1x speed)`);
+}
+
+/**
+ * Concatenate multiple b-roll video clips into a single clip, trimmed to target duration.
+ * Used when a b-roll segment needs more than 8s and multiple Veo clips were generated.
+ */
+async function concatBrollClips(sourcePaths, outputPath, targetDuration, workDir, index) {
+  // First normalize each individual clip to 1920x1080
+  const normalizedParts = [];
+  for (let j = 0; j < sourcePaths.length; j++) {
+    const partPath = path.join(workDir, `broll_part_${index}_${j}.mp4`);
+    await runFfmpeg([
+      '-y',
+      '-i', sourcePaths[j],
+      '-vf', `scale=${WIDTH}:${HEIGHT}:force_original_aspect_ratio=decrease,pad=${WIDTH}:${HEIGHT}:(ow-iw)/2:(oh-ih)/2:black,format=yuv420p`,
+      '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '23',
+      '-r', String(FPS),
+      '-pix_fmt', 'yuv420p',
+      '-an',
+      '-movflags', '+faststart',
+      partPath,
+    ], `normalizing b-roll part ${j}`);
+    normalizedParts.push(partPath);
+  }
+
+  // Build concat file
+  const concatFile = path.join(workDir, `broll_concat_${index}.txt`);
+  const concatContent = normalizedParts.map(p => `file '${p.replace(/'/g, "'\\''")}'`).join('\n');
+  fs.writeFileSync(concatFile, concatContent);
+
+  // Concatenate and trim to target duration
+  const concatPath = path.join(workDir, `broll_joined_${index}.mp4`);
+  await runFfmpeg([
+    '-y',
+    '-f', 'concat', '-safe', '0', '-i', concatFile,
+    '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '23',
+    '-t', String(targetDuration),
+    '-r', String(FPS),
+    '-pix_fmt', 'yuv420p',
+    '-an',
+    '-movflags', '+faststart',
+    outputPath,
+  ], `concatenating ${sourcePaths.length} b-roll clips (${targetDuration}s)`);
+
+  // Clean up intermediate files
+  for (const p of normalizedParts) safeDelete(p);
+  safeDelete(concatFile);
+
+  console.log(`[Compositor] Concatenated ${sourcePaths.length} b-roll clips → ${targetDuration}s`);
 }
 
 /**

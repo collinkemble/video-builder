@@ -358,50 +358,119 @@ async function generateBroll({ description, brandName, outputDir, segmentType = 
 }
 
 /**
+ * Calculate how many 8s Veo clips a b-roll segment needs based on voiceover timestamps.
+ * Uses the same logic as the compositor: duration = next segment's startTime - this segment's startTime.
+ *
+ * @param {object} seg - The b-roll segment
+ * @param {object} timestamps - Voiceover timestamps { segments: [{order, startTime, endTime}] }
+ * @param {Array} allSegments - All script segments (for next-segment lookup)
+ * @returns {number} Number of 8s clips needed (minimum 1)
+ */
+function calcClipsNeeded(seg, timestamps, allSegments) {
+  const VEO_CLIP_DURATION = 8;
+
+  if (!timestamps || !timestamps.segments || !allSegments) return 1;
+
+  const tsMap = {};
+  timestamps.segments.forEach(ts => { tsMap[ts.order] = ts; });
+
+  const orderedTs = timestamps.segments.slice().sort((a, b) => a.order - b.order);
+  const tsIndexMap = {};
+  orderedTs.forEach((ts, idx) => { tsIndexMap[ts.order] = idx; });
+
+  const ts = tsMap[seg.order];
+  if (!ts) return 1;
+
+  const tsIdx = tsIndexMap[seg.order];
+  const nextTs = (tsIdx !== undefined && tsIdx < orderedTs.length - 1)
+    ? orderedTs[tsIdx + 1]
+    : null;
+
+  let duration;
+  if (nextTs) {
+    duration = nextTs.startTime - ts.startTime;
+  } else {
+    duration = ts.endTime - ts.startTime;
+  }
+
+  if (duration <= VEO_CLIP_DURATION) return 1;
+
+  const clipsNeeded = Math.ceil(duration / VEO_CLIP_DURATION);
+  console.log(`[B-Roll] Segment ${seg.order} needs ${duration.toFixed(1)}s → ${clipsNeeded} clips (${clipsNeeded * VEO_CLIP_DURATION}s of footage)`);
+  return clipsNeeded;
+}
+
+/**
  * Generate all b-roll assets for a video.
  * @param {Array} segments - B-roll segments from script
  * @param {string} brandName
  * @param {string} outputDir
  * @param {function} onProgress
  * @param {string} personaImageUrl - Optional persona image for character consistency across clips
- * @returns {Promise<Array>} Array of { order, imagePath }
+ * @param {object} timestamps - Voiceover timestamps for duration calculation
+ * @param {Array} allSegments - All script segments for next-segment lookup
+ * @returns {Promise<Array>} Array of { order, mediaPaths, imagePath }
  */
-async function generateAllBroll(segments, brandName, outputDir, onProgress, personaImageUrl = null) {
+async function generateAllBroll(segments, brandName, outputDir, onProgress, personaImageUrl = null, timestamps = null, allSegments = null) {
   let videoCount = 0;
   let imageCount = 0;
 
-  // Launch ALL b-roll generations in parallel — Veo clips take ~60-70s each,
-  // so parallel execution cuts total time from ~6min to ~1.5min for 5 clips.
-  console.log(`[B-Roll] Launching ${segments.length} generations in parallel...${personaImageUrl ? ' (with persona reference image for character consistency)' : ''}`);
+  // Calculate total clips needed across all segments
+  const segmentClipCounts = segments.map(seg => ({
+    seg,
+    clipsNeeded: calcClipsNeeded(seg, timestamps, allSegments),
+  }));
+
+  const totalClips = segmentClipCounts.reduce((sum, s) => sum + s.clipsNeeded, 0);
+
+  console.log(`[B-Roll] Launching ${totalClips} clip generations for ${segments.length} segments in parallel...${personaImageUrl ? ' (with persona reference image)' : ''}`);
   let completed = 0;
 
-  const promises = segments.map((seg, i) => {
-    console.log(`[B-Roll] Starting ${i + 1}/${segments.length} (${seg.type || 'broll'}): ${seg.brollDescription?.substring(0, 50)}...`);
+  // Launch ALL clip generations in parallel
+  const promises = segmentClipCounts.map(({ seg, clipsNeeded }, i) => {
+    console.log(`[B-Roll] Segment ${i + 1}/${segments.length} (${seg.type || 'broll'}): ${clipsNeeded} clip(s) — "${seg.brollDescription?.substring(0, 50)}..."`);
 
-    return generateBroll({
-      description: seg.brollDescription || 'Professional lifestyle image',
-      brandName,
-      outputDir,
-      segmentType: seg.type || '',
-      segmentChannel: seg.channel || '',
-      personaImageUrl,
-    }).then(mediaPath => {
-      completed++;
-      if (mediaPath.endsWith('.mp4')) {
-        videoCount++;
-        console.log(`[B-Roll] ${completed}/${segments.length} done: VIDEO clip → ${path.basename(mediaPath)}`);
-      } else {
-        imageCount++;
-        console.log(`[B-Roll] ${completed}/${segments.length} done: still IMAGE → ${path.basename(mediaPath)}`);
+    // Generate clipsNeeded clips for this segment, all in parallel
+    const clipPromises = [];
+    for (let c = 0; c < clipsNeeded; c++) {
+      // Slightly vary the description for additional clips to get visual variety
+      let desc = seg.brollDescription || 'Professional lifestyle image';
+      if (c > 0) {
+        desc = `${desc} — different angle, continued shot ${c + 1}`;
       }
-      if (onProgress) onProgress(completed, segments.length);
-      return { order: seg.order, imagePath: mediaPath };
-    });
+
+      clipPromises.push(
+        generateBroll({
+          description: desc,
+          brandName,
+          outputDir,
+          segmentType: seg.type || '',
+          segmentChannel: seg.channel || '',
+          personaImageUrl,
+        }).then(mediaPath => {
+          completed++;
+          if (mediaPath.endsWith('.mp4')) {
+            videoCount++;
+          } else {
+            imageCount++;
+          }
+          console.log(`[B-Roll] ${completed}/${totalClips} done: ${mediaPath.endsWith('.mp4') ? 'VIDEO' : 'IMAGE'} → ${path.basename(mediaPath)}`);
+          if (onProgress) onProgress(Math.min(completed, totalClips), totalClips);
+          return mediaPath;
+        })
+      );
+    }
+
+    return Promise.all(clipPromises).then(mediaPaths => ({
+      order: seg.order,
+      mediaPaths,  // Array of all clip paths for this segment
+      imagePath: mediaPaths[0],  // Backward compat — primary clip
+    }));
   });
 
   const results = await Promise.all(promises);
 
-  console.log(`[B-Roll] Complete: ${videoCount} video clips, ${imageCount} still images out of ${segments.length} segments`);
+  console.log(`[B-Roll] Complete: ${videoCount} video clips, ${imageCount} still images out of ${totalClips} total clips for ${segments.length} segments`);
   return results;
 }
 

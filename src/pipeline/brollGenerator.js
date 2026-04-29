@@ -149,6 +149,8 @@ async function generateBrollVideo({ description, brandName, outputDir, segmentTy
             },
             referenceType: 'ASSET',
           }];
+          // Veo does not allow personGeneration: 'allow_all' when referenceImages are present
+          delete veoConfig.personGeneration;
           console.log(`[B-Roll Video] ✅ Persona reference image attached (${(imgBuffer.length / 1024).toFixed(0)}KB, type=${mimeType}, referenceType=ASSET, base64Length=${base64Data.length})`);
         } else {
           console.warn(`[B-Roll Video] ❌ Persona image download failed (HTTP ${imgResp.status}). Proceeding without reference.`);

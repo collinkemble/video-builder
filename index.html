@@ -1799,7 +1799,15 @@ function renderPersonaImage(video) {
     // Show the image
     emptyEl.classList.add('hidden');
     previewEl.classList.remove('hidden');
-    document.getElementById('persona-img').src = imageUrl;
+    const imgEl = document.getElementById('persona-img');
+    imgEl.onerror = () => {
+      // Image URL is broken (404) — show empty state so user can regenerate
+      console.warn('[Persona] Image failed to load (404?), showing empty state:', imageUrl);
+      emptyEl.classList.remove('hidden');
+      previewEl.classList.add('hidden');
+      actionsEl.innerHTML = '';
+    };
+    imgEl.src = imageUrl;
     document.getElementById('persona-preview-name').textContent = personaName || 'Persona';
     document.getElementById('persona-preview-desc').textContent = personaDesc || '';
 

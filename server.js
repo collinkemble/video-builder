@@ -479,6 +479,24 @@ app.get('/api/videos/:id', async (req, res) => {
       }
     });
 
+    // If persona image URL exists, verify it's accessible; if not, try presigned URL fallback
+    if (video.persona_image_url && video.persona_image_url.includes('r2.dev/')) {
+      try {
+        const headResp = await fetch(video.persona_image_url, { method: 'HEAD' });
+        if (!headResp.ok) {
+          console.log(`[API] Persona image 404 at public URL, trying presigned fallback...`);
+          const { getPresignedUrl } = require('./src/utils/r2');
+          const urlObj = new URL(video.persona_image_url);
+          const r2Key = urlObj.pathname.replace(/^\//, '');
+          video.persona_image_url = await getPresignedUrl(r2Key, 3600);
+          console.log(`[API] Persona image presigned URL generated`);
+        }
+      } catch (e) {
+        // If verification fails, just pass through the original URL
+        console.warn(`[API] Persona image verification failed: ${e.message}`);
+      }
+    }
+
     res.json({ video });
   } catch (err) {
     console.error('Failed to get video:', err);

@@ -169,6 +169,11 @@ async function deleteVideoAssets(userId, videoId) {
     const objects = listResult.Contents || [];
 
     for (const obj of objects) {
+      // Skip persona images — they should persist across regenerations
+      if (obj.Key.includes('/persona_')) {
+        console.log(`[R2] Skipping persona image: ${obj.Key}`);
+        continue;
+      }
       try {
         await client.send(new DeleteObjectCommand({
           Bucket: BUCKET,

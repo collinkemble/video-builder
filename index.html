@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- v97-persona-fix -->
+<!-- v98-persona-mount-fix -->
 <html lang="en">
 <head>
   <meta charset="UTF-8">
@@ -1745,26 +1745,31 @@ function renderPersonaImage(video, state) {
   // Find or create mount point — handles both new HTML (persona-image-mount) and old cached HTML (persona-image-card)
   let mount = document.getElementById('persona-image-mount') || document.getElementById('persona-image-card');
   if (!mount) {
-    // Neither mount point exists (extremely stale cache) — create one dynamically
+    // Neither mount point exists (stale CDN cache) — create one dynamically
     console.log('[Persona] No mount point in HTML — creating one dynamically');
     mount = document.createElement('div');
     mount.id = 'persona-image-mount';
-    // Insert before the Scenes card (first .mb-6 sibling after settings)
-    const detailContent = document.getElementById('detail-content');
-    if (detailContent) {
-      const scenesCard = detailContent.querySelectorAll('.mb-6');
-      // Insert before the first .mb-6 card that contains "Scenes" text, or just prepend
+    // Insert before the Scenes card inside the video-detail page
+    const detailPage = document.getElementById('video-detail');
+    if (detailPage) {
+      const allCards = detailPage.querySelectorAll('.mb-6');
       let insertBefore = null;
-      for (const card of scenesCard) {
+      for (const card of allCards) {
         if (card.textContent.includes('Scenes')) { insertBefore = card; break; }
       }
       if (insertBefore) {
         insertBefore.parentElement.insertBefore(mount, insertBefore);
       } else {
-        detailContent.appendChild(mount);
+        // Fallback: insert after the settings card (save-settings-bar parent)
+        const settingsBar = document.getElementById('save-settings-bar');
+        if (settingsBar && settingsBar.parentElement && settingsBar.parentElement.nextSibling) {
+          settingsBar.parentElement.parentElement.insertBefore(mount, settingsBar.parentElement.nextSibling);
+        } else {
+          detailPage.appendChild(mount);
+        }
       }
     } else {
-      console.warn('[Persona] Cannot find detail-content container');
+      console.warn('[Persona] Cannot find video-detail container');
       return;
     }
   }

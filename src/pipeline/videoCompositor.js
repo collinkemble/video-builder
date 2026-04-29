@@ -167,6 +167,16 @@ function buildTimeline(segments, timestamps, sceneImages, brollImages) {
     timestamps.segments.forEach(ts => { tsMap[ts.order] = ts; });
   }
 
+  // Build an ordered list of timestamp entries so we can look up "next segment start time"
+  // to include inter-segment silence gaps in the visual duration.
+  const orderedTimestamps = timestamps && timestamps.segments
+    ? timestamps.segments.slice().sort((a, b) => a.order - b.order)
+    : [];
+
+  // Map from order → index in orderedTimestamps for quick lookup
+  const tsIndexMap = {};
+  orderedTimestamps.forEach((ts, idx) => { tsIndexMap[ts.order] = idx; });
+
   const entries = [];
 
   for (const seg of segments) {
@@ -190,7 +200,30 @@ function buildTimeline(segments, timestamps, sceneImages, brollImages) {
     }
 
     const ts = tsMap[seg.order];
-    let duration = ts ? (ts.endTime - ts.startTime) : (seg.estimatedDuration || 10);
+    let duration;
+
+    if (ts) {
+      // Use the gap from this segment's startTime to the NEXT segment's startTime.
+      // This ensures the visual holds through any silence between narration segments,
+      // preventing the scene from switching before the next narration begins.
+      const tsIdx = tsIndexMap[seg.order];
+      const nextTs = (tsIdx !== undefined && tsIdx < orderedTimestamps.length - 1)
+        ? orderedTimestamps[tsIdx + 1]
+        : null;
+
+      if (nextTs) {
+        // Duration = time from this segment's audio start to the next segment's audio start
+        duration = nextTs.startTime - ts.startTime;
+        console.log(`[Compositor] Segment ${seg.order}: audio ${ts.startTime.toFixed(1)}s-${ts.endTime.toFixed(1)}s, next starts ${nextTs.startTime.toFixed(1)}s → visual ${duration.toFixed(1)}s`);
+      } else {
+        // Last segment with timestamps — use its own narration duration + padding
+        duration = ts.endTime - ts.startTime;
+        console.log(`[Compositor] Segment ${seg.order} (last): audio ${ts.startTime.toFixed(1)}s-${ts.endTime.toFixed(1)}s → visual ${duration.toFixed(1)}s`);
+      }
+    } else {
+      duration = seg.estimatedDuration || 10;
+    }
+
     if (duration < 1) duration = 1;
 
     // B-roll segments (intro/transition/outro) should never be shorter than 8 seconds.

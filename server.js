@@ -1336,6 +1336,9 @@ app.post('/api/videos/:id/share/confirm', async (req, res) => {
 
 // SPA catch-all — serve index.html for any non-API route
 app.get('/{*splat}', (req, res) => {
+  res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
   res.sendFile(path.join(__dirname, 'index.html'));
 });
 

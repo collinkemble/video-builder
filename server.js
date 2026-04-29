@@ -668,7 +668,12 @@ app.post('/api/videos/:id/generate-script', async (req, res) => {
 
     const video = rows[0];
     const sceneData = typeof video.scene_data === 'string' ? JSON.parse(video.scene_data || '{}') : (video.scene_data || {});
-    const scenes = sceneData.scenes || [];
+    // Sort scenes by ID ascending — PocketSIC IDs are auto-increment and represent journey order
+    const scenes = (sceneData.scenes || []).slice().sort((a, b) => {
+      const idA = a.id || a.sceneId || 0;
+      const idB = b.id || b.sceneId || 0;
+      return idA - idB;
+    });
 
     if (scenes.length === 0) {
       return res.status(400).json({ error: 'No scenes found. Import a PocketSIC project first.' });

@@ -1742,8 +1742,32 @@ function renderPersonaImage(video, state) {
   const personaDesc = sceneData.persona_description || '';
   const imageUrl = video.persona_image_url;
 
-  const mount = document.getElementById('persona-image-mount');
-  if (!mount) { console.warn('[Persona] No mount point found'); return; }
+  // Find or create mount point — handles both new HTML (persona-image-mount) and old cached HTML (persona-image-card)
+  let mount = document.getElementById('persona-image-mount') || document.getElementById('persona-image-card');
+  if (!mount) {
+    // Neither mount point exists (extremely stale cache) — create one dynamically
+    console.log('[Persona] No mount point in HTML — creating one dynamically');
+    mount = document.createElement('div');
+    mount.id = 'persona-image-mount';
+    // Insert before the Scenes card (first .mb-6 sibling after settings)
+    const detailContent = document.getElementById('detail-content');
+    if (detailContent) {
+      const scenesCard = detailContent.querySelectorAll('.mb-6');
+      // Insert before the first .mb-6 card that contains "Scenes" text, or just prepend
+      let insertBefore = null;
+      for (const card of scenesCard) {
+        if (card.textContent.includes('Scenes')) { insertBefore = card; break; }
+      }
+      if (insertBefore) {
+        insertBefore.parentElement.insertBefore(mount, insertBefore);
+      } else {
+        detailContent.appendChild(mount);
+      }
+    } else {
+      console.warn('[Persona] Cannot find detail-content container');
+      return;
+    }
+  }
 
   let contentHTML = '';
 

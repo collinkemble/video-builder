@@ -56,6 +56,10 @@ app.use(express.static(path.join(__dirname), {
   setHeaders: (res, filePath) => {
     if (filePath.endsWith('.html')) {
       res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+      res.setHeader('Pragma', 'no-cache');
+      res.setHeader('Surrogate-Control', 'no-store');
+      res.setHeader('CDN-Cache-Control', 'no-store');
+      res.setHeader('Cloudflare-CDN-Cache-Control', 'no-store');
     }
   },
 }));
@@ -1339,6 +1343,9 @@ app.get('/{*splat}', (req, res) => {
   res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
   res.setHeader('Pragma', 'no-cache');
   res.setHeader('Expires', '0');
+  res.setHeader('Surrogate-Control', 'no-store');
+  res.setHeader('CDN-Cache-Control', 'no-store');
+  res.setHeader('Cloudflare-CDN-Cache-Control', 'no-store');
   res.sendFile(path.join(__dirname, 'index.html'));
 });
 

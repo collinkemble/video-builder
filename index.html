@@ -1768,15 +1768,29 @@ function renderBrandLogo(video) {
 
   let mount = document.getElementById('brand-logo-mount');
   if (!mount) {
+    // Mount point missing (stale CDN cache) — create one dynamically
+    console.log('[BrandLogo] No mount point in HTML — creating one dynamically');
     mount = document.createElement('div');
     mount.id = 'brand-logo-mount';
     const detailPage = document.getElementById('video-detail');
     if (detailPage) {
-      const personaMount = document.getElementById('persona-image-mount');
-      if (personaMount) {
-        personaMount.parentElement.insertBefore(mount, personaMount);
+      // Insert after the settings card (before persona / scenes)
+      const settingsBar = document.getElementById('save-settings-bar');
+      if (settingsBar && settingsBar.closest('.mb-6')) {
+        const settingsCard = settingsBar.closest('.mb-6');
+        settingsCard.parentElement.insertBefore(mount, settingsCard.nextSibling);
       } else {
-        detailPage.appendChild(mount);
+        // Fallback: insert before the scenes card
+        const allCards = detailPage.querySelectorAll('.mb-6');
+        let insertBefore = null;
+        for (const card of allCards) {
+          if (card.textContent.includes('Scenes')) { insertBefore = card; break; }
+        }
+        if (insertBefore) {
+          insertBefore.parentElement.insertBefore(mount, insertBefore);
+        } else {
+          detailPage.appendChild(mount);
+        }
       }
     } else { return; }
   }
@@ -1944,28 +1958,26 @@ function renderPersonaImage(video, state) {
   const personaDesc = sceneData.persona_description || '';
   const imageUrl = video.persona_image_url;
 
-  // Find or create mount point — handles both new HTML (persona-image-mount) and old cached HTML (persona-image-card)
+  // Find or create mount point — handles stale CDN cache
   let mount = document.getElementById('persona-image-mount') || document.getElementById('persona-image-card');
   if (!mount) {
-    // Neither mount point exists (stale CDN cache) — create one dynamically
     console.log('[Persona] No mount point in HTML — creating one dynamically');
     mount = document.createElement('div');
     mount.id = 'persona-image-mount';
-    // Insert before the Scenes card inside the video-detail page
     const detailPage = document.getElementById('video-detail');
     if (detailPage) {
-      const allCards = detailPage.querySelectorAll('.mb-6');
-      let insertBefore = null;
-      for (const card of allCards) {
-        if (card.textContent.includes('Scenes')) { insertBefore = card; break; }
-      }
-      if (insertBefore) {
-        insertBefore.parentElement.insertBefore(mount, insertBefore);
+      // Insert after the brand-logo-mount if it exists, otherwise before scenes
+      const logoMount = document.getElementById('brand-logo-mount');
+      if (logoMount && logoMount.nextSibling) {
+        logoMount.parentElement.insertBefore(mount, logoMount.nextSibling);
       } else {
-        // Fallback: insert after the settings card (save-settings-bar parent)
-        const settingsBar = document.getElementById('save-settings-bar');
-        if (settingsBar && settingsBar.parentElement && settingsBar.parentElement.nextSibling) {
-          settingsBar.parentElement.parentElement.insertBefore(mount, settingsBar.parentElement.nextSibling);
+        const allCards = detailPage.querySelectorAll('.mb-6');
+        let insertBefore = null;
+        for (const card of allCards) {
+          if (card.textContent.includes('Scenes')) { insertBefore = card; break; }
+        }
+        if (insertBefore) {
+          insertBefore.parentElement.insertBefore(mount, insertBefore);
         } else {
           detailPage.appendChild(mount);
         }
@@ -1989,46 +2001,51 @@ function renderPersonaImage(video, state) {
       </div>`;
   } else if (imageUrl) {
     contentHTML = `
-      <div class="flex items-start gap-5">
-        <div style="position: relative; flex-shrink: 0;">
-          <img id="persona-img" src="${imageUrl}" alt="Persona" style="width: 120px; height: 120px; border-radius: 50%; object-fit: cover; border: 3px solid #E8F4FD; box-shadow: 0 2px 8px rgba(0,0,0,0.1);"
-               onerror="this.parentElement.closest('#persona-image-mount').querySelector('.persona-fallback-empty').style.display='block'; this.parentElement.closest('.flex').style.display='none';">
+      <div class="flex items-center gap-4 mb-3">
+        <div style="width: 80px; height: 80px; border-radius: 50%; background: white; border: 2px solid #E8F4FD; display: flex; align-items: center; justify-content: center; overflow: hidden; flex-shrink: 0; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
+          <img id="persona-img" src="${imageUrl}" alt="Persona" style="width: 80px; height: 80px; border-radius: 50%; object-fit: cover;"
+               onerror="this.parentElement.innerHTML='<span style=\\'font-size:28px;\\'>👤</span>';">
         </div>
-        <div style="flex: 1; padding-top: 8px;">
-          <p style="font-weight: 700; font-size: 16px; color: #032D60; margin-bottom: 4px;">${personaName || 'Persona'}</p>
-          <p style="font-size: 13px; color: #666; line-height: 1.5; max-height: 60px; overflow: hidden; text-overflow: ellipsis;">${personaDesc || ''}</p>
-          <p style="font-size: 11px; color: #aaa; margin-top: 8px;">This image is used as a reference for consistent character appearance in b-roll video clips.</p>
-        </div>
-      </div>
-      <div class="persona-fallback-empty" style="display: none; text-align: center; padding: 32px 20px;">
-        <div style="width: 80px; height: 80px; border-radius: 50%; background: linear-gradient(135deg, #E8F4FD, #D1E9F6); display: flex; align-items: center; justify-content: center; margin: 0 auto 16px; font-size: 32px;">👤</div>
-        <p style="color: #666; font-size: 14px; margin-bottom: 4px;">Image failed to load</p>
-        <p style="color: #aaa; font-size: 12px; margin-bottom: 16px;">Generate a new AI image or upload your own.</p>
-        <div class="flex items-center justify-center gap-2">
-          <button onclick="generatePersonaImage()" class="cursor-pointer" style="background: #7C3AED; color: white; font-size: 13px; font-weight: 600; padding: 8px 18px; border-radius: 8px; border: none;">✨ Generate with AI</button>
-          <label class="cursor-pointer" style="background: white; color: #374151; font-size: 13px; font-weight: 600; padding: 8px 18px; border-radius: 8px; border: 1px solid #d1d5db;">📁 Upload Image<input type="file" accept="image/*" onchange="uploadPersonaImage(event)" style="display: none;"></label>
+        <div style="flex: 1; min-width: 0;">
+          <p style="font-weight: 600; font-size: 14px; color: #032D60; margin-bottom: 2px;">${personaName || 'Persona'}</p>
+          <p style="font-size: 11px; color: #888; line-height: 1.4;">This image is used as a reference for consistent character appearance in b-roll video clips.</p>
         </div>
       </div>`;
   } else {
     contentHTML = `
-      <div style="text-align: center; padding: 32px 20px;">
-        <div style="width: 80px; height: 80px; border-radius: 50%; background: linear-gradient(135deg, #E8F4FD, #D1E9F6); display: flex; align-items: center; justify-content: center; margin: 0 auto 16px; font-size: 32px;">👤</div>
-        <p style="color: #666; font-size: 14px; margin-bottom: 4px;">No persona image yet</p>
-        <p style="color: #aaa; font-size: 12px; margin-bottom: 16px;">Generate an AI image or upload your own. This image is used as a reference for consistent character appearance across all b-roll video clips.</p>
-        <div class="flex items-center justify-center gap-2">
-          <button onclick="generatePersonaImage()" id="persona-gen-btn" class="cursor-pointer" style="background: #7C3AED; color: white; font-size: 13px; font-weight: 600; padding: 8px 18px; border-radius: 8px; border: none;">✨ Generate with AI</button>
-          <label class="cursor-pointer" style="background: white; color: #374151; font-size: 13px; font-weight: 600; padding: 8px 18px; border-radius: 8px; border: 1px solid #d1d5db;">📁 Upload Image<input type="file" accept="image/*" onchange="uploadPersonaImage(event)" style="display: none;"></label>
+      <div class="flex items-center gap-4 mb-3">
+        <div style="width: 80px; height: 80px; border-radius: 50%; background: #F9FAFB; border: 2px dashed #D1D5DB; display: flex; align-items: center; justify-content: center; flex-shrink: 0;">
+          <span style="font-size: 28px;">👤</span>
+        </div>
+        <div style="flex: 1; min-width: 0;">
+          <p style="font-weight: 600; font-size: 14px; color: #032D60; margin-bottom: 2px;">No Persona Image</p>
+          <p style="font-size: 11px; color: #888; line-height: 1.4;">Add a persona image for consistent character appearance in b-roll clips. Generate with AI, paste a URL, or upload.</p>
         </div>
       </div>`;
   }
 
-  // Build action buttons for header (when image is present and not loading)
+  // URL input row (always shown)
+  const urlInputHTML = state !== 'loading' ? `
+    <div style="margin-top: 4px;">
+      <label style="font-size: 11px; font-weight: 600; color: #6B7280; display: block; margin-bottom: 4px;">Image URL</label>
+      <div class="flex items-center gap-2">
+        <input id="persona-url-input" type="text" value="${imageUrl || ''}" placeholder="https://example.com/persona.png"
+          class="flex-1 px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm"
+          style="min-width: 0; font-size: 13px;">
+        <button onclick="savePersonaImageUrl()" class="cursor-pointer" style="background: #0176D3; color: white; font-size: 12px; font-weight: 600; padding: 7px 14px; border-radius: 8px; border: none; white-space: nowrap;">Save</button>
+      </div>
+    </div>` : '';
+
+  // Action buttons for header
   let actionsHTML = '';
-  if (imageUrl && state !== 'loading') {
+  if (state !== 'loading') {
     actionsHTML = `
-      <button onclick="generatePersonaImage()" class="cursor-pointer" style="background: #7C3AED; color: white; font-size: 12px; font-weight: 600; padding: 5px 12px; border-radius: 8px; border: none;">🔄 Regenerate</button>
-      <label class="cursor-pointer" style="background: white; color: #374151; font-size: 12px; font-weight: 600; padding: 5px 12px; border-radius: 8px; border: 1px solid #d1d5db; display: inline-flex; align-items: center; gap: 4px;">📁 Upload<input type="file" accept="image/*" onchange="uploadPersonaImage(event)" style="display: none;"></label>
-      <button onclick="removePersonaImage()" class="cursor-pointer" style="background: none; color: #EF4444; font-size: 12px; font-weight: 600; padding: 5px 8px; border-radius: 8px; border: 1px solid #FCA5A5;">✕</button>`;
+      <button onclick="generatePersonaImage()" class="cursor-pointer" style="background: #7C3AED; color: white; font-size: 12px; font-weight: 600; padding: 5px 12px; border-radius: 8px; border: none;">✨ Generate</button>
+      <label class="cursor-pointer" style="background: white; color: #374151; font-size: 12px; font-weight: 600; padding: 5px 12px; border-radius: 8px; border: 1px solid #d1d5db; display: inline-flex; align-items: center; gap: 4px;">📁 Upload<input type="file" accept="image/*" onchange="uploadPersonaImage(event)" style="display: none;"></label>`;
+    if (imageUrl) {
+      actionsHTML += `
+        <button onclick="removePersonaImage()" class="cursor-pointer" style="background: none; color: #EF4444; font-size: 12px; font-weight: 600; padding: 5px 8px; border-radius: 8px; border: 1px solid #FCA5A5;">✕</button>`;
+    }
   }
 
   mount.innerHTML = `
@@ -2041,6 +2058,7 @@ function renderPersonaImage(video, state) {
         <div class="flex items-center gap-2">${actionsHTML}</div>
       </div>
       ${contentHTML}
+      ${urlInputHTML}
     </div>`;
 }
 
@@ -2145,6 +2163,28 @@ async function removePersonaImage() {
     renderPersonaImage(currentVideoData || { scene_data: {} });
   } catch (err) {
     alert('Failed to remove persona image: ' + err.message);
+  }
+}
+
+async function savePersonaImageUrl() {
+  if (!currentVideoId) return;
+  const input = document.getElementById('persona-url-input');
+  const url = (input.value || '').trim();
+  const email = document.getElementById('user-email').textContent;
+
+  try {
+    const resp = await fetch(`/api/videos/${currentVideoId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, personaImageUrl: url || '' }),
+    });
+    if (!resp.ok) throw new Error('Save failed');
+
+    if (currentVideoData) currentVideoData.persona_image_url = url || null;
+    renderPersonaImage(currentVideoData || { scene_data: {} });
+    showToast('✅ Persona image saved');
+  } catch (err) {
+    alert('Failed to save persona image: ' + err.message);
   }
 }
 

@@ -379,21 +379,26 @@ async function concatBrollClips(sourcePaths, outputPath, targetDuration, workDir
 }
 
 /**
- * Apply a logo overlay to the intro clip: [Brand Logo] + [Salesforce Logo]
- * Both logos are centered on the video with a semi-transparent dark scrim behind them.
+ * Apply an animated logo overlay to the intro clip: [Brand Logo] + [Salesforce Logo]
+ *
+ * The overlay elements fade in sequentially, hold, then all fade out:
+ *   - 3s: semi-transparent scrim bar fades in (1s fade)
+ *   - 4s: brand logo fades in (0.8s fade)
+ *   - 5s: "+" symbol fades in (0.5s fade)
+ *   - 6s: Salesforce logo fades in (0.8s fade)
+ *   - Hold until fadeOutStart (last 1.5s of clip)
+ *   - All elements fade out together (1s fade)
+ *
+ * The scrim bar colour adapts to the brand logo:
+ *   - Dark/black logo → semi-transparent WHITE scrim
+ *   - Light/white logo → semi-transparent BLACK scrim (default)
  *
  * Layout (centered horizontally and vertically):
  *   ┌─────────────────────────────────────────┐
- *   │              semi-dark scrim             │
+ *   │           semi-transparent scrim         │
  *   │     [Brand Logo]  +  [SF Logo]          │
- *   │              semi-dark scrim             │
+ *   │           semi-transparent scrim         │
  *   └─────────────────────────────────────────┘
- *
- * Uses FFmpeg filter_complex with:
- *   - Input 0: the intro video clip
- *   - Input 1: brand logo (downloaded from URL)
- *   - Input 2: Salesforce logo (local file)
- *   - Drawtext for the "+" symbol between logos
  */
 async function applyIntroLogoOverlay(inputPath, outputPath, brandLogoUrl, workDir) {
   // Download brand logo
@@ -418,61 +423,154 @@ async function applyIntroLogoOverlay(inputPath, outputPath, brandLogoUrl, workDi
     throw new Error(`Plus symbol not found at ${plusPath}`);
   }
 
-  // Logo sizing: each logo scaled to max 200px wide, 140px tall (maintaining aspect ratio).
-  // Layout: [Brand Logo] [+] [SF Logo] — all centered on a semi-transparent dark scrim.
-  //
-  // FFmpeg filter_complex pipeline:
-  //   Input 0: the intro video clip
-  //   Input 1: brand logo (downloaded from URL)
-  //   Input 2: Salesforce logo (local file)
-  //   Input 3: plus symbol (local PNG file)
-  //
-  //   1. Scale brand logo to fit 200x140 box (transparent pad)
-  //   2. Scale SF logo to fit 200x140 box (transparent pad)
-  //   3. Scale plus symbol to 50x50
-  //   4. Draw semi-transparent dark bar across the middle of the video
-  //   5. Overlay brand logo left of center
-  //   6. Overlay plus symbol at center
-  //   7. Overlay SF logo right of center
+  // ── Detect brand logo brightness to choose scrim colour ──
+  // Sample the brand logo to determine if it's dark or light.
+  // Dark logos need a white/light scrim; light logos need a black/dark scrim.
+  let scrimColor = 'black';
+  let scrimOpacity = 0.5;
+  try {
+    // Use FFmpeg to get mean brightness via signalstats filter
+    const statsOutput = execSync(
+      `${FFMPEG_PATH} -i "${brandLogoPath}" -vf "format=gray,scale=8:8" -f rawvideo -pix_fmt gray -frames:v 1 pipe:1 2>/dev/null`,
+      { encoding: 'latin1', timeout: 10000, maxBuffer: 1024 }
+    );
+    // statsOutput is binary — each byte is a pixel brightness (0-255)
+    let totalBrightness = 0;
+    let pixelCount = 0;
+    for (let i = 0; i < statsOutput.length; i++) {
+      totalBrightness += statsOutput.charCodeAt(i);
+      pixelCount++;
+    }
+    const avgBrightness = pixelCount > 0 ? Math.round(totalBrightness / pixelCount) : 128;
+    console.log(`[Compositor] Brand logo avg brightness: ${avgBrightness}/255 (${pixelCount} samples)`);
+    if (avgBrightness < 100) {
+      // Dark logo → use white scrim so the logo is visible
+      scrimColor = 'white';
+      scrimOpacity = 0.45;
+      console.log('[Compositor] Using WHITE scrim (dark brand logo detected)');
+    } else {
+      console.log('[Compositor] Using BLACK scrim (light brand logo detected)');
+    }
+  } catch (err) {
+    console.warn(`[Compositor] Brightness detection failed (using default black scrim): ${err.message}`);
+  }
 
+  // ── Get intro clip duration to adapt timing ──
+  let clipDuration = 10;
+  try {
+    const probeOut = execSync(
+      `${FFMPEG_PATH} -i "${inputPath}" 2>&1`,
+      { encoding: 'utf-8', timeout: 5000 }
+    );
+    const durMatch = probeOut.match(/Duration:\s*(\d+):(\d+):([\d.]+)/);
+    if (durMatch) {
+      clipDuration = parseFloat(durMatch[1]) * 3600 + parseFloat(durMatch[2]) * 60 + parseFloat(durMatch[3]);
+    }
+  } catch (err) {
+    // FFmpeg returns non-zero exit code when only probing — parse stderr from err.stderr or err.stdout
+    const output = (err.stderr || err.stdout || '').toString();
+    const durMatch = output.match(/Duration:\s*(\d+):(\d+):([\d.]+)/);
+    if (durMatch) {
+      clipDuration = parseFloat(durMatch[1]) * 3600 + parseFloat(durMatch[2]) * 60 + parseFloat(durMatch[3]);
+    } else {
+      console.warn(`[Compositor] Could not probe intro duration, using ${clipDuration}s default`);
+    }
+  }
+  console.log(`[Compositor] Intro clip duration: ${clipDuration.toFixed(1)}s`);
+
+  // ── Timing ──
+  // Ideal timing: scrim@3s → brand@4s → plus@5s → SF@6s → hold 4s → fadeOut@~10s
+  // For shorter clips, scale timings proportionally so everything fits.
+  let scrimFadeIn, brandFadeIn, plusFadeIn, sfFadeIn;
+  let scrimFadeDur, logoFadeDur, plusFadeDur, fadeOutDur, fadeOutStart;
+
+  if (clipDuration >= 10) {
+    // Full timing — clip is long enough
+    scrimFadeIn = 3.0;
+    brandFadeIn = 4.0;
+    plusFadeIn  = 5.0;
+    sfFadeIn    = 6.0;
+    scrimFadeDur = 1.0;
+    logoFadeDur  = 0.8;
+    plusFadeDur   = 0.5;
+    fadeOutDur = 1.0;
+    fadeOutStart = clipDuration - 1.5;
+  } else {
+    // Compressed timing for short clips — scale to fit within clip duration
+    // Reserve 1s at the end for fade-out, 1s at the start for clean intro
+    const available = clipDuration - 2.0; // leave 1s start margin + 1s end margin
+    const spacing = Math.max(0.5, available / 5); // divide available time across 4 fade-ins + 1 hold
+    scrimFadeIn = 1.0;
+    brandFadeIn = scrimFadeIn + spacing;
+    plusFadeIn  = brandFadeIn + spacing;
+    sfFadeIn    = plusFadeIn + spacing;
+    scrimFadeDur = Math.min(0.8, spacing);
+    logoFadeDur  = Math.min(0.6, spacing);
+    plusFadeDur   = Math.min(0.4, spacing);
+    fadeOutDur = Math.min(0.8, clipDuration * 0.1);
+    fadeOutStart = clipDuration - 1.0;
+  }
+
+  console.log(`[Compositor] Overlay timing — scrim:${scrimFadeIn.toFixed(1)}s brand:${brandFadeIn.toFixed(1)}s plus:${plusFadeIn.toFixed(1)}s sf:${sfFadeIn.toFixed(1)}s fadeOut:${fadeOutStart.toFixed(1)}s (clip: ${clipDuration.toFixed(1)}s)`);
+
+  // ── Filter sizing ──
   const logoMaxW = 200;
   const logoMaxH = 140;
   const plusSize = 50;
-  const plusGap = 70; // total gap between logos (plus symbol sits here)
-  const scrimH = 220; // height of the dark scrim bar
+  const plusGap = 70;
+  const scrimH = 220;
+
+  // ── Build the FFmpeg filter_complex ──
+  //
+  // Strategy: We overlay each element using the `enable` filter to control when
+  // it appears, and use fade-in/fade-out on each overlay's alpha channel.
+  //
+  // For the scrim: we create a solid colour rectangle and apply alpha fade.
+  // For each logo/plus: we fade the overlay's alpha.
 
   const filterComplex = [
-    // Scale brand logo maintaining aspect ratio, pad to exact box with transparent background
-    `[1:v]scale=${logoMaxW}:${logoMaxH}:force_original_aspect_ratio=decrease,pad=${logoMaxW}:${logoMaxH}:(ow-iw)/2:(oh-ih)/2:color=0x00000000,format=rgba[brand]`,
-    // Scale SF logo maintaining aspect ratio, pad to exact box
-    `[2:v]scale=${logoMaxW}:${logoMaxH}:force_original_aspect_ratio=decrease,pad=${logoMaxW}:${logoMaxH}:(ow-iw)/2:(oh-ih)/2:color=0x00000000,format=rgba[sf]`,
-    // Scale plus symbol to 50x50
-    `[3:v]scale=${plusSize}:${plusSize}:force_original_aspect_ratio=decrease,pad=${plusSize}:${plusSize}:(ow-iw)/2:(oh-ih)/2:color=0x00000000,format=rgba[plus]`,
-    // Draw semi-transparent dark scrim bar across the middle of the video
-    `[0:v]drawbox=x=0:y=(ih-${scrimH})/2:w=iw:h=${scrimH}:color=black@0.5:t=fill[scrim]`,
+    // Scale brand logo, pad to box, apply alpha fade-in then fade-out
+    `[1:v]scale=${logoMaxW}:${logoMaxH}:force_original_aspect_ratio=decrease,pad=${logoMaxW}:${logoMaxH}:(ow-iw)/2:(oh-ih)/2:color=0x00000000,format=rgba,fade=t=in:st=${brandFadeIn}:d=${logoFadeDur}:alpha=1,fade=t=out:st=${fadeOutStart}:d=${fadeOutDur}:alpha=1[brand]`,
+
+    // Scale SF logo, pad, alpha fade
+    `[2:v]scale=${logoMaxW}:${logoMaxH}:force_original_aspect_ratio=decrease,pad=${logoMaxW}:${logoMaxH}:(ow-iw)/2:(oh-ih)/2:color=0x00000000,format=rgba,fade=t=in:st=${sfFadeIn}:d=${logoFadeDur}:alpha=1,fade=t=out:st=${fadeOutStart}:d=${fadeOutDur}:alpha=1[sf]`,
+
+    // Scale plus symbol, alpha fade
+    `[3:v]scale=${plusSize}:${plusSize}:force_original_aspect_ratio=decrease,pad=${plusSize}:${plusSize}:(ow-iw)/2:(oh-ih)/2:color=0x00000000,format=rgba,fade=t=in:st=${plusFadeIn}:d=${plusFadeDur}:alpha=1,fade=t=out:st=${fadeOutStart}:d=${fadeOutDur}:alpha=1[plus]`,
+
+    // Create the scrim bar: a solid colour image the same duration as the video,
+    // with alpha fade-in and fade-out. We use `color` source + crop to get the right size.
+    `color=c=${scrimColor}@${scrimOpacity}:s=${WIDTH}x${scrimH}:d=${clipDuration},format=rgba,fade=t=in:st=${scrimFadeIn}:d=${scrimFadeDur}:alpha=1,fade=t=out:st=${fadeOutStart}:d=${fadeOutDur}:alpha=1[scrim]`,
+
+    // Overlay scrim onto video (centered vertically)
+    `[0:v][scrim]overlay=x=0:y=(H-h)/2:shortest=1[withscrim]`,
+
     // Overlay brand logo (left of center)
-    `[scrim][brand]overlay=x=(W/2)-${logoMaxW}-${plusGap / 2}:y=(H-${logoMaxH})/2[withbrand]`,
+    `[withscrim][brand]overlay=x=(W/2)-${logoMaxW}-${plusGap / 2}:y=(H-${logoMaxH})/2:shortest=1[withbrand]`,
+
     // Overlay plus symbol (centered)
-    `[withbrand][plus]overlay=x=(W-${plusSize})/2:y=(H-${plusSize})/2[withplus]`,
+    `[withbrand][plus]overlay=x=(W-${plusSize})/2:y=(H-${plusSize})/2:shortest=1[withplus]`,
+
     // Overlay SF logo (right of center)
-    `[withplus][sf]overlay=x=(W/2)+${plusGap / 2}:y=(H-${logoMaxH})/2[out]`,
+    `[withplus][sf]overlay=x=(W/2)+${plusGap / 2}:y=(H-${logoMaxH})/2:shortest=1[out]`,
   ].join(';');
 
+  const durStr = String(Math.ceil(clipDuration));
   await runFfmpeg([
     '-y',
-    '-i', inputPath,
-    '-i', brandLogoPath,
-    '-i', sfLogoPath,
-    '-i', plusPath,
+    '-i', inputPath,                                    // input 0: intro video
+    '-loop', '1', '-t', durStr, '-i', brandLogoPath,   // input 1: brand logo (looped to video length)
+    '-loop', '1', '-t', durStr, '-i', sfLogoPath,      // input 2: SF logo (looped)
+    '-loop', '1', '-t', durStr, '-i', plusPath,         // input 3: plus symbol (looped)
     '-filter_complex', filterComplex,
     '-map', '[out]',
+    '-map', '0:a?',   // preserve audio if present
     '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '23',
     '-r', String(FPS),
     '-pix_fmt', 'yuv420p',
-    '-an',
     '-movflags', '+faststart',
     outputPath,
-  ], 'intro logo overlay');
+  ], 'intro logo overlay (animated)');
 
   // Cleanup downloaded logo
   safeDelete(brandLogoPath);

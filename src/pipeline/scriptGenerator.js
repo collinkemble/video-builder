@@ -74,12 +74,12 @@ SCENES (in order):
 ${sceneList}
 
 Write a narration script that tells a connected customer experience story. The narration should:
-- Start with a SHORT, punchy intro (1-2 sentences MAX) that sets up the BRAND only — do NOT mention or introduce the persona/character by name in the intro. The intro should ONLY mention the brand and what it does.
+- Start with a SHORT, punchy intro (2-3 sentences) that sets up the BRAND and mentions the Salesforce partnership. The intro MUST include a line like "${brandName}, together with Salesforce, is transforming [the customer experience / the industry / how customers connect]" or similar. Do NOT mention or introduce the persona/character by name in the intro. The intro should mention the brand, Salesforce, and what they're doing together.
 - The persona should be introduced ONLY ONCE, in the narration for the FIRST scene segment (e.g., "Meet [name], who…"). Never introduce or mention the persona by name in the intro segment. If the persona is introduced in the intro, the script is WRONG.
 - NEVER mention the persona's name more than once across the ENTIRE script. After introducing them in the first scene, refer to them as "she", "he", "they", "our customer", etc. — NEVER repeat their name.
 - Walk through each scene as part of a cohesive customer journey
 - Include transition moments between major channel shifts
-- End with a wrap-up that ties the experience together
+- End with a wrap-up outro that ties the experience together AND reinforces the Salesforce partnership. The outro MUST include a closing line like "This is how ${brandName} and Salesforce are transforming [the customer experience / their industry]" or "Together with Salesforce, ${brandName} is redefining what's possible" or similar. Make it feel like a natural, inspiring conclusion.
 - Be conversational and compelling, NOT a feature walkthrough
 - Each segment's narration should be 2-4 sentences
 - Target ~${durationTarget} seconds total (about ${Math.round(durationTarget / 15)} segments at ~15 seconds each)${scriptWriterInstruction}
@@ -96,7 +96,7 @@ Return ONLY valid JSON in this exact format:
       "channel": null,
       "visualType": "broll",
       "brollDescription": "Description of a lifestyle/brand image for the intro",
-      "narration": "Short punchy intro about the BRAND only — 1-2 sentences, absolutely NO persona name here",
+      "narration": "Short punchy intro about the BRAND and Salesforce partnership — 2-3 sentences, absolutely NO persona name here",
       "estimatedDuration": 10
     },
     {
@@ -123,10 +123,10 @@ Return ONLY valid JSON in this exact format:
 }
 
 Segment types:
-- "intro" — Opening (2-3 sentences, ~10 seconds), always first, uses b-roll visual. Sets up the BRAND ONLY — do NOT introduce or name the persona here. Must be long enough for the logo animation overlay.
+- "intro" — Opening (2-3 sentences, ~10 seconds), always first, uses b-roll visual. Sets up the BRAND and mentions the Salesforce partnership (e.g., "[Brand], together with Salesforce, is transforming..."). Do NOT introduce or name the persona here. Must be long enough for the logo animation overlay.
 - "scene" — Maps to a PocketSIC scene, uses scene_capture visual. The FIRST scene segment is where the persona should be introduced by name.
 - "transition" — Brief bridge between scenes, uses b-roll
-- "outro" — Closing, always last, uses b-roll
+- "outro" — Closing (3-4 sentences, ~12-15 seconds), always last, uses b-roll. Must reinforce the Salesforce partnership with a closing line like "This is how [Brand] and Salesforce are transforming..." or "Together with Salesforce, [Brand] is redefining..."
 
 B-ROLL / TRANSITION PLACEMENT RULES (CRITICAL):
 - Do NOT put a transition/b-roll between scenes that happen immediately after each other in the customer journey. For example: customer sees an Instagram ad and clicks through to the website — these happen back-to-back with no time gap, so NO transition between them.

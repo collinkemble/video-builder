@@ -518,14 +518,19 @@ app.post('/api/videos', async (req, res) => {
 
     const user = await getOrCreateUser(email);
 
+    // Extract brand logo URL from sceneData if available
+    const parsedSceneData = sceneData ? (typeof sceneData === 'string' ? JSON.parse(sceneData) : sceneData) : null;
+    const brandLogoUrl = parsedSceneData?.brand_logo_url || null;
+
     const result = await query(
-      `INSERT INTO videos (user_id, name, brand_name, pocketsic_project_id, pocketsic_project_name,
+      `INSERT INTO videos (user_id, name, brand_name, brand_logo_url, pocketsic_project_id, pocketsic_project_name,
         scene_data, voice_id, duration_target, scriptwriter_script_id, scriptwriter_script_name, scriptwriter_data, status)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft')`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft')`,
       [
         user.id,
         name.trim(),
         brandName || null,
+        brandLogoUrl,
         pocketsicProjectId || null,
         pocketsicProjectName || null,
         sceneData ? JSON.stringify(sceneData) : null,
@@ -605,6 +610,13 @@ app.put('/api/videos/:id', async (req, res) => {
     if (personaImageUrl !== undefined && personaImageUrl !== null) {
       sets.push('persona_image_url = ?');
       params.push(personaImageUrl === '' ? null : personaImageUrl);
+    }
+
+    // Three-state guard for brand_logo_url
+    const { brandLogoUrl } = req.body;
+    if (brandLogoUrl !== undefined && brandLogoUrl !== null) {
+      sets.push('brand_logo_url = ?');
+      params.push(brandLogoUrl === '' ? null : brandLogoUrl);
     }
 
     if (sets.length > 0) {
@@ -1188,15 +1200,16 @@ async function createSharedVideoCopy(sourceVideo, senderEmail, recipientEmail) {
   const recipientUser = await getOrCreateUser(recipientEmail);
 
   const result = await query(
-    `INSERT INTO videos (user_id, name, brand_name, pocketsic_project_id, pocketsic_project_name,
+    `INSERT INTO videos (user_id, name, brand_name, brand_logo_url, pocketsic_project_id, pocketsic_project_name,
       scene_data, narration_script, voiceover_timestamps, video_url, thumbnail_url, voiceover_url,
       voice_id, duration_target, duration_actual, scriptwriter_script_id, scriptwriter_script_name, scriptwriter_data,
       persona_image_url, status, shared_by, shared_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
     [
       recipientUser.id,
       sourceVideo.name,
       sourceVideo.brand_name,
+      sourceVideo.brand_logo_url || null,
       sourceVideo.pocketsic_project_id,
       sourceVideo.pocketsic_project_name,
       sourceVideo.scene_data ? (typeof sourceVideo.scene_data === 'string' ? sourceVideo.scene_data : JSON.stringify(sourceVideo.scene_data)) : null,
@@ -1304,13 +1317,14 @@ app.post('/api/videos/:id/share/confirm', async (req, res) => {
 
       if (copiedId) {
         await query(
-          `UPDATE videos SET name = ?, brand_name = ?, scene_data = ?, narration_script = ?,
+          `UPDATE videos SET name = ?, brand_name = ?, brand_logo_url = ?, scene_data = ?, narration_script = ?,
             voiceover_timestamps = ?, video_url = ?, thumbnail_url = ?, voiceover_url = ?,
             duration_actual = ?, status = ?, shared_by = ?, shared_at = NOW(), updated_at = NOW()
            WHERE id = ?`,
           [
             sourceVideo.name,
             sourceVideo.brand_name,
+            sourceVideo.brand_logo_url || null,
             sourceVideo.scene_data ? (typeof sourceVideo.scene_data === 'string' ? sourceVideo.scene_data : JSON.stringify(sourceVideo.scene_data)) : null,
             sourceVideo.narration_script ? (typeof sourceVideo.narration_script === 'string' ? sourceVideo.narration_script : JSON.stringify(sourceVideo.narration_script)) : null,
             sourceVideo.voiceover_timestamps ? (typeof sourceVideo.voiceover_timestamps === 'string' ? sourceVideo.voiceover_timestamps : JSON.stringify(sourceVideo.voiceover_timestamps)) : null,

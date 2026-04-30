@@ -73,6 +73,9 @@ CREATE TABLE IF NOT EXISTS videos (
   -- Persona image (generated or uploaded, used as Veo reference for consistent character)
   persona_image_url TEXT DEFAULT NULL,
 
+  -- Brand logo (from PocketSIC brand profile, used for intro overlay)
+  brand_logo_url TEXT DEFAULT NULL,
+
   -- Settings
   voice_id VARCHAR(100) DEFAULT 'default',
   duration_target INT DEFAULT 180,

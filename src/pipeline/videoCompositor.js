@@ -40,6 +40,7 @@ async function composeVideo({
   voiceoverPath,
   musicTrackUrl, // URL to a background music MP3 (optional)
   brandName,
+  brandLogoUrl,  // URL to the brand logo (for intro overlay)
   outputDir,
   onProgress,
 }) {
@@ -97,6 +98,22 @@ async function composeVideo({
     if (onProgress) {
       const pct = 10 + Math.round(40 * ((i + 1) / timelineEntries.length));
       onProgress(pct);
+    }
+  }
+
+  // ── Step 2b: Apply logo overlay to intro clip ──
+  if (brandLogoUrl && normalizedClips.length > 0 && timelineEntries[0].type === 'intro') {
+    try {
+      const introClip = normalizedClips[0];
+      const overlaidClip = path.join(workDir, 'clip_000_overlay.mp4');
+      await applyIntroLogoOverlay(introClip, overlaidClip, brandLogoUrl, workDir);
+      // Replace the intro clip with the overlaid version
+      safeDelete(introClip);
+      fs.renameSync(overlaidClip, introClip);
+      console.log('[Compositor] ✓ Intro logo overlay applied');
+    } catch (err) {
+      console.warn(`[Compositor] Logo overlay failed (non-fatal): ${err.message}`);
+      // Continue without overlay — the original intro clip is still valid
     }
   }
 
@@ -359,6 +376,106 @@ async function concatBrollClips(sourcePaths, outputPath, targetDuration, workDir
   safeDelete(concatFile);
 
   console.log(`[Compositor] Concatenated ${sourcePaths.length} b-roll clips → ${targetDuration}s`);
+}
+
+/**
+ * Apply a logo overlay to the intro clip: [Brand Logo] + [Salesforce Logo]
+ * Both logos are centered on the video with a semi-transparent dark scrim behind them.
+ *
+ * Layout (centered horizontally and vertically):
+ *   ┌─────────────────────────────────────────┐
+ *   │              semi-dark scrim             │
+ *   │     [Brand Logo]  +  [SF Logo]          │
+ *   │              semi-dark scrim             │
+ *   └─────────────────────────────────────────┘
+ *
+ * Uses FFmpeg filter_complex with:
+ *   - Input 0: the intro video clip
+ *   - Input 1: brand logo (downloaded from URL)
+ *   - Input 2: Salesforce logo (local file)
+ *   - Drawtext for the "+" symbol between logos
+ */
+async function applyIntroLogoOverlay(inputPath, outputPath, brandLogoUrl, workDir) {
+  // Download brand logo
+  const brandLogoPath = path.join(workDir, 'brand_logo.png');
+  console.log(`[Compositor] Downloading brand logo: ${brandLogoUrl.substring(0, 80)}...`);
+
+  const resp = await fetch(brandLogoUrl);
+  if (!resp.ok) throw new Error(`Failed to download brand logo: HTTP ${resp.status}`);
+  const buffer = Buffer.from(await resp.arrayBuffer());
+  fs.writeFileSync(brandLogoPath, buffer);
+  console.log(`[Compositor] Brand logo downloaded: ${(buffer.length / 1024).toFixed(0)}KB`);
+
+  // Salesforce logo and plus symbol — located at the app root
+  const appRoot = path.join(__dirname, '..', '..');
+  const sfLogoPath = path.join(appRoot, 'sflogo.png');
+  const plusPath = path.join(appRoot, 'plus_symbol.png');
+
+  if (!fs.existsSync(sfLogoPath)) {
+    throw new Error(`Salesforce logo not found at ${sfLogoPath}`);
+  }
+  if (!fs.existsSync(plusPath)) {
+    throw new Error(`Plus symbol not found at ${plusPath}`);
+  }
+
+  // Logo sizing: each logo scaled to max 200px wide, 140px tall (maintaining aspect ratio).
+  // Layout: [Brand Logo] [+] [SF Logo] — all centered on a semi-transparent dark scrim.
+  //
+  // FFmpeg filter_complex pipeline:
+  //   Input 0: the intro video clip
+  //   Input 1: brand logo (downloaded from URL)
+  //   Input 2: Salesforce logo (local file)
+  //   Input 3: plus symbol (local PNG file)
+  //
+  //   1. Scale brand logo to fit 200x140 box (transparent pad)
+  //   2. Scale SF logo to fit 200x140 box (transparent pad)
+  //   3. Scale plus symbol to 50x50
+  //   4. Draw semi-transparent dark bar across the middle of the video
+  //   5. Overlay brand logo left of center
+  //   6. Overlay plus symbol at center
+  //   7. Overlay SF logo right of center
+
+  const logoMaxW = 200;
+  const logoMaxH = 140;
+  const plusSize = 50;
+  const plusGap = 70; // total gap between logos (plus symbol sits here)
+  const scrimH = 220; // height of the dark scrim bar
+
+  const filterComplex = [
+    // Scale brand logo maintaining aspect ratio, pad to exact box with transparent background
+    `[1:v]scale=${logoMaxW}:${logoMaxH}:force_original_aspect_ratio=decrease,pad=${logoMaxW}:${logoMaxH}:(ow-iw)/2:(oh-ih)/2:color=0x00000000,format=rgba[brand]`,
+    // Scale SF logo maintaining aspect ratio, pad to exact box
+    `[2:v]scale=${logoMaxW}:${logoMaxH}:force_original_aspect_ratio=decrease,pad=${logoMaxW}:${logoMaxH}:(ow-iw)/2:(oh-ih)/2:color=0x00000000,format=rgba[sf]`,
+    // Scale plus symbol to 50x50
+    `[3:v]scale=${plusSize}:${plusSize}:force_original_aspect_ratio=decrease,pad=${plusSize}:${plusSize}:(ow-iw)/2:(oh-ih)/2:color=0x00000000,format=rgba[plus]`,
+    // Draw semi-transparent dark scrim bar across the middle of the video
+    `[0:v]drawbox=x=0:y=(ih-${scrimH})/2:w=iw:h=${scrimH}:color=black@0.5:t=fill[scrim]`,
+    // Overlay brand logo (left of center)
+    `[scrim][brand]overlay=x=(W/2)-${logoMaxW}-${plusGap / 2}:y=(H-${logoMaxH})/2[withbrand]`,
+    // Overlay plus symbol (centered)
+    `[withbrand][plus]overlay=x=(W-${plusSize})/2:y=(H-${plusSize})/2[withplus]`,
+    // Overlay SF logo (right of center)
+    `[withplus][sf]overlay=x=(W/2)+${plusGap / 2}:y=(H-${logoMaxH})/2[out]`,
+  ].join(';');
+
+  await runFfmpeg([
+    '-y',
+    '-i', inputPath,
+    '-i', brandLogoPath,
+    '-i', sfLogoPath,
+    '-i', plusPath,
+    '-filter_complex', filterComplex,
+    '-map', '[out]',
+    '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '23',
+    '-r', String(FPS),
+    '-pix_fmt', 'yuv420p',
+    '-an',
+    '-movflags', '+faststart',
+    outputPath,
+  ], 'intro logo overlay');
+
+  // Cleanup downloaded logo
+  safeDelete(brandLogoPath);
 }
 
 /**

@@ -2263,6 +2263,7 @@ async function createNewVideo() {
       sceneData = {
         brand_name: project.brand_name || bp.name || '',
         brand_description: project.brand_description || bp.description || '',
+        brand_logo_url: bp.logoUrl || bp.logo_url || bp.logo || project.brand_logo_url || project.logo_url || '',
         persona_name: project.persona_name || bp.personaName || '',
         persona_description: project.persona || bp.persona || '',
         synopsis: project.demo_story_synopsis || bp.demoStorySynopsis || '',

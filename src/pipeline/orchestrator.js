@@ -221,6 +221,7 @@ async function runPipeline(videoId, userId, options = {}) {
         voiceoverPath: voiceoverResult.audioPath,
         musicTrackUrl,
         brandName: video.brand_name || sceneData.brand_name || '',
+        brandLogoUrl: video.brand_logo_url || sceneData.brand_logo_url || null,
         outputDir: workDir,
         onProgress: (percent) => {
           updateJobProgress(compositeJobId, Math.round(percent), 100);

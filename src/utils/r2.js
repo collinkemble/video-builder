@@ -115,12 +115,15 @@ async function deleteFile(key) {
  * @returns {Promise<object>} - { videoUrl, thumbnailUrl, voiceoverUrl }
  */
 async function uploadVideoAssets(userId, videoId, files) {
+  // Use a timestamp in the R2 key so regenerated videos get a fresh URL.
+  // This prevents CDN/browser caches from serving the old video after regeneration.
+  const ts = Date.now();
   const prefix = `videos/${userId}/${videoId}`;
   const result = {};
 
   if (files.videoPath) {
     result.videoUrl = await uploadFile(
-      `${prefix}/video.mp4`,
+      `${prefix}/video_${ts}.mp4`,
       files.videoPath,
       'video/mp4'
     );
@@ -128,7 +131,7 @@ async function uploadVideoAssets(userId, videoId, files) {
 
   if (files.thumbnailPath) {
     result.thumbnailUrl = await uploadFile(
-      `${prefix}/thumbnail.jpg`,
+      `${prefix}/thumbnail_${ts}.jpg`,
       files.thumbnailPath,
       'image/jpeg'
     );
@@ -136,7 +139,7 @@ async function uploadVideoAssets(userId, videoId, files) {
 
   if (files.voiceoverPath) {
     result.voiceoverUrl = await uploadFile(
-      `${prefix}/voiceover.mp3`,
+      `${prefix}/voiceover_${ts}.mp3`,
       files.voiceoverPath,
       'audio/mpeg'
     );

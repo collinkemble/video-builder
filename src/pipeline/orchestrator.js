@@ -53,6 +53,37 @@ async function runPipeline(videoId, userId, options = {}) {
       throw new Error('No scenes found. Import a PocketSIC project first.');
     }
 
+    // ── Resolve brand logo URL (fallback to PocketSIC if missing) ──
+    let brandLogoUrl = video.brand_logo_url || sceneData.brand_logo_url || null;
+    if (!brandLogoUrl && video.pocketsic_project_id) {
+      try {
+        const POCKETSIC_BASE_URL = process.env.POCKETSIC_BASE_URL || 'https://pocketsic.aubreydemo.com';
+        const POCKETSIC_API_KEY = process.env.POCKETSIC_API_KEY;
+        if (POCKETSIC_API_KEY) {
+          // Fetch the user's email for the PocketSIC API call
+          const [user] = await query('SELECT email FROM users WHERE id = ?', [userId]);
+          const email = user ? user.email : '';
+          const pResp = await fetch(
+            `${POCKETSIC_BASE_URL}/api/projects/${video.pocketsic_project_id}?email=${encodeURIComponent(email)}`,
+            { headers: { 'X-API-Key': POCKETSIC_API_KEY } }
+          );
+          if (pResp.ok) {
+            const pData = await pResp.json();
+            const proj = pData.project || pData;
+            const bp = proj.brand_profile || {};
+            brandLogoUrl = bp.logoUrl || bp.logo_url || bp.logo || proj.brand_logo_url || proj.logo_url || null;
+            if (brandLogoUrl) {
+              console.log(`[Pipeline] Resolved brand logo from PocketSIC: ${brandLogoUrl}`);
+              // Persist so we don't need to fetch again
+              await query('UPDATE videos SET brand_logo_url = ? WHERE id = ?', [brandLogoUrl, videoId]);
+            }
+          }
+        }
+      } catch (err) {
+        console.warn(`[Pipeline] Failed to fetch brand logo from PocketSIC (non-fatal): ${err.message}`);
+      }
+    }
+
     // ── Step 1: Script Generation ──
     // If user already generated/edited a script, reuse it; otherwise generate one now
     const existingScript = video.narration_script
@@ -221,7 +252,7 @@ async function runPipeline(videoId, userId, options = {}) {
         voiceoverPath: voiceoverResult.audioPath,
         musicTrackUrl,
         brandName: video.brand_name || sceneData.brand_name || '',
-        brandLogoUrl: video.brand_logo_url || sceneData.brand_logo_url || null,
+        brandLogoUrl,
         outputDir: workDir,
         onProgress: (percent) => {
           updateJobProgress(compositeJobId, Math.round(percent), 100);

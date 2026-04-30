@@ -337,6 +337,9 @@
         </div>
       </div>
 
+      <!-- Brand Logo Card — injected by JS -->
+      <div id="brand-logo-mount"></div>
+
       <!-- Persona Image Card — injected by JS to avoid stale HTML cache issues -->
       <div id="persona-image-mount"></div>
 
@@ -1202,6 +1205,13 @@ async function viewVideo(id, skipPush) {
     // Scenes
     renderScenes(video.scene_data);
 
+    // Brand Logo
+    try {
+      renderBrandLogo(video);
+    } catch (err) {
+      console.error('[viewVideo] renderBrandLogo error:', err);
+    }
+
     // Persona Image
     try {
       renderPersonaImage(video);
@@ -1747,6 +1757,179 @@ async function saveVideoSettings() {
     el.addEventListener('change', checkSettingsChanged);
   }
 });
+
+// ═══════════════════════════════════════════════
+// Brand Logo (display / URL / upload / auto-fetch)
+// ═══════════════════════════════════════════════
+
+function renderBrandLogo(video) {
+  const logoUrl = video.brand_logo_url || null;
+  const brandName = video.brand_name || '';
+
+  let mount = document.getElementById('brand-logo-mount');
+  if (!mount) {
+    mount = document.createElement('div');
+    mount.id = 'brand-logo-mount';
+    const detailPage = document.getElementById('video-detail');
+    if (detailPage) {
+      const personaMount = document.getElementById('persona-image-mount');
+      if (personaMount) {
+        personaMount.parentElement.insertBefore(mount, personaMount);
+      } else {
+        detailPage.appendChild(mount);
+      }
+    } else { return; }
+  }
+
+  let previewHTML = '';
+  if (logoUrl) {
+    previewHTML = `
+      <div class="flex items-center gap-4 mb-3">
+        <div style="width: 80px; height: 80px; border-radius: 10px; background: white; border: 1px solid #e5e7eb; display: flex; align-items: center; justify-content: center; overflow: hidden; flex-shrink: 0;">
+          <img src="${logoUrl}" alt="Brand logo" style="max-width: 72px; max-height: 72px; object-fit: contain;"
+               onerror="this.parentElement.innerHTML='<span style=\\'font-size:28px;\\'>🏷️</span>';">
+        </div>
+        <div style="flex: 1; min-width: 0;">
+          <p style="font-weight: 600; font-size: 14px; color: #032D60; margin-bottom: 2px;">${brandName || 'Brand'} Logo</p>
+          <p style="font-size: 11px; color: #888; line-height: 1.4;">This logo is overlaid on the intro b-roll clip alongside the Salesforce logo.</p>
+        </div>
+      </div>`;
+  } else {
+    previewHTML = `
+      <div class="flex items-center gap-4 mb-3">
+        <div style="width: 80px; height: 80px; border-radius: 10px; background: #F9FAFB; border: 2px dashed #D1D5DB; display: flex; align-items: center; justify-content: center; flex-shrink: 0;">
+          <span style="font-size: 28px;">🏷️</span>
+        </div>
+        <div style="flex: 1; min-width: 0;">
+          <p style="font-weight: 600; font-size: 14px; color: #032D60; margin-bottom: 2px;">No Logo Set</p>
+          <p style="font-size: 11px; color: #888; line-height: 1.4;">Add a brand logo to display it on the intro b-roll clip. Paste a URL or upload an image.</p>
+        </div>
+      </div>`;
+  }
+
+  // URL input row
+  const urlInputHTML = `
+    <div style="margin-top: 4px;">
+      <label style="font-size: 11px; font-weight: 600; color: #6B7280; display: block; margin-bottom: 4px;">Logo URL</label>
+      <div class="flex items-center gap-2">
+        <input id="brand-logo-url-input" type="text" value="${logoUrl || ''}" placeholder="https://example.com/logo.png"
+          class="flex-1 px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm"
+          style="min-width: 0; font-size: 13px;">
+        <button onclick="saveBrandLogoUrl()" class="cursor-pointer" style="background: #0176D3; color: white; font-size: 12px; font-weight: 600; padding: 7px 14px; border-radius: 8px; border: none; white-space: nowrap;">Save</button>
+      </div>
+    </div>`;
+
+  // Action buttons
+  let actionsHTML = `
+    <label class="cursor-pointer" style="background: white; color: #374151; font-size: 12px; font-weight: 600; padding: 5px 12px; border-radius: 8px; border: 1px solid #d1d5db; display: inline-flex; align-items: center; gap: 4px;">
+      📁 Upload<input type="file" accept="image/*" onchange="uploadBrandLogo(event)" style="display: none;">
+    </label>`;
+  if (logoUrl) {
+    actionsHTML += `
+      <button onclick="removeBrandLogo()" class="cursor-pointer" style="background: none; color: #EF4444; font-size: 12px; font-weight: 600; padding: 5px 8px; border-radius: 8px; border: 1px solid #FCA5A5;">✕</button>`;
+  }
+
+  mount.innerHTML = `
+    <div class="mb-6" style="background: white; border-radius: 12px; padding: 24px; box-shadow: 0 1px 3px rgba(0,0,0,0.08);">
+      <div class="flex items-center justify-between mb-4">
+        <div>
+          <p class="font-bold" style="font-size: 15px; color: #032D60;">Brand Logo</p>
+          <p style="font-size: 12px; color: #888; margin-top: 2px;">Used in intro overlay</p>
+        </div>
+        <div class="flex items-center gap-2">${actionsHTML}</div>
+      </div>
+      ${previewHTML}
+      ${urlInputHTML}
+    </div>`;
+}
+
+async function saveBrandLogoUrl() {
+  if (!currentVideoId) return;
+  const input = document.getElementById('brand-logo-url-input');
+  const url = (input.value || '').trim();
+  const email = document.getElementById('user-email').textContent;
+
+  try {
+    const resp = await fetch(`/api/videos/${currentVideoId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, brandLogoUrl: url || '' }),
+    });
+    if (!resp.ok) throw new Error('Save failed');
+
+    if (currentVideoData) currentVideoData.brand_logo_url = url || null;
+    renderBrandLogo(currentVideoData || {});
+    showToast('✅ Brand logo saved');
+  } catch (err) {
+    alert('Failed to save brand logo: ' + err.message);
+  }
+}
+
+async function uploadBrandLogo(event) {
+  if (!currentVideoId) return;
+  const file = event.target.files?.[0];
+  if (!file) return;
+
+  if (!file.type.startsWith('image/')) {
+    alert('Please select an image file.');
+    return;
+  }
+  if (file.size > 5 * 1024 * 1024) {
+    alert('Image too large (max 5MB).');
+    return;
+  }
+
+  try {
+    const reader = new FileReader();
+    const base64 = await new Promise((resolve, reject) => {
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+
+    const email = document.getElementById('user-email').textContent;
+    const resp = await fetch(`/api/videos/${currentVideoId}/upload-brand-logo`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, imageData: base64 }),
+    });
+
+    if (!resp.ok) {
+      const data = await resp.json();
+      throw new Error(data.error || 'Upload failed');
+    }
+
+    const result = await resp.json();
+    if (currentVideoData) currentVideoData.brand_logo_url = result.brand_logo_url;
+    renderBrandLogo(currentVideoData || { brand_logo_url: result.brand_logo_url });
+    showToast('✅ Brand logo uploaded');
+  } catch (err) {
+    alert('Failed to upload brand logo: ' + err.message);
+  }
+
+  event.target.value = '';
+}
+
+async function removeBrandLogo() {
+  if (!currentVideoId) return;
+  if (!confirm('Remove the brand logo?')) return;
+
+  const email = document.getElementById('user-email').textContent;
+  try {
+    const resp = await fetch(`/api/videos/${currentVideoId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, brandLogoUrl: '' }),
+    });
+    if (!resp.ok) throw new Error('Delete failed');
+
+    if (currentVideoData) currentVideoData.brand_logo_url = null;
+    renderBrandLogo(currentVideoData || {});
+    showToast('Brand logo removed');
+  } catch (err) {
+    alert('Failed to remove brand logo: ' + err.message);
+  }
+}
 
 // ═══════════════════════════════════════════════
 // Persona Image (generate / upload / regenerate)

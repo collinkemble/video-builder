@@ -483,6 +483,32 @@ app.get('/api/videos/:id', async (req, res) => {
       }
     });
 
+    // Auto-resolve brand logo from PocketSIC if missing
+    const _psApiKey = process.env.POCKETSIC_API_KEY;
+    const _psBaseUrl = process.env.POCKETSIC_BASE_URL || 'https://pocketsic.aubreydemo.com';
+    if (!video.brand_logo_url && video.pocketsic_project_id && _psApiKey) {
+      try {
+        const pResp = await fetch(
+          `${_psBaseUrl}/api/projects/${video.pocketsic_project_id}?email=${encodeURIComponent(email)}`,
+          { headers: { 'X-API-Key': _psApiKey } }
+        );
+        if (pResp.ok) {
+          const pData = await pResp.json();
+          const proj = pData.project || pData;
+          const bp = proj.brand_profile || {};
+          const logoUrl = bp.logoUrl || bp.logo_url || bp.logo || proj.brand_logo_url || proj.logo_url || null;
+          if (logoUrl) {
+            console.log(`[API] Auto-resolved brand logo from PocketSIC for video ${video.id}: ${logoUrl}`);
+            video.brand_logo_url = logoUrl;
+            // Persist so it doesn't need to be fetched again
+            await query('UPDATE videos SET brand_logo_url = ? WHERE id = ?', [logoUrl, video.id]);
+          }
+        }
+      } catch (e) {
+        console.warn(`[API] Brand logo auto-fetch failed (non-fatal): ${e.message}`);
+      }
+    }
+
     // If persona image URL exists, verify it's accessible; if not, try presigned URL fallback
     if (video.persona_image_url && video.persona_image_url.includes('r2.dev/')) {
       try {
@@ -1015,6 +1041,50 @@ app.delete('/api/videos/:id/persona-image', async (req, res) => {
   } catch (err) {
     console.error('Persona image delete failed:', err);
     res.status(500).json({ error: 'Failed to remove persona image' });
+  }
+});
+
+// POST /api/videos/:id/upload-brand-logo — upload a custom brand logo
+app.post('/api/videos/:id/upload-brand-logo', async (req, res) => {
+  try {
+    const { email, imageData } = req.body;
+    if (!email) return res.status(400).json({ error: 'Email required' });
+    if (!imageData) return res.status(400).json({ error: 'Image data required (base64)' });
+
+    const user = await getOrCreateUser(email);
+    const rows = await query('SELECT id FROM videos WHERE id = ? AND user_id = ?', [req.params.id, user.id]);
+    if (rows.length === 0) return res.status(404).json({ error: 'Video not found' });
+
+    // Parse base64 data URI
+    let buffer;
+    let ext = 'png';
+    if (imageData.startsWith('data:')) {
+      const match = imageData.match(/^data:image\/(\w+);base64,(.+)$/);
+      if (!match) return res.status(400).json({ error: 'Invalid image data format' });
+      ext = match[1] === 'jpeg' ? 'jpg' : match[1];
+      buffer = Buffer.from(match[2], 'base64');
+    } else {
+      buffer = Buffer.from(imageData, 'base64');
+    }
+
+    if (buffer.length > 5 * 1024 * 1024) {
+      return res.status(400).json({ error: 'Image too large (max 5MB)' });
+    }
+
+    const { uploadFile } = require('./src/utils/r2');
+    const contentType = ext === 'jpg' ? 'image/jpeg' : `image/${ext}`;
+    const key = `videos/${user.id}/${req.params.id}/brand_logo_${Date.now()}.${ext}`;
+    const tmpPath = require('path').join(require('os').tmpdir(), `brand_logo_upload_${Date.now()}.${ext}`);
+    require('fs').writeFileSync(tmpPath, buffer);
+    const imageUrl = await uploadFile(key, tmpPath, contentType);
+    try { require('fs').unlinkSync(tmpPath); } catch (e) { /* ignore */ }
+
+    await query('UPDATE videos SET brand_logo_url = ?, updated_at = NOW() WHERE id = ?', [imageUrl, req.params.id]);
+
+    res.json({ success: true, brand_logo_url: imageUrl });
+  } catch (err) {
+    console.error('Brand logo upload failed:', err);
+    res.status(500).json({ error: 'Failed to upload brand logo: ' + err.message });
   }
 });
 

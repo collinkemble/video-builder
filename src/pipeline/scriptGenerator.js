@@ -74,7 +74,8 @@ SCENES (in order):
 ${sceneList}
 
 Write a narration script that tells a connected customer experience story. The narration should:
-- Start with an engaging intro that sets up the brand's vision
+- Start with a SHORT, punchy intro (1-2 sentences MAX) that sets up the brand — do NOT introduce the persona in the intro
+- The persona should be introduced ONLY ONCE, in the narration for the FIRST scene segment (e.g., "Meet [name], who…"). Never introduce or mention the persona by name in the intro segment.
 - Walk through each scene as part of a cohesive customer journey
 - Include transition moments between major channel shifts
 - End with a wrap-up that ties the experience together
@@ -94,8 +95,8 @@ Return ONLY valid JSON in this exact format:
       "channel": null,
       "visualType": "broll",
       "brollDescription": "Description of a lifestyle/brand image for the intro",
-      "narration": "The opening narration text...",
-      "estimatedDuration": 12
+      "narration": "Short punchy intro — 1-2 sentences only, NO persona introduction here",
+      "estimatedDuration": 7
     },
     {
       "order": 2,
@@ -121,8 +122,8 @@ Return ONLY valid JSON in this exact format:
 }
 
 Segment types:
-- "intro" — Opening, always first, uses b-roll visual
-- "scene" — Maps to a PocketSIC scene, uses scene_capture visual
+- "intro" — SHORT opening (1-2 sentences), always first, uses b-roll visual. Sets up the brand only — do NOT introduce the persona here.
+- "scene" — Maps to a PocketSIC scene, uses scene_capture visual. The FIRST scene segment is where the persona should be introduced by name.
 - "transition" — Brief bridge between scenes, uses b-roll
 - "outro" — Closing, always last, uses b-roll
 
@@ -144,11 +145,11 @@ B-ROLL UNIQUENESS RULES (CRITICAL):
 - NEVER use generic descriptions — be hyper-specific about the exact visual scene, camera angle, and mood. Each description must paint a distinct cinematic picture.
 
 DURATION RULES:
-- Intro segments should be at least 10-15 seconds with substantive narration (3-4 sentences).
+- Intro segments should be SHORT: 5-8 seconds with 1-2 punchy sentences. The intro sets the stage quickly — do NOT linger or over-explain. No persona introduction here.
 - Transition segments should be at least 8-10 seconds with meaningful narration (2-3 sentences).
 - Outro segments should be at least 10-15 seconds with a proper wrap-up (3-4 sentences).
 - Scene segments should be 12-20 seconds each.
-- NEVER make any segment shorter than 8 seconds. Short segments create jarring visual cuts.
+- NEVER make any segment shorter than 5 seconds. Short segments create jarring visual cuts.
 
 IMPORTANT: Every PocketSIC scene MUST appear exactly once as a "scene" type segment. Include the scene's sceneId and channel.
 

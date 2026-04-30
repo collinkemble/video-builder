@@ -23,10 +23,11 @@ CRITICAL RULES YOU MUST FOLLOW:
 2. ABSOLUTELY NO close-ups of devices — do not show any device screen from an angle where you can see what is displayed.
 3. DO NOT generate images of people looking at screens, typing on keyboards, or using touchscreens in close-up.
 4. INSTEAD focus on: people's faces and emotions, hands gesturing, walking, shopping in stores, outdoor environments, coffee shops, cityscapes, nature, product packaging, storefronts, lifestyle moments.
-5. No text overlays, no logos, no UI mockups.
+5. ABSOLUTELY NO text of any kind — no text overlays, no logos, no UI mockups, no signage with readable text, no writing on vehicles, no labels, no brand names visible, no letters or words anywhere in the scene. All surfaces must be clean and text-free.
 6. Slow cinematic motion only — no rapid movement.
 7. ABSOLUTELY NO morphing between people — if a person appears, they must remain the SAME person throughout the entire clip. Do NOT transition one person's face or body into a different person. Keep consistent identity for all people shown.
-8. If showing people, show only ONE person per shot OR a consistent group. Never change who they are mid-clip.`;
+8. If showing people, show only ONE person per shot OR a consistent group. Never change who they are mid-clip.
+9. NO delivery trucks, shipping vehicles, or logistics imagery unless specifically requested. Focus on human moments and environments.`;
 
 /**
  * Poll a Veo video operation until done.
@@ -228,7 +229,7 @@ CRITICAL RULES YOU MUST FOLLOW:
 2. ABSOLUTELY NO close-ups of devices showing screen content.
 3. DO NOT show people looking at screens or using touchscreens in close-up.
 4. INSTEAD focus on: people's faces, emotions, hands, shopping, outdoor scenes, storefronts, lifestyle moments, environments, nature, cityscapes.
-5. No text, no logos, no UI mockups.`;
+5. ABSOLUTELY NO text of any kind — no text, no logos, no UI mockups, no signage with readable text, no writing on vehicles, no labels, no brand names visible. All surfaces must be clean and text-free.`;
 
   // Image generation models — ordered newest to oldest
   // gemini-2.0-flash models sunset June 1 2026
@@ -353,6 +354,15 @@ async function generateBroll({ description, brandName, outputDir, segmentType = 
   const videoPath = await generateBrollVideo({ description, brandName, outputDir, segmentType, segmentChannel, personaImageUrl });
   if (videoPath) return videoPath;
 
+  // Retry Veo once with a simplified prompt before falling back to still images
+  console.log(`[B-Roll] Retrying Veo with simplified prompt...`);
+  const retryPath = await generateBrollVideo({
+    description: `Cinematic lifestyle footage: ${description.substring(0, 100)}`,
+    brandName, outputDir, segmentType, segmentChannel,
+    personaImageUrl: null,  // Drop persona ref on retry — it can cause failures
+  });
+  if (retryPath) return retryPath;
+
   // Fallback to image generation (Gemini Imagen)
   return await generateBrollImage({ description, brandName, outputDir });
 }
@@ -430,13 +440,23 @@ async function generateAllBroll(segments, brandName, outputDir, onProgress, pers
   const promises = segmentClipCounts.map(({ seg, clipsNeeded }, i) => {
     console.log(`[B-Roll] Segment ${i + 1}/${segments.length} (${seg.type || 'broll'}): ${clipsNeeded} clip(s) — "${seg.brollDescription?.substring(0, 50)}..."`);
 
-    // Generate clipsNeeded clips for this segment, all in parallel
+    // Generate clipsNeeded clips for this segment, all in parallel.
+    // Each clip gets a DISTINCT visual description to avoid repetitive themes.
     const clipPromises = [];
+    const variationStyles = [
+      null,  // First clip uses the original description unchanged
+      'Show a COMPLETELY DIFFERENT scene and setting — different location, different activity, different mood. Do NOT repeat any action or prop from the previous shot.',
+      'Show an OUTDOOR establishing shot — wide angle, environmental, no close-ups of objects. Completely different from previous clips.',
+      'Show a warm CLOSE-UP of hands or a facial expression — intimate, emotional moment. No props, no objects, no packages.',
+    ];
+
     for (let c = 0; c < clipsNeeded; c++) {
-      // Slightly vary the description for additional clips to get visual variety
       let desc = seg.brollDescription || 'Professional lifestyle image';
-      if (c > 0) {
-        desc = `${desc} — different angle, continued shot ${c + 1}`;
+      if (c > 0 && c < variationStyles.length) {
+        // Replace the original description with a distinctly different visual direction
+        desc = `${variationStyles[c]} General theme: ${desc.substring(0, 80)}`;
+      } else if (c >= variationStyles.length) {
+        desc = `Cinematic environmental wide shot — cityscape, nature, or architecture. Unrelated to previous clips. Theme context: ${desc.substring(0, 60)}`;
       }
 
       clipPromises.push(

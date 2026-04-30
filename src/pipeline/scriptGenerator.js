@@ -136,10 +136,12 @@ B-ROLL / TRANSITION PLACEMENT RULES (CRITICAL):
 B-ROLL UNIQUENESS RULES (CRITICAL):
 - Every brollDescription MUST be completely unique and visually distinct from every other brollDescription.
 - Do NOT repeat or closely paraphrase the same description. Each b-roll clip is generated as a separate video — if descriptions are similar, the clips look identical and the video appears to repeat itself.
-- The intro b-roll should show a wide establishing shot (e.g., cityscape, storefront exterior, lifestyle moment).
-- Transition b-roll should show the specific context change (e.g., "person walking through a shopping district toward a store entrance" vs "hands opening a delivery package at a kitchen counter").
-- The outro b-roll should show a warm conclusion (e.g., satisfied customer, sunset scene, brand celebration).
-- Be specific and detailed in each description — vague descriptions like "happy customer" will produce similar-looking clips.
+- NEVER repeat the same action or prop across different b-roll clips. For example: if one clip shows a delivery, NO other clip can show a delivery. If one shows someone opening a package, NO other clip can show package opening. Each clip must show a FUNDAMENTALLY DIFFERENT activity.
+- NEVER include delivery trucks, shipping vehicles, or logistics imagery — these create ugly shots with fake text on them.
+- The intro b-roll should show a wide establishing shot (e.g., cityscape morning light, person walking through a vibrant neighborhood, aerial view of a city).
+- Transition b-roll should show the specific context change (e.g., "person walking through a shopping district" vs "close-up of hands holding a coffee cup in a café").
+- The outro b-roll should show a warm conclusion (e.g., person smiling at sunset, a beautiful landscape, a cozy evening moment).
+- NEVER use generic descriptions — be hyper-specific about the exact visual scene, camera angle, and mood. Each description must paint a distinct cinematic picture.
 
 DURATION RULES:
 - Intro segments should be at least 10-15 seconds with substantive narration (3-4 sentences).

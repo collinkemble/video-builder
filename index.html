@@ -1631,8 +1631,27 @@ async function startGeneration(force = false) {
   if (!currentVideoId) return;
   const email = document.getElementById('user-email').textContent;
   const btn = document.getElementById('generate-btn');
+
+  // If a video already exists, show confirmation popup
+  const playerWrap = document.getElementById('video-player-wrap');
+  const hasExistingVideo = !playerWrap.classList.contains('hidden');
+  if (hasExistingVideo && !force) {
+    const confirmed = confirm(
+      'The existing video will be deleted and a new one will be generated.\n\nThis cannot be undone. Continue?'
+    );
+    if (!confirmed) return;
+  }
+
   btn.disabled = true;
   btn.textContent = '⏳ Starting...';
+
+  // Immediately hide the old video player and download bar so user sees it's gone
+  playerWrap.classList.add('hidden');
+  const player = document.getElementById('video-player');
+  player.pause();
+  player.removeAttribute('src');
+  player.load(); // Force release of old video resource
+  document.getElementById('video-download-bar').classList.add('hidden');
 
   try {
     const resp = await fetch(`/api/videos/${currentVideoId}/generate`, {

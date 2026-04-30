@@ -509,6 +509,33 @@ app.get('/api/videos/:id', async (req, res) => {
       }
     }
 
+    // Auto-resolve persona image from PocketSIC if missing
+    if (!video.persona_image_url && video.pocketsic_project_id && _psApiKey) {
+      try {
+        // Reuse PocketSIC data if already fetched above, otherwise make a new call
+        let projData = null;
+        const pResp2 = await fetch(
+          `${_psBaseUrl}/api/projects/${video.pocketsic_project_id}?email=${encodeURIComponent(email)}`,
+          { headers: { 'X-API-Key': _psApiKey } }
+        );
+        if (pResp2.ok) {
+          const pData2 = await pResp2.json();
+          projData = pData2.project || pData2;
+        }
+        if (projData) {
+          const persona = projData.persona || {};
+          const personaImgUrl = persona.imageUrl || persona.image_url || persona.image || projData.persona_image_url || null;
+          if (personaImgUrl) {
+            console.log(`[API] Auto-resolved persona image from PocketSIC for video ${video.id}: ${personaImgUrl}`);
+            video.persona_image_url = personaImgUrl;
+            await query('UPDATE videos SET persona_image_url = ? WHERE id = ?', [personaImgUrl, video.id]);
+          }
+        }
+      } catch (e) {
+        console.warn(`[API] Persona image auto-fetch failed (non-fatal): ${e.message}`);
+      }
+    }
+
     // If persona image URL exists, verify it's accessible; if not, try presigned URL fallback
     if (video.persona_image_url && video.persona_image_url.includes('r2.dev/')) {
       try {
@@ -628,7 +655,7 @@ app.put('/api/videos/:id', async (req, res) => {
     }
     if (musicTrackId !== undefined && musicTrackId !== null) {
       sets.push('music_track_id = ?');
-      params.push(musicTrackId === '' ? 'none' : musicTrackId);
+      params.push(musicTrackId === '' ? 'corporate-technology' : musicTrackId);
     }
 
     // Three-state guard for persona_image_url: truthy → use it, empty string → clear to null, null/undefined → keep existing

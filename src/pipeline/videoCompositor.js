@@ -149,6 +149,23 @@ async function composeVideo({
     }
   }
 
+  // ── Step 2c: Apply logo overlay to outro clip ──
+  if (brandLogoUrl && normalizedClips.length > 0) {
+    const lastIdx = timelineEntries.length - 1;
+    if (timelineEntries[lastIdx].type === 'outro') {
+      try {
+        const outroClip = normalizedClips[lastIdx];
+        const overlaidOutro = path.join(workDir, `clip_${String(lastIdx).padStart(3, '0')}_overlay.mp4`);
+        await applyIntroLogoOverlay(outroClip, overlaidOutro, brandLogoUrl, workDir);
+        safeDelete(outroClip);
+        fs.renameSync(overlaidOutro, outroClip);
+        console.log('[Compositor] ✓ Outro logo overlay applied');
+      } catch (err) {
+        console.warn(`[Compositor] Outro logo overlay failed (non-fatal): ${err.message}`);
+      }
+    }
+  }
+
   // ── Step 3: Concatenate all clips ──
   const concatPath = path.join(workDir, 'concat.txt');
   const concatContent = normalizedClips.map(p => `file '${p.replace(/'/g, "'\\''")}'`).join('\n');
@@ -366,6 +383,24 @@ async function normalizeVideoClip(inputPath, outputPath, targetDuration, _unused
       '-movflags', '+faststart',
       outputPath,
     ], `normalizing clip (${cappedSpeedup.toFixed(1)}x speed-up)`);
+  }
+
+  // If clip is shorter than target, loop it to fill the time (prevents freeze frames)
+  if (clipDuration < targetDuration * 0.95) {
+    console.log(`[Compositor] Clip ${clipDuration.toFixed(1)}s < target ${targetDuration.toFixed(1)}s — looping to fill`);
+    return runFfmpeg([
+      '-y',
+      '-stream_loop', '-1',  // Loop input indefinitely
+      '-i', inputPath,
+      '-vf', `scale=${WIDTH}:${HEIGHT}:force_original_aspect_ratio=decrease,pad=${WIDTH}:${HEIGHT}:(ow-iw)/2:(oh-ih)/2:black,format=yuv420p`,
+      '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '23',
+      '-t', String(targetDuration),
+      '-r', String(FPS),
+      '-pix_fmt', 'yuv420p',
+      '-an',
+      '-movflags', '+faststart',
+      outputPath,
+    ], `normalizing clip (looped to fill ${targetDuration.toFixed(1)}s)`);
   }
 
   // Default: trim to target at normal speed

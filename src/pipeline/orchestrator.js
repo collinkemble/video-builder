@@ -84,6 +84,35 @@ async function runPipeline(videoId, userId, options = {}) {
       }
     }
 
+    // ── Resolve persona image URL (fallback to PocketSIC if missing) ──
+    let personaImageUrl = video.persona_image_url || null;
+    if (!personaImageUrl && video.pocketsic_project_id) {
+      try {
+        const POCKETSIC_BASE_URL_P = process.env.POCKETSIC_BASE_URL || 'https://pocketsic.aubreydemo.com';
+        const POCKETSIC_API_KEY_P = process.env.POCKETSIC_API_KEY;
+        if (POCKETSIC_API_KEY_P) {
+          const [user] = await query('SELECT email FROM users WHERE id = ?', [userId]);
+          const email = user ? user.email : '';
+          const pResp2 = await fetch(
+            `${POCKETSIC_BASE_URL_P}/api/projects/${video.pocketsic_project_id}?email=${encodeURIComponent(email)}`,
+            { headers: { 'X-API-Key': POCKETSIC_API_KEY_P } }
+          );
+          if (pResp2.ok) {
+            const pData2 = await pResp2.json();
+            const proj2 = pData2.project || pData2;
+            const persona = proj2.persona || {};
+            personaImageUrl = persona.imageUrl || persona.image_url || persona.image || proj2.persona_image_url || null;
+            if (personaImageUrl) {
+              console.log(`[Pipeline] Resolved persona image from PocketSIC: ${personaImageUrl}`);
+              await query('UPDATE videos SET persona_image_url = ? WHERE id = ?', [personaImageUrl, videoId]);
+            }
+          }
+        }
+      } catch (err) {
+        console.warn(`[Pipeline] Failed to fetch persona image from PocketSIC (non-fatal): ${err.message}`);
+      }
+    }
+
     // ── Step 1: Script Generation ──
     // If user already generated/edited a script, reuse it; otherwise generate one now
     const existingScript = video.narration_script
@@ -206,7 +235,7 @@ async function runPipeline(videoId, userId, options = {}) {
           (done, total) => {
             updateJobProgress(brollJobId, done, total);
           },
-          video.persona_image_url || null,
+          personaImageUrl,
           voiceoverResult.timestamps,  // Pass timestamps so b-roll knows required durations
           script.segments              // Pass all segments for next-segment-start calculation
         );

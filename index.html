@@ -1148,7 +1148,7 @@ async function viewVideo(id, skipPush) {
     document.getElementById('edit-brand').value = video.brand_name || '';
     document.getElementById('edit-voice').value = video.voice_id || 'default';
     document.getElementById('edit-duration').value = String(video.duration_target || 180);
-    document.getElementById('edit-music').value = video.music_track_id || 'none';
+    document.getElementById('edit-music').value = video.music_track_id || 'corporate-technology';
     updateMusicPreviewButton();
 
     // Store originals
@@ -1157,7 +1157,7 @@ async function viewVideo(id, skipPush) {
       brand: video.brand_name || '',
       voice: video.voice_id || 'default',
       duration: String(video.duration_target || 180),
-      music: video.music_track_id || 'none',
+      music: video.music_track_id || 'corporate-technology',
     };
     hideSaveSettingsBar();
 

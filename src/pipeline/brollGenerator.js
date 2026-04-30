@@ -459,6 +459,10 @@ async function generateAllBroll(segments, brandName, outputDir, onProgress, pers
         desc = `Cinematic environmental wide shot — cityscape, nature, or architecture. Unrelated to previous clips. Theme context: ${desc.substring(0, 60)}`;
       }
 
+      // Only pass persona reference for transition b-roll (not intro/outro, which are establishing shots)
+      // and only for the FIRST clip of a multi-clip segment (to avoid Veo generating inconsistent characters)
+      const usePersona = personaImageUrl && seg.type === 'transition' && c === 0;
+
       clipPromises.push(
         generateBroll({
           description: desc,
@@ -466,7 +470,7 @@ async function generateAllBroll(segments, brandName, outputDir, onProgress, pers
           outputDir,
           segmentType: seg.type || '',
           segmentChannel: seg.channel || '',
-          personaImageUrl,
+          personaImageUrl: usePersona ? personaImageUrl : null,
         }).then(mediaPath => {
           completed++;
           if (mediaPath.endsWith('.mp4')) {

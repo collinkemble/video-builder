@@ -1108,6 +1108,21 @@ app.get('/api/pocketsic/projects/:id', async (req, res) => {
     }
 
     const data = await pResp.json();
+    // Log brand_profile to discover logo field name
+    if (data.project && data.project.brand_profile) {
+      console.log('[PocketSIC] brand_profile keys:', Object.keys(data.project.brand_profile));
+      const bp = data.project.brand_profile;
+      const logoFields = Object.entries(bp).filter(([k, v]) => k.toLowerCase().includes('logo') || (typeof v === 'string' && v.match(/\.(png|jpg|jpeg|svg|webp)/i)));
+      if (logoFields.length > 0) console.log('[PocketSIC] Logo fields found:', logoFields.map(([k, v]) => `${k}=${String(v).substring(0, 80)}`));
+      else console.log('[PocketSIC] No logo fields found in brand_profile');
+    } else {
+      console.log('[PocketSIC] project keys:', data.project ? Object.keys(data.project) : 'no project');
+      // Also check top-level project for logo fields
+      if (data.project) {
+        const logoFields = Object.entries(data.project).filter(([k, v]) => k.toLowerCase().includes('logo') || (typeof v === 'string' && String(v).match(/\.(png|jpg|jpeg|svg|webp)/i)));
+        if (logoFields.length > 0) console.log('[PocketSIC] Logo fields on project:', logoFields.map(([k, v]) => `${k}=${String(v).substring(0, 80)}`));
+      }
+    }
     res.json(data);
   } catch (err) {
     console.error('PocketSIC proxy failed:', err);

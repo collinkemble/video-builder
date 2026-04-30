@@ -74,8 +74,9 @@ SCENES (in order):
 ${sceneList}
 
 Write a narration script that tells a connected customer experience story. The narration should:
-- Start with a SHORT, punchy intro (1-2 sentences MAX) that sets up the brand — do NOT introduce the persona in the intro
-- The persona should be introduced ONLY ONCE, in the narration for the FIRST scene segment (e.g., "Meet [name], who…"). Never introduce or mention the persona by name in the intro segment.
+- Start with a SHORT, punchy intro (1-2 sentences MAX) that sets up the BRAND only — do NOT mention or introduce the persona/character by name in the intro. The intro should ONLY mention the brand and what it does.
+- The persona should be introduced ONLY ONCE, in the narration for the FIRST scene segment (e.g., "Meet [name], who…"). Never introduce or mention the persona by name in the intro segment. If the persona is introduced in the intro, the script is WRONG.
+- NEVER mention the persona's name more than once across the ENTIRE script. After introducing them in the first scene, refer to them as "she", "he", "they", "our customer", etc. — NEVER repeat their name.
 - Walk through each scene as part of a cohesive customer journey
 - Include transition moments between major channel shifts
 - End with a wrap-up that ties the experience together
@@ -95,8 +96,8 @@ Return ONLY valid JSON in this exact format:
       "channel": null,
       "visualType": "broll",
       "brollDescription": "Description of a lifestyle/brand image for the intro",
-      "narration": "Short punchy intro — 1-2 sentences only, NO persona introduction here",
-      "estimatedDuration": 7
+      "narration": "Short punchy intro about the BRAND only — 1-2 sentences, absolutely NO persona name here",
+      "estimatedDuration": 10
     },
     {
       "order": 2,
@@ -122,7 +123,7 @@ Return ONLY valid JSON in this exact format:
 }
 
 Segment types:
-- "intro" — SHORT opening (1-2 sentences), always first, uses b-roll visual. Sets up the brand only — do NOT introduce the persona here.
+- "intro" — Opening (2-3 sentences, ~10 seconds), always first, uses b-roll visual. Sets up the BRAND ONLY — do NOT introduce or name the persona here. Must be long enough for the logo animation overlay.
 - "scene" — Maps to a PocketSIC scene, uses scene_capture visual. The FIRST scene segment is where the persona should be introduced by name.
 - "transition" — Brief bridge between scenes, uses b-roll
 - "outro" — Closing, always last, uses b-roll
@@ -145,7 +146,7 @@ B-ROLL UNIQUENESS RULES (CRITICAL):
 - NEVER use generic descriptions — be hyper-specific about the exact visual scene, camera angle, and mood. Each description must paint a distinct cinematic picture.
 
 DURATION RULES:
-- Intro segments should be SHORT: 5-8 seconds with 1-2 punchy sentences. The intro sets the stage quickly — do NOT linger or over-explain. No persona introduction here.
+- Intro segments should be 8-12 seconds with 2-3 sentences that set up the brand. The intro has an animated logo overlay that needs time to play, so aim for 10 seconds of narration. Do NOT make the intro shorter than 8 seconds. No persona introduction here.
 - Transition segments should be at least 8-10 seconds with meaningful narration (2-3 sentences).
 - Outro segments should be at least 10-15 seconds with a proper wrap-up (3-4 sentences).
 - Scene segments should be 12-20 seconds each.
@@ -180,6 +181,34 @@ CRITICAL ORDERING RULE: Scene segments MUST appear in the EXACT same order as th
   const missingScenes = scenes.filter(s => !scriptSceneIds.includes(s.id));
   if (missingScenes.length > 0) {
     console.warn(`Warning: ${missingScenes.length} scene(s) missing from script: ${missingScenes.map(s => s.id).join(', ')}`);
+  }
+
+  // ── Validate: persona name must NOT appear in intro ──
+  // The LLM sometimes ignores the instruction and introduces the persona in the intro.
+  // Detect this and warn — we can't easily rewrite the narration, but at least flag it.
+  if (personaName) {
+    const introSeg = script.segments.find(s => s.type === 'intro');
+    if (introSeg && introSeg.narration) {
+      const namePattern = new RegExp(personaName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+      if (namePattern.test(introSeg.narration)) {
+        console.warn(`[ScriptGenerator] ⚠ Persona name "${personaName}" found in intro narration — removing it.`);
+        // Attempt to remove the persona introduction from the intro
+        // Common patterns: "Meet X, ...", "X is ...", "Enter X, ..."
+        introSeg.narration = introSeg.narration
+          .replace(new RegExp(`\\bMeet\\s+${personaName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[^.]*\\.\\s*`, 'gi'), '')
+          .replace(new RegExp(`\\bEnter\\s+${personaName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[^.]*\\.\\s*`, 'gi'), '')
+          .replace(new RegExp(`\\b${personaName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'gi'), 'a customer')
+          .trim();
+        console.log(`[ScriptGenerator] Cleaned intro narration: "${introSeg.narration.substring(0, 100)}..."`);
+      }
+    }
+  }
+
+  // ── Enforce minimum intro duration for logo overlay animation ──
+  const introSegment = script.segments.find(s => s.type === 'intro');
+  if (introSegment && introSegment.estimatedDuration < 10) {
+    console.log(`[ScriptGenerator] Intro estimatedDuration ${introSegment.estimatedDuration}s → bumped to 10s for logo overlay`);
+    introSegment.estimatedDuration = 10;
   }
 
   // ── Enforce scene ordering matches input order ──

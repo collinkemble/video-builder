@@ -101,8 +101,40 @@ async function composeVideo({
     }
   }
 
-  // ── Step 2b: Apply logo overlay to intro clip ──
+  // ── Step 2b: Ensure intro has enough time for logo overlay animation ──
+  // If the intro clip is shorter than 10s and we have a brand logo, pad it.
+  // We also need to delay the voiceover audio by the same padding amount
+  // so all subsequent segments stay in sync.
+  let voiceoverDelay = 0; // seconds of silence to prepend to voiceover audio
+  const MIN_INTRO_FOR_LOGO = 10; // minimum intro duration when logo overlay is active
+
   if (brandLogoUrl && normalizedClips.length > 0 && timelineEntries[0].type === 'intro') {
+    const introDuration = timelineEntries[0].duration;
+    if (introDuration < MIN_INTRO_FOR_LOGO) {
+      const padding = MIN_INTRO_FOR_LOGO - introDuration;
+      console.log(`[Compositor] Intro is ${introDuration.toFixed(1)}s but logo overlay needs ${MIN_INTRO_FOR_LOGO}s — padding by ${padding.toFixed(1)}s`);
+
+      // Re-create the intro clip with the longer duration
+      const introEntry = timelineEntries[0];
+      const paddedClipPath = path.join(workDir, 'clip_000_padded.mp4');
+
+      if (introEntry.isVideo && introEntry.sourcePaths.length > 1) {
+        await concatBrollClips(introEntry.sourcePaths, paddedClipPath, MIN_INTRO_FOR_LOGO, workDir, 999);
+      } else if (introEntry.isVideo) {
+        await normalizeVideoClip(introEntry.sourcePath, paddedClipPath, MIN_INTRO_FOR_LOGO, false);
+      } else {
+        await imageToVideo(introEntry.sourcePath, paddedClipPath, MIN_INTRO_FOR_LOGO);
+      }
+
+      safeDelete(normalizedClips[0]);
+      fs.renameSync(paddedClipPath, normalizedClips[0]);
+
+      timelineEntries[0].duration = MIN_INTRO_FOR_LOGO;
+      voiceoverDelay = padding;
+      console.log(`[Compositor] Intro padded to ${MIN_INTRO_FOR_LOGO}s, voiceover will be delayed by ${padding.toFixed(1)}s`);
+    }
+
+    // Apply logo overlay
     try {
       const introClip = normalizedClips[0];
       const overlaidClip = path.join(workDir, 'clip_000_overlay.mp4');
@@ -150,9 +182,25 @@ async function composeVideo({
   }
 
   // ── Step 4: Overlay voiceover audio (+ background music if available) ──
+  // If we padded the intro, delay the voiceover audio to keep narration in sync
+  let effectiveVoiceoverPath = voiceoverPath;
+  if (voiceoverDelay > 0 && voiceoverPath && fs.existsSync(voiceoverPath)) {
+    const delayedPath = path.join(workDir, 'voiceover_delayed.mp3');
+    const delayMs = Math.round(voiceoverDelay * 1000);
+    console.log(`[Compositor] Delaying voiceover by ${voiceoverDelay.toFixed(1)}s (${delayMs}ms) to sync with padded intro`);
+    await runFfmpeg([
+      '-y',
+      '-i', voiceoverPath,
+      '-af', `adelay=${delayMs}|${delayMs}`,
+      '-c:a', 'libmp3lame', '-q:a', '2',
+      delayedPath,
+    ], `delaying voiceover by ${voiceoverDelay.toFixed(1)}s`);
+    effectiveVoiceoverPath = delayedPath;
+  }
+
   const finalVideoPath = path.join(workDir, `video_${Date.now()}.mp4`);
-  if (voiceoverPath && fs.existsSync(voiceoverPath)) {
-    await overlayAudio(silentVideoPath, voiceoverPath, finalVideoPath, onProgress, musicPath);
+  if (effectiveVoiceoverPath && fs.existsSync(effectiveVoiceoverPath)) {
+    await overlayAudio(silentVideoPath, effectiveVoiceoverPath, finalVideoPath, onProgress, musicPath);
   } else if (musicPath) {
     // No voiceover but has music — overlay just the music
     await overlayMusicOnly(silentVideoPath, musicPath, finalVideoPath, onProgress);
@@ -174,6 +222,7 @@ async function composeVideo({
   safeDelete(silentVideoPath);
   safeDelete(concatPath);
   if (musicPath) safeDelete(musicPath);
+  if (effectiveVoiceoverPath !== voiceoverPath) safeDelete(effectiveVoiceoverPath);
 
   return {
     videoPath: finalVideoPath,
@@ -258,6 +307,11 @@ function buildTimeline(segments, timestamps, sceneImages, brollImages) {
 
     // NOTE: No b-roll minimum override — visual duration MUST match audio timeline
     // to prevent scenes from drifting ahead of their narration.
+    // EXCEPTION: The intro segment needs a minimum duration for the logo overlay
+    // animation (~10s). If the intro audio is shorter, we pad the visual with silence.
+    // This is safe because the voiceover is overlaid as a single track — extra visual
+    // time at the start just means a brief moment of silence after the intro narration
+    // before the scene narration starts, which feels natural.
 
     entries.push({
       order: seg.order,
@@ -411,16 +465,17 @@ async function applyIntroLogoOverlay(inputPath, outputPath, brandLogoUrl, workDi
   fs.writeFileSync(brandLogoPath, buffer);
   console.log(`[Compositor] Brand logo downloaded: ${(buffer.length / 1024).toFixed(0)}KB`);
 
-  // Salesforce logo and plus symbol — located at the app root
+  // Salesforce logo and plus symbols — located at the app root
   const appRoot = path.join(__dirname, '..', '..');
   const sfLogoPath = path.join(appRoot, 'sflogo.png');
-  const plusPath = path.join(appRoot, 'plus_symbol.png');
+  const plusPathWhite = path.join(appRoot, 'plus_symbol.png');       // white "+" for black scrim
+  const plusPathBlack = path.join(appRoot, 'plus_symbol_black.png'); // black "+" for white scrim
 
   if (!fs.existsSync(sfLogoPath)) {
     throw new Error(`Salesforce logo not found at ${sfLogoPath}`);
   }
-  if (!fs.existsSync(plusPath)) {
-    throw new Error(`Plus symbol not found at ${plusPath}`);
+  if (!fs.existsSync(plusPathWhite)) {
+    throw new Error(`Plus symbol (white) not found at ${plusPathWhite}`);
   }
 
   // ── Detect brand logo brightness to choose scrim colour ──
@@ -454,6 +509,11 @@ async function applyIntroLogoOverlay(inputPath, outputPath, brandLogoUrl, workDi
   } catch (err) {
     console.warn(`[Compositor] Brightness detection failed (using default black scrim): ${err.message}`);
   }
+
+  // Choose plus symbol colour to contrast with scrim:
+  // Black scrim → white plus, White scrim → black plus
+  const plusPath = (scrimColor === 'white' && fs.existsSync(plusPathBlack)) ? plusPathBlack : plusPathWhite;
+  console.log(`[Compositor] Using ${scrimColor === 'white' ? 'BLACK' : 'WHITE'} plus symbol`);
 
   // ── Get intro clip duration to adapt timing ──
   let clipDuration = 10;

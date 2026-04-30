@@ -577,8 +577,8 @@ app.post('/api/videos', async (req, res) => {
 
     const result = await query(
       `INSERT INTO videos (user_id, name, brand_name, brand_logo_url, pocketsic_project_id, pocketsic_project_name,
-        scene_data, voice_id, duration_target, scriptwriter_script_id, scriptwriter_script_name, scriptwriter_data, status)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft')`,
+        scene_data, voice_id, duration_target, music_track_id, scriptwriter_script_id, scriptwriter_script_name, scriptwriter_data, status)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft')`,
       [
         user.id,
         name.trim(),
@@ -589,6 +589,7 @@ app.post('/api/videos', async (req, res) => {
         sceneData ? JSON.stringify(sceneData) : null,
         voiceId || 'default',
         durationTarget || 180,
+        'corporate-technology',
         scriptWriterScriptId || null,
         scriptWriterScriptName || null,
         scriptWriterData ? JSON.stringify(scriptWriterData) : null,
@@ -1314,9 +1315,9 @@ async function createSharedVideoCopy(sourceVideo, senderEmail, recipientEmail) {
   const result = await query(
     `INSERT INTO videos (user_id, name, brand_name, brand_logo_url, pocketsic_project_id, pocketsic_project_name,
       scene_data, narration_script, voiceover_timestamps, video_url, thumbnail_url, voiceover_url,
-      voice_id, duration_target, duration_actual, scriptwriter_script_id, scriptwriter_script_name, scriptwriter_data,
+      voice_id, duration_target, duration_actual, music_track_id, scriptwriter_script_id, scriptwriter_script_name, scriptwriter_data,
       persona_image_url, status, shared_by, shared_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
     [
       recipientUser.id,
       sourceVideo.name,
@@ -1333,6 +1334,7 @@ async function createSharedVideoCopy(sourceVideo, senderEmail, recipientEmail) {
       sourceVideo.voice_id,
       sourceVideo.duration_target,
       sourceVideo.duration_actual,
+      sourceVideo.music_track_id || 'corporate-technology',
       sourceVideo.scriptwriter_script_id || null,
       sourceVideo.scriptwriter_script_name || null,
       sourceVideo.scriptwriter_data ? (typeof sourceVideo.scriptwriter_data === 'string' ? sourceVideo.scriptwriter_data : JSON.stringify(sourceVideo.scriptwriter_data)) : null,

@@ -521,10 +521,14 @@ async function generateAllBroll(segments, brandName, outputDir, onProgress, pers
       order: seg.order,
       mediaPaths,  // Array of all clip paths for this segment
       imagePath: mediaPaths[0],  // Backward compat — primary clip
-    }));
+    })).catch(err => {
+      console.error(`[B-Roll] Segment ${seg.order} (${seg.type || 'broll'}) failed entirely: ${err.message}`);
+      return null; // Return null so other segments still complete
+    });
   });
 
-  const results = await Promise.all(promises);
+  const allResults = await Promise.all(promises);
+  const results = allResults.filter(r => r !== null); // Remove failed segments
 
   console.log(`[B-Roll] Complete: ${videoCount} video clips, ${imageCount} still images out of ${totalClips} total clips for ${segments.length} segments`);
   return results;

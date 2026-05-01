@@ -216,6 +216,28 @@ async function runPipeline(videoId, userId, options = {}) {
     }
 
     // ── Step 4: B-Roll Generation ──
+    // Safeguard: ensure intro and outro segments have brollDescription and visualType set.
+    // The LLM sometimes omits brollDescription on the outro, causing it to be excluded
+    // from b-roll generation and rendered as a still frame instead.
+    for (const seg of script.segments) {
+      if ((seg.type === 'intro' || seg.type === 'outro' || seg.type === 'transition') && !seg.brollDescription) {
+        const brandDesc = sceneData.brand_description || video.brand_name || 'brand';
+        if (seg.type === 'intro') {
+          seg.brollDescription = `Wide cinematic establishing shot of a beautiful environment related to ${brandDesc}. Warm, inviting atmosphere.`;
+        } else if (seg.type === 'outro') {
+          seg.brollDescription = `Warm, inspiring cinematic closing shot — golden hour lighting, beautiful environment related to ${brandDesc}. Satisfying, uplifting mood.`;
+        } else {
+          seg.brollDescription = `Cinematic transition shot — atmospheric environment related to ${brandDesc}, passage of time.`;
+        }
+        seg.visualType = 'broll';
+        console.log(`[Pipeline] Added missing brollDescription to ${seg.type} segment (order ${seg.order})`);
+      }
+      if ((seg.type === 'intro' || seg.type === 'outro' || seg.type === 'transition') && seg.visualType !== 'broll') {
+        seg.visualType = 'broll';
+        console.log(`[Pipeline] Fixed visualType to 'broll' for ${seg.type} segment (order ${seg.order})`);
+      }
+    }
+
     const brollJobId = await createJob(videoId, userId, 'broll');
     let brollImages = {};
 

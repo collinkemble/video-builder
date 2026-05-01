@@ -130,20 +130,18 @@ async function setupWebsiteInteraction(page) {
   }
 
   // Build a click schedule with variable timing:
-  //   - Click 0 (open chat): at 2.0s
-  //   - Click 1 (start typing): at 2.8s  (+0.8s for CSS transition)
-  //   - Click 2 (send message): at 6.8s  (+4.0s for typing animation)
-  //   - Click 3 (start typing): at 12.8s (+6.0s for agent auto-advance chain)
-  //   - Click 4 (send message): at 16.8s (+4.0s for typing animation)
-  //   - Click 5 (start typing): at 22.8s (+6.0s for agent auto-advance)
+  //   - Show the HOMEPAGE for several seconds first (personalized experience)
+  //   - Click 0 (open chat): at 8.0s — gives ~8s of homepage before chat opens
+  //   - Click 1 (start typing): at 8.8s  (+0.8s for CSS transition)
+  //   - Click 2 (send message): at 12.8s (+4.0s for typing animation)
+  //   - Click 3 (start typing): at 18.8s (+6.0s for agent auto-advance chain)
   //   - ... and so on
-  const OPEN_DELAY = 0;       // click 0 starts at firstClickTime
   const TRANSITION_DELAY = 0.8; // after open → first typing click
   const TYPING_DELAY = 4.0;    // after start typing → send click
   const AGENT_DELAY = 6.0;     // after send → next start typing click
 
   const clickSchedule = [];
-  let timeOffset = 2.0; // first click at 2 seconds
+  let timeOffset = 8.0; // first click at 8 seconds — show homepage first
 
   for (let c = 0; c < clickLimit; c++) {
     clickSchedule.push({

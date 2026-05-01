@@ -611,8 +611,8 @@ async function applyIntroLogoOverlay(inputPath, outputPath, brandLogoUrl, workDi
   // ── Filter sizing ──
   const logoMaxW = 200;
   const logoMaxH = 140;
-  const plusSize = 50;
-  const plusGap = 70;
+  const plusSize = 40;
+  const plusGap = 50;    // gap between each logo edge and the "+" symbol
   const scrimH = 220;
 
   // ── Build the FFmpeg filter_complex ──
@@ -622,6 +622,15 @@ async function applyIntroLogoOverlay(inputPath, outputPath, brandLogoUrl, workDi
   //
   // For the scrim: we create a solid colour rectangle and apply alpha fade.
   // For each logo/plus: we fade the overlay's alpha.
+
+  // Calculate centered layout: [brand logo] ─ gap ─ [+] ─ gap ─ [SF logo]
+  const totalLayoutW = logoMaxW + plusGap + plusSize + plusGap + logoMaxW;
+  const layoutStartX = Math.round((WIDTH - totalLayoutW) / 2);
+  const brandX = layoutStartX;
+  const plusX = layoutStartX + logoMaxW + plusGap;
+  const sfX = plusX + plusSize + plusGap;
+
+  console.log(`[Compositor] Logo layout: totalW=${totalLayoutW}, startX=${layoutStartX}, brandX=${brandX}, plusX=${plusX}, sfX=${sfX}`);
 
   const filterComplex = [
     // Scale brand logo, pad to box, apply alpha fade-in then fade-out
@@ -640,14 +649,14 @@ async function applyIntroLogoOverlay(inputPath, outputPath, brandLogoUrl, workDi
     // Overlay scrim onto video (centered vertically)
     `[0:v][scrim]overlay=x=0:y=(H-h)/2:shortest=1[withscrim]`,
 
-    // Overlay brand logo (left of center)
-    `[withscrim][brand]overlay=x=(W/2)-${logoMaxW}-${plusGap / 2}:y=(H-${logoMaxH})/2:shortest=1[withbrand]`,
+    // Overlay brand logo (left side of centered layout)
+    `[withscrim][brand]overlay=x=${brandX}:y=(H-${logoMaxH})/2:shortest=1[withbrand]`,
 
-    // Overlay plus symbol (centered)
-    `[withbrand][plus]overlay=x=(W-${plusSize})/2:y=(H-${plusSize})/2:shortest=1[withplus]`,
+    // Overlay plus symbol (centered between logos with equal gaps)
+    `[withbrand][plus]overlay=x=${plusX}:y=(H-${plusSize})/2:shortest=1[withplus]`,
 
-    // Overlay SF logo (right of center)
-    `[withplus][sf]overlay=x=(W/2)+${plusGap / 2}:y=(H-${logoMaxH})/2:shortest=1[out]`,
+    // Overlay SF logo (right side of centered layout)
+    `[withplus][sf]overlay=x=${sfX}:y=(H-${logoMaxH})/2:shortest=1[out]`,
   ].join(';');
 
   const durStr = String(Math.ceil(clipDuration));

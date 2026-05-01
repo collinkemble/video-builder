@@ -136,12 +136,13 @@ B-ROLL / TRANSITION PLACEMENT RULES (CRITICAL):
 - Typically a 3-minute video should have at most 2-3 b-roll transitions (intro, maybe 1-2 time-passage moments, outro).
 
 B-ROLL RELEVANCE RULES (CRITICAL — b-roll MUST match the story):
-- Every brollDescription MUST be directly relevant to the BRAND, the PERSONA, and the STORY being told. Generic city footage or random people are WRONG.
-- Think about what the brand actually does and who the persona is. If it's a makeup brand and a woman buying cosmetics, show beauty/cosmetics-related visuals. If it's a sports brand and an athlete, show athletic/sports visuals. ALWAYS match the brand's industry and persona's world.
-- The intro b-roll should show a wide establishing shot that is RELEVANT to the brand's world (e.g., for a beauty brand: "A stylish woman walking through a sunlit beauty district with boutique storefronts", for a sports brand: "Morning light over a running trail with athletic gear in the foreground").
-- Transition b-roll should show the specific context change IN THE PERSONA'S WORLD (e.g., for a makeup buyer: "Close-up of beautifully arranged cosmetics on a vanity table with warm golden light" NOT "random guy running through Manhattan").
-- The outro b-roll should show a warm conclusion RELEVANT TO THE BRAND (e.g., for a beauty brand: "A confident woman smiling in warm evening light, looking radiant" NOT "generic sunset over a city").
-- NEVER use generic/unrelated descriptions. Every b-roll MUST feel like it belongs in THIS brand's story with THIS persona.
+- Every brollDescription MUST be directly relevant to the BRAND and the STORY being told. Generic city footage or random activities are WRONG.
+- Think about what the brand actually does. If it's a makeup brand, show beauty/cosmetics environments and products. If it's a sports brand, show athletic environments and gear. ALWAYS match the brand's industry.
+- IMPORTANT: Describe ENVIRONMENTS, PRODUCTS, and ATMOSPHERIC SCENES — not people. The video system handles character consistency separately. Your descriptions should focus on settings, objects, textures, and moods.
+- The intro b-roll should describe a wide establishing shot of an ENVIRONMENT relevant to the brand (e.g., for a beauty brand: "Sunlit boutique beauty store interior with elegant cosmetics displays and warm golden lighting", for a sports brand: "Misty morning running trail through a forest with dappled sunlight").
+- Transition b-roll should describe the specific ENVIRONMENT or PRODUCT context change (e.g., for a makeup buyer: "Close-up of beautifully arranged luxury cosmetics and brushes on a marble vanity with soft warm light" NOT "person running through Manhattan").
+- The outro b-roll should describe a warm concluding ENVIRONMENT or MOOD relevant to the brand (e.g., for a beauty brand: "Golden hour light streaming through a chic boutique window with fresh flowers and beauty products" NOT "generic sunset over a city").
+- NEVER describe random people or generic activities. Focus on the brand's WORLD — its products, stores, environments, and atmosphere.
 
 B-ROLL UNIQUENESS RULES (CRITICAL):
 - Every brollDescription MUST be completely unique and visually distinct from every other brollDescription.

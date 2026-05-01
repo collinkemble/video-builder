@@ -17,17 +17,30 @@ function getGenAI() {
 // B-Roll VIDEO generation (Veo) — primary path
 // ════════════════════════════════════════════════════════════════
 
-const VIDEO_PROMPT_RULES = `Style: Cinematic b-roll footage. Smooth, slow camera movement. Warm natural lighting. Shallow depth of field. High production value.
+// Rules for clips WITH persona reference image — person is OK since Veo matches them
+const VIDEO_PROMPT_RULES_WITH_PERSONA = `Style: Cinematic b-roll footage. Smooth, slow camera movement. Warm natural lighting. Shallow depth of field. High production value.
 CRITICAL RULES YOU MUST FOLLOW:
 1. ABSOLUTELY NO screens of any kind — no phone screens, laptop screens, tablet screens, computer monitors, TV screens, smartwatch screens, or any digital display showing content.
 2. ABSOLUTELY NO close-ups of devices — do not show any device screen from an angle where you can see what is displayed.
 3. DO NOT generate images of people looking at screens, typing on keyboards, or using touchscreens in close-up.
-4. INSTEAD focus on: people's faces and emotions, hands gesturing, walking, shopping in stores, outdoor environments, coffee shops, cityscapes, nature, product packaging, storefronts, lifestyle moments.
-5. ABSOLUTELY NO text of any kind — no text overlays, no logos, no UI mockups, no signage with readable text, no writing on vehicles, no labels, no brand names visible, no letters or words anywhere in the scene. All surfaces must be clean and text-free.
+4. Feature the person from the reference image as the MAIN character. Show them in lifestyle moments: walking, shopping, enjoying products, in beautiful environments.
+5. ABSOLUTELY NO text of any kind — no text overlays, no logos, no UI mockups, no signage with readable text, no writing on vehicles, no labels, no brand names visible, no letters or words anywhere in the scene.
 6. Slow cinematic motion only — no rapid movement.
-7. ABSOLUTELY NO morphing between people — if a person appears, they must remain the SAME person throughout the entire clip. Do NOT transition one person's face or body into a different person. Keep consistent identity for all people shown.
-8. If showing people, show only ONE person per shot OR a consistent group. Never change who they are mid-clip.
-9. NO delivery trucks, shipping vehicles, or logistics imagery unless specifically requested. Focus on human moments and environments.`;
+7. ABSOLUTELY NO morphing between people — the person must remain the SAME throughout. Do NOT transition one person into a different person.
+8. Show only ONE person (the reference person) per shot. Never add random other people.
+9. NO delivery trucks, shipping vehicles, or logistics imagery.`;
+
+// Rules for clips WITHOUT persona reference — NO PEOPLE to avoid random strangers
+const VIDEO_PROMPT_RULES_NO_PERSONA = `Style: Cinematic b-roll footage. Smooth, slow camera movement. Warm natural lighting. Shallow depth of field. High production value.
+CRITICAL RULES YOU MUST FOLLOW:
+1. ABSOLUTELY NO PEOPLE — do not show any human faces, bodies, hands, or silhouettes. This clip has no character reference, so any person shown will be a random stranger that breaks story continuity. Show ONLY environments, objects, products, architecture, nature, and atmospheric shots.
+2. ABSOLUTELY NO screens of any kind — no phone screens, laptop screens, tablet screens, computer monitors, TV screens, smartwatch screens, or any digital display showing content.
+3. ABSOLUTELY NO close-ups of devices.
+4. INSTEAD focus on: beautiful environments, storefronts, product displays, nature scenes, cityscapes, architecture, atmospheric lighting, textures, objects related to the brand.
+5. ABSOLUTELY NO text of any kind — no text overlays, no logos, no UI mockups, no signage with readable text, no writing on vehicles, no labels, no brand names visible, no letters or words anywhere in the scene.
+6. Slow cinematic motion only — no rapid movement.
+7. NO delivery trucks, shipping vehicles, or logistics imagery.
+8. Focus on MOOD and ATMOSPHERE — the visual should evoke the feeling of the brand without showing people.`;
 
 /**
  * Poll a Veo video operation until done.
@@ -96,7 +109,10 @@ async function generateBrollVideo({ description, brandName, brandDescription = '
     brandContext += `The story follows: ${personaDescription}. `;
   }
 
-  const prompt = `${contextHint}${personaPromptHint}${brandContext}Professional cinematic b-roll footage for a ${brandName || 'brand'} customer experience video: ${description}.\n${VIDEO_PROMPT_RULES}`;
+  // Use different rules depending on whether we have a persona reference image
+  const rules = personaImageUrl ? VIDEO_PROMPT_RULES_WITH_PERSONA : VIDEO_PROMPT_RULES_NO_PERSONA;
+
+  const prompt = `${contextHint}${personaPromptHint}${brandContext}Professional cinematic b-roll footage for a ${brandName || 'brand'} customer experience video: ${description}.\n${rules}`;
 
   const modelName = 'veo-3.1-generate-preview';
 
@@ -472,9 +488,10 @@ async function generateAllBroll(segments, brandName, outputDir, onProgress, pers
         desc = `Cinematic environmental wide shot — cityscape, nature, or architecture. Unrelated to previous clips. Theme context: ${desc.substring(0, 60)}`;
       }
 
-      // Only pass persona reference for transition b-roll (not intro/outro, which are establishing shots)
-      // and only for the FIRST clip of a multi-clip segment (to avoid Veo generating inconsistent characters)
-      const usePersona = personaImageUrl && seg.type === 'transition' && c === 0;
+      // Pass persona reference for the FIRST clip of each b-roll segment to maintain character consistency.
+      // Only the first clip gets the reference to avoid Veo generating inconsistent variations.
+      // Without persona reference, the prompt rules will tell Veo to show NO PEOPLE (environments only).
+      const usePersona = personaImageUrl && c === 0;
 
       clipPromises.push(
         generateBroll({

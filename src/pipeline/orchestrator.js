@@ -237,7 +237,9 @@ async function runPipeline(videoId, userId, options = {}) {
           },
           personaImageUrl,
           voiceoverResult.timestamps,  // Pass timestamps so b-roll knows required durations
-          script.segments              // Pass all segments for next-segment-start calculation
+          script.segments,             // Pass all segments for next-segment-start calculation
+          sceneData.brand_description || '',   // Brand description for contextual b-roll
+          sceneData.persona_description || ''  // Persona description for contextual b-roll
         );
 
         brolls.forEach(b => {

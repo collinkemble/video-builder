@@ -60,13 +60,15 @@ async function pollVeoOperation(ai, operation, label, maxWait = 120000) {
  * @param {object} params
  * @param {string} params.description - What the clip should show
  * @param {string} params.brandName - Brand name for context
+ * @param {string} params.brandDescription - Brand description/industry for context
+ * @param {string} params.personaDescription - Persona description for context
  * @param {string} params.outputDir - Directory to save the clip
  * @param {string} params.segmentType - Segment type (intro/transition/outro) for prompt context
  * @param {string} params.segmentChannel - Channel name for prompt context
  * @param {string} params.personaImageUrl - Optional persona image URL for character consistency
  * @returns {Promise<string|null>} Path to MP4 clip, or null if video gen failed
  */
-async function generateBrollVideo({ description, brandName, outputDir, segmentType = '', segmentChannel = '', personaImageUrl = null }) {
+async function generateBrollVideo({ description, brandName, brandDescription = '', personaDescription = '', outputDir, segmentType = '', segmentChannel = '', personaImageUrl = null }) {
   const ai = getGenAI();
 
   // Add context about the segment role for more fitting footage
@@ -85,7 +87,16 @@ async function generateBrollVideo({ description, brandName, outputDir, segmentTy
     personaPromptHint = 'IMPORTANT: You MUST feature the exact person from the provided reference image as the main character in this clip. Match their face, hair, skin tone, body type, and all physical features precisely from the reference image. Do not change their appearance in any way. ';
   }
 
-  const prompt = `${contextHint}${personaPromptHint}Professional cinematic b-roll footage for a ${brandName || 'brand'} customer experience video: ${description}.\n${VIDEO_PROMPT_RULES}`;
+  // Build brand/persona context to ground the visual in the right world
+  let brandContext = '';
+  if (brandDescription) {
+    brandContext += `Brand context: ${brandName || 'brand'} — ${brandDescription}. `;
+  }
+  if (personaDescription) {
+    brandContext += `The story follows: ${personaDescription}. `;
+  }
+
+  const prompt = `${contextHint}${personaPromptHint}${brandContext}Professional cinematic b-roll footage for a ${brandName || 'brand'} customer experience video: ${description}.\n${VIDEO_PROMPT_RULES}`;
 
   const modelName = 'veo-3.1-generate-preview';
 
@@ -349,16 +360,16 @@ function truncate(str, maxLen) {
  * @param {string} params.personaImageUrl - Optional persona image URL for character consistency
  * @returns {Promise<string>} Path to MP4 video or PNG image
  */
-async function generateBroll({ description, brandName, outputDir, segmentType = '', segmentChannel = '', personaImageUrl = null }) {
+async function generateBroll({ description, brandName, brandDescription = '', personaDescription = '', outputDir, segmentType = '', segmentChannel = '', personaImageUrl = null }) {
   // Try video generation first (Veo) — generates 8s clips
-  const videoPath = await generateBrollVideo({ description, brandName, outputDir, segmentType, segmentChannel, personaImageUrl });
+  const videoPath = await generateBrollVideo({ description, brandName, brandDescription, personaDescription, outputDir, segmentType, segmentChannel, personaImageUrl });
   if (videoPath) return videoPath;
 
   // Retry Veo once with a simplified prompt before falling back to still images
   console.log(`[B-Roll] Retrying Veo with simplified prompt...`);
   const retryPath = await generateBrollVideo({
     description: `Cinematic lifestyle footage: ${description.substring(0, 100)}`,
-    brandName, outputDir, segmentType, segmentChannel,
+    brandName, brandDescription, personaDescription, outputDir, segmentType, segmentChannel,
     personaImageUrl: null,  // Drop persona ref on retry — it can cause failures
   });
   if (retryPath) return retryPath;
@@ -419,9 +430,11 @@ function calcClipsNeeded(seg, timestamps, allSegments) {
  * @param {string} personaImageUrl - Optional persona image for character consistency across clips
  * @param {object} timestamps - Voiceover timestamps for duration calculation
  * @param {Array} allSegments - All script segments for next-segment lookup
+ * @param {string} brandDescription - Brand description/industry for contextual b-roll
+ * @param {string} personaDescription - Persona description for contextual b-roll
  * @returns {Promise<Array>} Array of { order, mediaPaths, imagePath }
  */
-async function generateAllBroll(segments, brandName, outputDir, onProgress, personaImageUrl = null, timestamps = null, allSegments = null) {
+async function generateAllBroll(segments, brandName, outputDir, onProgress, personaImageUrl = null, timestamps = null, allSegments = null, brandDescription = '', personaDescription = '') {
   let videoCount = 0;
   let imageCount = 0;
 
@@ -467,6 +480,8 @@ async function generateAllBroll(segments, brandName, outputDir, onProgress, pers
         generateBroll({
           description: desc,
           brandName,
+          brandDescription,
+          personaDescription,
           outputDir,
           segmentType: seg.type || '',
           segmentChannel: seg.channel || '',

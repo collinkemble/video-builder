@@ -135,15 +135,20 @@ B-ROLL / TRANSITION PLACEMENT RULES (CRITICAL):
 - When in doubt, if two scenes are part of the same immediate interaction flow (same session, same moment), do NOT add b-roll between them.
 - Typically a 3-minute video should have at most 2-3 b-roll transitions (intro, maybe 1-2 time-passage moments, outro).
 
+B-ROLL RELEVANCE RULES (CRITICAL — b-roll MUST match the story):
+- Every brollDescription MUST be directly relevant to the BRAND, the PERSONA, and the STORY being told. Generic city footage or random people are WRONG.
+- Think about what the brand actually does and who the persona is. If it's a makeup brand and a woman buying cosmetics, show beauty/cosmetics-related visuals. If it's a sports brand and an athlete, show athletic/sports visuals. ALWAYS match the brand's industry and persona's world.
+- The intro b-roll should show a wide establishing shot that is RELEVANT to the brand's world (e.g., for a beauty brand: "A stylish woman walking through a sunlit beauty district with boutique storefronts", for a sports brand: "Morning light over a running trail with athletic gear in the foreground").
+- Transition b-roll should show the specific context change IN THE PERSONA'S WORLD (e.g., for a makeup buyer: "Close-up of beautifully arranged cosmetics on a vanity table with warm golden light" NOT "random guy running through Manhattan").
+- The outro b-roll should show a warm conclusion RELEVANT TO THE BRAND (e.g., for a beauty brand: "A confident woman smiling in warm evening light, looking radiant" NOT "generic sunset over a city").
+- NEVER use generic/unrelated descriptions. Every b-roll MUST feel like it belongs in THIS brand's story with THIS persona.
+
 B-ROLL UNIQUENESS RULES (CRITICAL):
 - Every brollDescription MUST be completely unique and visually distinct from every other brollDescription.
 - Do NOT repeat or closely paraphrase the same description. Each b-roll clip is generated as a separate video — if descriptions are similar, the clips look identical and the video appears to repeat itself.
-- NEVER repeat the same action or prop across different b-roll clips. For example: if one clip shows a delivery, NO other clip can show a delivery. If one shows someone opening a package, NO other clip can show package opening. Each clip must show a FUNDAMENTALLY DIFFERENT activity.
+- NEVER repeat the same action or prop across different b-roll clips. Each clip must show a FUNDAMENTALLY DIFFERENT activity.
 - NEVER include delivery trucks, shipping vehicles, or logistics imagery — these create ugly shots with fake text on them.
-- The intro b-roll should show a wide establishing shot (e.g., cityscape morning light, person walking through a vibrant neighborhood, aerial view of a city).
-- Transition b-roll should show the specific context change (e.g., "person walking through a shopping district" vs "close-up of hands holding a coffee cup in a café").
-- The outro b-roll should show a warm conclusion (e.g., person smiling at sunset, a beautiful landscape, a cozy evening moment).
-- NEVER use generic descriptions — be hyper-specific about the exact visual scene, camera angle, and mood. Each description must paint a distinct cinematic picture.
+- NEVER use generic descriptions — be hyper-specific about the exact visual scene, camera angle, and mood. Each description must paint a distinct cinematic picture that is relevant to this brand's industry and persona.
 
 DURATION RULES:
 - Intro segments should be 8-12 seconds with 2-3 sentences that set up the brand. The intro has an animated logo overlay that needs time to play, so aim for 10 seconds of narration. Do NOT make the intro shorter than 8 seconds. No persona introduction here.

@@ -72,9 +72,14 @@ async function setupMessagingInteraction(page) {
     return count;
   });
 
-  const clickLimit = Math.max(totalMessages - 1, 1);
+  // N messages → need N-1 clicks to reveal all (msg1 is visible on load).
+  // BUT: PocketSIC resets the conversation on the Nth click, and some scenes
+  // have typing indicators that count as intermediate states. To be safe,
+  // subtract 2 instead of 1 — better to end one message early than to
+  // overshoot and reset the entire conversation, showing duplicates.
+  const clickLimit = Math.max(totalMessages - 2, 1);
   const clickInterval = 2200; // 2.2s between clicks — enough for typing indicator animation
-  console.log(`[SceneCapture] Messaging: ${totalMessages} messages, will click ${clickLimit} times`);
+  console.log(`[SceneCapture] Messaging: ${totalMessages} messages, will click ${clickLimit} times (N-2 safety margin)`);
 
   return { clickLimit, clickInterval, clickFn: 'messaging' };
 }
@@ -249,10 +254,36 @@ async function setupRetailInteraction(page) {
 // ════════════════════════════════════════════════════════════════
 
 /**
- * Messaging click: just click the body. PocketSIC messaging scenes
+ * Messaging click: click the body to advance. PocketSIC messaging scenes
  * use document.body click handler to advance the conversation.
+ *
+ * Before clicking, check if all messages are already visible — if so,
+ * skip the click to avoid resetting the conversation.
  */
 async function performMessagingClick(page, clickIndex) {
+  // Check if the last message is already visible — if so, clicking would RESET
+  const shouldClick = await page.evaluate(() => {
+    // Count total messages
+    let total = 0;
+    while (document.getElementById(`msg${total + 1}`)) total++;
+    if (total === 0) return true; // no messages found, click anyway
+
+    // Check if the last message is visible (has .visible class or is not display:none)
+    const lastMsg = document.getElementById(`msg${total}`);
+    if (!lastMsg) return true;
+
+    const isVisible = lastMsg.classList.contains('visible') ||
+      (window.getComputedStyle(lastMsg).display !== 'none' &&
+       window.getComputedStyle(lastMsg).opacity !== '0');
+
+    return !isVisible; // Only click if the last message is NOT yet visible
+  });
+
+  if (!shouldClick) {
+    console.log(`[SceneCapture] Messaging click #${clickIndex + 1}: SKIPPED — all messages already visible (would reset)`);
+    return;
+  }
+
   await page.evaluate(() => {
     document.body.click();
   });

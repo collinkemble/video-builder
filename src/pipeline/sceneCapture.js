@@ -73,13 +73,12 @@ async function setupMessagingInteraction(page) {
   });
 
   // N messages → need N-1 clicks to reveal all (msg1 is visible on load).
-  // BUT: PocketSIC resets the conversation on the Nth click, and some scenes
-  // have typing indicators that count as intermediate states. To be safe,
-  // subtract 2 instead of 1 — better to end one message early than to
-  // overshoot and reset the entire conversation, showing duplicates.
-  const clickLimit = Math.max(totalMessages - 2, 1);
+  // The Nth click would RESET the conversation (PocketSIC loops back to start).
+  // We use exactly N-1 clicks AND the performMessagingClick function has a
+  // runtime guard that checks if all messages are visible before clicking.
+  const clickLimit = Math.max(totalMessages - 1, 1);
   const clickInterval = 2200; // 2.2s between clicks — enough for typing indicator animation
-  console.log(`[SceneCapture] Messaging: ${totalMessages} messages, will click ${clickLimit} times (N-2 safety margin)`);
+  console.log(`[SceneCapture] Messaging: ${totalMessages} messages, will click ${clickLimit} times (N-1 to show all)`);
 
   return { clickLimit, clickInterval, clickFn: 'messaging' };
 }
@@ -257,37 +256,72 @@ async function setupRetailInteraction(page) {
  * Messaging click: click the body to advance. PocketSIC messaging scenes
  * use document.body click handler to advance the conversation.
  *
- * Before clicking, check if all messages are already visible — if so,
- * skip the click to avoid resetting the conversation.
+ * CRITICAL: Before clicking, check if all messages are already visible.
+ * If so, the next click would RESET the entire conversation from the top,
+ * causing duplicated messages in the recording.
+ *
+ * We use MULTIPLE detection methods since PocketSIC scenes vary:
+ *   1. Check PocketSIC's internal `currentStep` counter (most reliable)
+ *   2. Check if the last #msgN element has `.visible` class
+ *   3. Check computed display/opacity of the last message
  */
 async function performMessagingClick(page, clickIndex) {
-  // Check if the last message is already visible — if so, clicking would RESET
-  const shouldClick = await page.evaluate(() => {
+  const clickCheck = await page.evaluate(() => {
     // Count total messages
     let total = 0;
     while (document.getElementById(`msg${total + 1}`)) total++;
-    if (total === 0) return true; // no messages found, click anyway
+    if (total === 0) return { shouldClick: true, reason: 'no messages found' };
 
-    // Check if the last message is visible (has .visible class or is not display:none)
+    // METHOD 1: PocketSIC's internal step counter (most authoritative)
+    // In PocketSIC messaging scenes, `currentStep` tracks how many clicks have been processed.
+    // When currentStep >= total messages, the next click resets.
+    if (typeof window.currentStep !== 'undefined') {
+      const step = window.currentStep;
+      if (step >= total) {
+        return { shouldClick: false, reason: `currentStep (${step}) >= totalMessages (${total})` };
+      }
+    }
+
+    // METHOD 2: Check if the last message element is visible
     const lastMsg = document.getElementById(`msg${total}`);
-    if (!lastMsg) return true;
+    if (lastMsg) {
+      const hasVisibleClass = lastMsg.classList.contains('visible');
+      const style = window.getComputedStyle(lastMsg);
+      const isDisplayed = style.display !== 'none' && style.visibility !== 'hidden';
+      const hasOpacity = parseFloat(style.opacity) > 0.1;
 
-    const isVisible = lastMsg.classList.contains('visible') ||
-      (window.getComputedStyle(lastMsg).display !== 'none' &&
-       window.getComputedStyle(lastMsg).opacity !== '0');
+      if (hasVisibleClass || (isDisplayed && hasOpacity)) {
+        return { shouldClick: false, reason: `lastMsg #msg${total} is visible (class=${hasVisibleClass}, displayed=${isDisplayed}, opacity=${style.opacity})` };
+      }
+    }
 
-    return !isVisible; // Only click if the last message is NOT yet visible
+    // METHOD 3: Count how many messages are currently visible
+    let visibleCount = 0;
+    for (let i = 1; i <= total; i++) {
+      const msg = document.getElementById(`msg${i}`);
+      if (msg) {
+        const s = window.getComputedStyle(msg);
+        if (msg.classList.contains('visible') || (s.display !== 'none' && parseFloat(s.opacity) > 0.1)) {
+          visibleCount++;
+        }
+      }
+    }
+    if (visibleCount >= total) {
+      return { shouldClick: false, reason: `all ${total} messages visible (counted ${visibleCount})` };
+    }
+
+    return { shouldClick: true, reason: `${visibleCount}/${total} messages visible` };
   });
 
-  if (!shouldClick) {
-    console.log(`[SceneCapture] Messaging click #${clickIndex + 1}: SKIPPED — all messages already visible (would reset)`);
+  if (!clickCheck.shouldClick) {
+    console.log(`[SceneCapture] Messaging click #${clickIndex + 1}: SKIPPED — ${clickCheck.reason} (would reset conversation)`);
     return;
   }
 
   await page.evaluate(() => {
     document.body.click();
   });
-  console.log(`[SceneCapture] Messaging click #${clickIndex + 1} (body)`);
+  console.log(`[SceneCapture] Messaging click #${clickIndex + 1} (body) — ${clickCheck.reason}`);
 }
 
 /**

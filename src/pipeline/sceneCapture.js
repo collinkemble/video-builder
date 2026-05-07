@@ -57,6 +57,11 @@ function getSceneType(channel) {
  *   - Click anywhere on document.body to advance
  *   - N messages → N-1 clicks (one more click resets!)
  *   - Typing indicator shows for ~1s before received messages
+ *
+ * CRITICAL: To prevent over-clicking (which resets the conversation and shows
+ * duplicates), we inject a click-blocker into the page itself. After N-1 body
+ * clicks, a capturing-phase event listener intercepts and kills all further
+ * click events before PocketSIC's handler can see them.
  */
 async function setupMessagingInteraction(page) {
   // Dismiss the "tap to continue" hint if present
@@ -72,13 +77,34 @@ async function setupMessagingInteraction(page) {
     return count;
   });
 
-  // N messages → need N-1 clicks to reveal all (msg1 is visible on load).
-  // The Nth click would RESET the conversation (PocketSIC loops back to start).
-  // We use exactly N-1 clicks AND the performMessagingClick function has a
-  // runtime guard that checks if all messages are visible before clicking.
   const clickLimit = Math.max(totalMessages - 1, 1);
   const clickInterval = 2200; // 2.2s between clicks — enough for typing indicator animation
-  console.log(`[SceneCapture] Messaging: ${totalMessages} messages, will click ${clickLimit} times (N-1 to show all)`);
+
+  // INJECT a click-blocker into the page: after exactly clickLimit clicks on the body,
+  // all subsequent clicks are swallowed BEFORE PocketSIC's handler can process them.
+  // This is the DEFINITIVE protection against conversation reset.
+  await page.evaluate((maxClicks) => {
+    window.__vbMsgClickCount = 0;
+    window.__vbMsgMaxClicks = maxClicks;
+    window.__vbMsgBlocked = false;
+
+    // Add a capturing-phase listener (fires BEFORE PocketSIC's bubbling-phase handler)
+    document.addEventListener('click', (e) => {
+      if (window.__vbMsgBlocked) {
+        e.stopImmediatePropagation();
+        e.preventDefault();
+        return false;
+      }
+      // Count this click
+      window.__vbMsgClickCount++;
+      if (window.__vbMsgClickCount >= window.__vbMsgMaxClicks) {
+        // This was the last allowed click — block all future clicks
+        window.__vbMsgBlocked = true;
+      }
+    }, true); // true = capturing phase — fires first!
+  }, clickLimit);
+
+  console.log(`[SceneCapture] Messaging: ${totalMessages} messages, will click ${clickLimit} times (N-1), click-blocker injected`);
 
   return { clickLimit, clickInterval, clickFn: 'messaging' };
 }
@@ -256,72 +282,35 @@ async function setupRetailInteraction(page) {
  * Messaging click: click the body to advance. PocketSIC messaging scenes
  * use document.body click handler to advance the conversation.
  *
- * CRITICAL: Before clicking, check if all messages are already visible.
- * If so, the next click would RESET the entire conversation from the top,
- * causing duplicated messages in the recording.
+ * PROTECTION: The page has an injected click-blocker (from setupMessagingInteraction)
+ * that kills all click events after N-1 clicks at the capturing phase, before
+ * PocketSIC's handler can process them. This means even if we call body.click()
+ * more times than needed, the page will silently ignore excess clicks.
  *
- * We use MULTIPLE detection methods since PocketSIC scenes vary:
- *   1. Check PocketSIC's internal `currentStep` counter (most reliable)
- *   2. Check if the last #msgN element has `.visible` class
- *   3. Check computed display/opacity of the last message
+ * We also check the blocker state here as a belt-and-suspenders measure.
  */
 async function performMessagingClick(page, clickIndex) {
-  const clickCheck = await page.evaluate(() => {
-    // Count total messages
-    let total = 0;
-    while (document.getElementById(`msg${total + 1}`)) total++;
-    if (total === 0) return { shouldClick: true, reason: 'no messages found' };
-
-    // METHOD 1: PocketSIC's internal step counter (most authoritative)
-    // In PocketSIC messaging scenes, `currentStep` tracks how many clicks have been processed.
-    // When currentStep >= total messages, the next click resets.
-    if (typeof window.currentStep !== 'undefined') {
-      const step = window.currentStep;
-      if (step >= total) {
-        return { shouldClick: false, reason: `currentStep (${step}) >= totalMessages (${total})` };
-      }
-    }
-
-    // METHOD 2: Check if the last message element is visible
-    const lastMsg = document.getElementById(`msg${total}`);
-    if (lastMsg) {
-      const hasVisibleClass = lastMsg.classList.contains('visible');
-      const style = window.getComputedStyle(lastMsg);
-      const isDisplayed = style.display !== 'none' && style.visibility !== 'hidden';
-      const hasOpacity = parseFloat(style.opacity) > 0.1;
-
-      if (hasVisibleClass || (isDisplayed && hasOpacity)) {
-        return { shouldClick: false, reason: `lastMsg #msg${total} is visible (class=${hasVisibleClass}, displayed=${isDisplayed}, opacity=${style.opacity})` };
-      }
-    }
-
-    // METHOD 3: Count how many messages are currently visible
-    let visibleCount = 0;
-    for (let i = 1; i <= total; i++) {
-      const msg = document.getElementById(`msg${i}`);
-      if (msg) {
-        const s = window.getComputedStyle(msg);
-        if (msg.classList.contains('visible') || (s.display !== 'none' && parseFloat(s.opacity) > 0.1)) {
-          visibleCount++;
-        }
-      }
-    }
-    if (visibleCount >= total) {
-      return { shouldClick: false, reason: `all ${total} messages visible (counted ${visibleCount})` };
-    }
-
-    return { shouldClick: true, reason: `${visibleCount}/${total} messages visible` };
+  // Check if the page-level blocker has already triggered
+  const isBlocked = await page.evaluate(() => {
+    return window.__vbMsgBlocked === true;
   });
 
-  if (!clickCheck.shouldClick) {
-    console.log(`[SceneCapture] Messaging click #${clickIndex + 1}: SKIPPED — ${clickCheck.reason} (would reset conversation)`);
+  if (isBlocked) {
+    console.log(`[SceneCapture] Messaging click #${clickIndex + 1}: SKIPPED — page click-blocker active (all messages shown)`);
     return;
   }
 
   await page.evaluate(() => {
     document.body.click();
   });
-  console.log(`[SceneCapture] Messaging click #${clickIndex + 1} (body) — ${clickCheck.reason}`);
+
+  // Report updated count
+  const state = await page.evaluate(() => ({
+    count: window.__vbMsgClickCount,
+    max: window.__vbMsgMaxClicks,
+    blocked: window.__vbMsgBlocked,
+  }));
+  console.log(`[SceneCapture] Messaging click #${clickIndex + 1} (body) — page counter: ${state.count}/${state.max}, blocked=${state.blocked}`);
 }
 
 /**

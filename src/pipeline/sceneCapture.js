@@ -40,7 +40,9 @@ function shouldInteract(channel) {
  */
 function getSceneType(channel) {
   const ch = normalizeChannel(channel);
-  if (ch.includes('imessage') || ch.includes('sms') || ch.includes('text') || ch.includes('whatsapp')) return 'messaging';
+  // Messaging: iMessage, Apple Messages, SMS, Text, WhatsApp, etc.
+  // "applemessages" includes "message" — check that too
+  if (ch.includes('imessage') || ch.includes('sms') || ch.includes('text') || ch.includes('whatsapp') || ch.includes('message')) return 'messaging';
   // PocketSIC uses "site" for website scenes, Gemini script may use "web", "website", "chat", "agent"
   if (ch.includes('web') || ch.includes('site') || ch.includes('chat') || ch.includes('agent')) return 'website';
   if (ch.includes('retail') || ch.includes('store') || ch.includes('pos')) return 'retail';

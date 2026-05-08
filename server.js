@@ -14,6 +14,14 @@ const { deleteVideoAssets } = require('./src/utils/r2');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+const BUILD_VERSION = 'v153-freeze-fix';
+
+// Health/version endpoint — verify which code is deployed
+app.get('/api/version', (req, res) => {
+  res.json({ version: BUILD_VERSION, timestamp: new Date().toISOString() });
+});
+
+console.log(`[VideoBuilder] Starting server — build: ${BUILD_VERSION}`);
 
 // ─── JWT Session Tokens ───
 const JWT_SECRET = process.env.JWT_SECRET || (process.env.MAGIC_LINK_SECRET

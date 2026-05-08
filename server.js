@@ -14,7 +14,7 @@ const { deleteVideoAssets } = require('./src/utils/r2');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const BUILD_VERSION = 'v154-freeze-concat';
+const BUILD_VERSION = 'v155-custom-instructions';
 
 // Health/version endpoint — verify which code is deployed
 app.get('/api/version', (req, res) => {
@@ -622,7 +622,7 @@ app.post('/api/videos', async (req, res) => {
 // PUT /api/videos/:id — update video settings
 app.put('/api/videos/:id', async (req, res) => {
   try {
-    const { email, name, brandName, voiceId, durationTarget, sceneData, narrationScript, musicTrackId } = req.body;
+    const { email, name, brandName, voiceId, durationTarget, sceneData, narrationScript, musicTrackId, customInstructions } = req.body;
     if (!email) return res.status(400).json({ error: 'Email required' });
 
     const user = await getOrCreateUser(email);
@@ -665,6 +665,10 @@ app.put('/api/videos/:id', async (req, res) => {
     if (musicTrackId !== undefined && musicTrackId !== null) {
       sets.push('music_track_id = ?');
       params.push(musicTrackId === '' ? 'corporate-technology' : musicTrackId);
+    }
+    if (customInstructions !== undefined && customInstructions !== null) {
+      sets.push('custom_instructions = ?');
+      params.push(customInstructions === '' ? null : customInstructions.trim());
     }
 
     // Three-state guard for persona_image_url: truthy → use it, empty string → clear to null, null/undefined → keep existing

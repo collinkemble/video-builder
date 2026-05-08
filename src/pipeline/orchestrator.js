@@ -145,6 +145,7 @@ async function runPipeline(videoId, userId, options = {}) {
           })),
           durationTarget: video.duration_target || 180,
           scriptWriterData,
+          customInstructions: video.custom_instructions || '',
         });
 
         // Save script to video record

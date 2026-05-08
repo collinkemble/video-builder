@@ -329,6 +329,12 @@
           </div>
         </div>
 
+        <div style="margin-top: 12px;">
+          <label class="block text-xs font-bold mb-1" style="color: #032D60;">Custom Instructions</label>
+          <textarea id="edit-custom-instructions" rows="3" class="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm" placeholder="Add specific directions for this video — e.g. tone, focus areas, things to emphasize or skip, narration style..." style="resize: vertical; min-height: 60px;"></textarea>
+          <p class="mt-1" style="font-size: 11px; color: #6B7280;">These instructions will guide how the script and narration are generated.</p>
+        </div>
+
         <div id="save-settings-bar" class="hidden" style="margin-top: 14px; display: none;">
           <div class="flex items-center justify-between" style="background: #FFFBEB; border: 1px solid #F59E0B; border-radius: 10px; padding: 10px 16px;">
             <span style="font-size: 13px; color: #92400E;">⚠️ You have unsaved changes</span>
@@ -1149,6 +1155,7 @@ async function viewVideo(id, skipPush) {
     document.getElementById('edit-voice').value = video.voice_id || 'default';
     document.getElementById('edit-duration').value = String(video.duration_target || 180);
     document.getElementById('edit-music').value = video.music_track_id || 'corporate-technology';
+    document.getElementById('edit-custom-instructions').value = video.custom_instructions || '';
     updateMusicPreviewButton();
 
     // Store originals
@@ -1158,6 +1165,7 @@ async function viewVideo(id, skipPush) {
       voice: video.voice_id || 'default',
       duration: String(video.duration_target || 180),
       music: video.music_track_id || 'corporate-technology',
+      'custom-instructions': video.custom_instructions || '',
     };
     hideSaveSettingsBar();
 
@@ -1701,7 +1709,7 @@ async function startGeneration(force = false) {
 function checkSettingsChanged() {
   const orig = window._origSettings;
   if (!orig) return;
-  const changed = ['name', 'brand', 'voice', 'duration', 'music'].some(f => {
+  const changed = ['name', 'brand', 'voice', 'duration', 'music', 'custom-instructions'].some(f => {
     const el = document.getElementById('edit-' + f);
     return el && el.value !== orig[f];
   });
@@ -1727,6 +1735,7 @@ async function saveVideoSettings() {
     const voiceId = document.getElementById('edit-voice').value;
     const durationTarget = parseInt(document.getElementById('edit-duration').value);
     const musicTrackId = document.getElementById('edit-music').value;
+    const customInstructions = document.getElementById('edit-custom-instructions').value.trim();
 
     if (!name) { alert('Name is required.'); btn.textContent = '💾 Save Settings'; btn.disabled = false; return; }
 
@@ -1734,11 +1743,11 @@ async function saveVideoSettings() {
     const resp = await fetch(`/api/videos/${currentVideoId}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, name, brandName, voiceId, durationTarget, musicTrackId }),
+      body: JSON.stringify({ email, name, brandName, voiceId, durationTarget, musicTrackId, customInstructions }),
     });
     if (!resp.ok) throw new Error('Save failed');
 
-    window._origSettings = { name, brand: brandName, voice: voiceId, duration: String(durationTarget), music: musicTrackId };
+    window._origSettings = { name, brand: brandName, voice: voiceId, duration: String(durationTarget), music: musicTrackId, 'custom-instructions': customInstructions };
     document.getElementById('detail-breadcrumb').textContent = name;
     hideSaveSettingsBar();
     btn.textContent = '✓ Saved!';
@@ -1750,7 +1759,7 @@ async function saveVideoSettings() {
   }
 }
 
-['edit-name', 'edit-brand', 'edit-voice', 'edit-duration', 'edit-music'].forEach(id => {
+['edit-name', 'edit-brand', 'edit-voice', 'edit-duration', 'edit-music', 'edit-custom-instructions'].forEach(id => {
   const el = document.getElementById(id);
   if (el) {
     el.addEventListener('input', checkSettingsChanged);

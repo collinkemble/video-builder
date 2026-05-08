@@ -81,6 +81,7 @@ CREATE TABLE IF NOT EXISTS videos (
   duration_target INT DEFAULT 180,
   include_broll BOOLEAN DEFAULT TRUE,
   music_track_id VARCHAR(100) DEFAULT 'corporate-technology',
+  custom_instructions TEXT DEFAULT NULL,
 
   -- Metadata
   duration_actual DECIMAL(6,2),

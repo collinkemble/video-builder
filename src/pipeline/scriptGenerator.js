@@ -22,7 +22,7 @@ function getGenAI() {
  * @param {number} params.durationTarget - Target duration in seconds (default 180)
  * @returns {Promise<object>} Structured narration timeline
  */
-async function generateScript({ brandName, brandDescription, personaName, personaDescription, synopsis, scenes, durationTarget = 180, scriptWriterData = null }) {
+async function generateScript({ brandName, brandDescription, personaName, personaDescription, synopsis, scenes, durationTarget = 180, scriptWriterData = null, customInstructions = '' }) {
   const ai = getGenAI();
   const model = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
 
@@ -62,13 +62,21 @@ async function generateScript({ brandName, brandDescription, personaName, person
     ? `\n- IMPORTANT: A demo script has been provided from Script Writer. Use it as the primary narrative basis — adapt its language, tone, key messages, and story arc to fit the video timeline. Do NOT ignore it.`
     : '';
 
+  const customInstructionsSection = customInstructions
+    ? `\n\nCUSTOM INSTRUCTIONS FROM THE USER (follow these closely):\n${customInstructions}`
+    : '';
+
+  const customInstructionsPrompt = customInstructions
+    ? `\n- IMPORTANT: The user has provided custom instructions (see CUSTOM INSTRUCTIONS section above). Follow them closely — they take priority over default narration style choices.`
+    : '';
+
   const prompt = `You are a CX story narrator writing a script for a short video (~${Math.round(durationTarget / 60)} minutes).
 
 BRAND: ${brandName}
 ${brandDescription ? `BRAND DESCRIPTION: ${brandDescription}` : ''}
 ${personaName ? `PERSONA: ${personaName}` : ''}
 ${personaDescription ? `PERSONA BACKGROUND: ${personaDescription}` : ''}
-${synopsis ? `DEMO STORY SYNOPSIS: ${synopsis}` : ''}${scriptWriterSection}
+${synopsis ? `DEMO STORY SYNOPSIS: ${synopsis}` : ''}${scriptWriterSection}${customInstructionsSection}
 
 SCENES (in order):
 ${sceneList}
@@ -83,7 +91,7 @@ Write a narration script that tells a connected customer experience story. The n
 - End with a wrap-up outro that ties the experience together AND reinforces the Salesforce partnership. The outro MUST include a closing line like "This is how ${brandName} and Salesforce are transforming [the customer experience / their industry]" or "Together with Salesforce, ${brandName} is redefining what's possible" or similar. Make it feel like a natural, inspiring conclusion.
 - Be conversational and compelling, NOT a feature walkthrough
 - Each segment's narration should be 2-4 sentences
-- Target ~${durationTarget} seconds total (about ${Math.round(durationTarget / 15)} segments at ~15 seconds each)${scriptWriterInstruction}
+- Target ~${durationTarget} seconds total (about ${Math.round(durationTarget / 15)} segments at ~15 seconds each)${scriptWriterInstruction}${customInstructionsPrompt}
 
 Return ONLY valid JSON in this exact format:
 {

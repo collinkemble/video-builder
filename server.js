@@ -14,7 +14,7 @@ const { deleteVideoAssets } = require('./src/utils/r2');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const BUILD_VERSION = 'v153-freeze-fix';
+const BUILD_VERSION = 'v154-freeze-concat';
 
 // Health/version endpoint — verify which code is deployed
 app.get('/api/version', (req, res) => {

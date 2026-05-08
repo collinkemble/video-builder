@@ -397,21 +397,68 @@ async function normalizeVideoClip(inputPath, outputPath, targetDuration, freezeI
   if (clipDuration < targetDuration * 0.95) {
     if (freezeIfShort) {
       // SCENE CAPTURE: freeze on last frame to fill remaining time.
-      // This uses tpad=stop_mode=clone which repeats the final frame.
+      // We extract the last frame as a PNG, create a still video from it,
+      // then concatenate the original clip + still video.
+      // This avoids relying on tpad which may not be available on all FFmpeg builds.
       const padDuration = targetDuration - clipDuration;
-      console.log(`[Compositor] Scene clip ${clipDuration.toFixed(1)}s < target ${targetDuration.toFixed(1)}s — freezing last frame for ${padDuration.toFixed(1)}s (NOT looping)`);
-      return runFfmpeg([
-        '-y',
-        '-i', inputPath,
-        '-vf', `scale=${WIDTH}:${HEIGHT}:force_original_aspect_ratio=decrease,pad=${WIDTH}:${HEIGHT}:(ow-iw)/2:(oh-ih)/2:black,tpad=stop_mode=clone:stop_duration=${Math.ceil(padDuration)},format=yuv420p`,
+      console.log(`[Compositor] Scene clip ${clipDuration.toFixed(1)}s < target ${targetDuration.toFixed(1)}s — freezing last frame for ${padDuration.toFixed(1)}s (extract+concat method)`);
+
+      const dir = path.dirname(outputPath);
+      const base = path.basename(outputPath, '.mp4');
+      const lastFramePath = path.join(dir, `${base}_lastframe.png`);
+      const stillClipPath = path.join(dir, `${base}_still.mp4`);
+      const normalizedOrigPath = path.join(dir, `${base}_orig_norm.mp4`);
+      const concatListPath = path.join(dir, `${base}_freeze_concat.txt`);
+
+      // Step A: Normalize the original clip to target resolution/codec
+      await runFfmpeg([
+        '-y', '-i', inputPath,
+        '-vf', `scale=${WIDTH}:${HEIGHT}:force_original_aspect_ratio=decrease,pad=${WIDTH}:${HEIGHT}:(ow-iw)/2:(oh-ih)/2:black,format=yuv420p`,
         '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '23',
+        '-r', String(FPS), '-pix_fmt', 'yuv420p', '-an',
+        '-movflags', '+faststart',
+        normalizedOrigPath,
+      ], 'freeze: normalize original clip');
+
+      // Step B: Extract the last frame as a PNG
+      await runFfmpeg([
+        '-y', '-sseof', '-0.1',
+        '-i', inputPath,
+        '-frames:v', '1',
+        '-vf', `scale=${WIDTH}:${HEIGHT}:force_original_aspect_ratio=decrease,pad=${WIDTH}:${HEIGHT}:(ow-iw)/2:(oh-ih)/2:black`,
+        lastFramePath,
+      ], 'freeze: extract last frame');
+
+      // Step C: Create a still video from the last frame (no zoom, just static)
+      await runFfmpeg([
+        '-y', '-loop', '1',
+        '-i', lastFramePath,
+        '-vf', `scale=${WIDTH}:${HEIGHT},format=yuv420p`,
+        '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '23',
+        '-t', String(Math.ceil(padDuration) + 1), // slight extra, trimmed at concat
+        '-r', String(FPS), '-pix_fmt', 'yuv420p',
+        '-movflags', '+faststart',
+        stillClipPath,
+      ], `freeze: create still video (${padDuration.toFixed(1)}s)`);
+
+      // Step D: Concatenate original + still using concat demuxer, trim to target
+      fs.writeFileSync(concatListPath, `file '${normalizedOrigPath}'\nfile '${stillClipPath}'\n`);
+      await runFfmpeg([
+        '-y', '-f', 'concat', '-safe', '0',
+        '-i', concatListPath,
+        '-c', 'copy',
         '-t', String(targetDuration),
-        '-r', String(FPS),
-        '-pix_fmt', 'yuv420p',
-        '-an',
         '-movflags', '+faststart',
         outputPath,
-      ], `normalizing scene clip (freeze last frame for ${padDuration.toFixed(1)}s)`);
+      ], `freeze: concat orig+still (total ${targetDuration.toFixed(1)}s)`);
+
+      // Cleanup temp files
+      try { fs.unlinkSync(lastFramePath); } catch {}
+      try { fs.unlinkSync(stillClipPath); } catch {}
+      try { fs.unlinkSync(normalizedOrigPath); } catch {}
+      try { fs.unlinkSync(concatListPath); } catch {}
+
+      return;
     } else {
       // B-ROLL: loop to fill time (ambient footage, safe to repeat)
       console.log(`[Compositor] B-roll clip ${clipDuration.toFixed(1)}s < target ${targetDuration.toFixed(1)}s — looping to fill`);
@@ -640,7 +687,7 @@ async function applyIntroLogoOverlay(inputPath, outputPath, brandLogoUrl, workDi
   const logoMaxW = 200;
   const logoMaxH = 140;
   const plusSize = 40;
-  const plusGap = 50;    // gap between each logo edge and the "+" symbol
+  const plusGap = 80;    // gap between each logo edge and the "+" symbol
   const scrimH = 220;
 
   // ── Build the FFmpeg filter_complex ──

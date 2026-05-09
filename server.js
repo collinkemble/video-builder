@@ -7,14 +7,15 @@ const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
 const { query } = require('./src/db/connection');
 const { migrate } = require('./src/db/migrate');
-const { runPipeline, getPipelineStatus } = require('./src/pipeline/orchestrator');
+const { runPipeline, getPipelineStatus, regenerateSegments } = require('./src/pipeline/orchestrator');
 const { generateScript } = require('./src/pipeline/scriptGenerator');
 const { getAvailableVoices } = require('./src/pipeline/voiceoverGenerator');
 const { deleteVideoAssets } = require('./src/utils/r2');
+const { parseEditInstruction } = require('./src/pipeline/smartEditParser');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const BUILD_VERSION = 'v155-custom-instructions';
+const BUILD_VERSION = 'v156-segment-editor';
 
 // Health/version endpoint — verify which code is deployed
 app.get('/api/version', (req, res) => {
@@ -485,7 +486,7 @@ app.get('/api/videos/:id', async (req, res) => {
 
     const video = rows[0];
     // Parse JSON fields
-    ['scene_data', 'scene_ids', 'narration_script', 'voiceover_timestamps', 'scriptwriter_data'].forEach(field => {
+    ['scene_data', 'scene_ids', 'narration_script', 'voiceover_timestamps', 'scriptwriter_data', 'segment_assets'].forEach(field => {
       if (typeof video[field] === 'string') {
         try { video[field] = JSON.parse(video[field]); } catch (e) { /* keep as string */ }
       }
@@ -826,6 +827,99 @@ app.post('/api/videos/:id/generate', async (req, res) => {
   } catch (err) {
     console.error('Failed to start pipeline:', err);
     res.status(500).json({ error: 'Failed to start pipeline' });
+  }
+});
+
+// POST /api/videos/:id/regenerate-segments — selectively regenerate specific segments
+app.post('/api/videos/:id/regenerate-segments', async (req, res) => {
+  try {
+    const { email, changes } = req.body;
+    if (!email) return res.status(400).json({ error: 'Email required' });
+    if (!changes || !Array.isArray(changes) || changes.length === 0) {
+      return res.status(400).json({ error: 'changes array is required with at least one entry' });
+    }
+
+    // Validate each change entry
+    for (const c of changes) {
+      if (c.order === undefined || c.order === null) {
+        return res.status(400).json({ error: 'Each change must include an "order" field' });
+      }
+      if (!c.narration && !c.brollDescription && !c.regenerateBroll && !c.regenerateVoiceover) {
+        return res.status(400).json({ error: `Change for order ${c.order} must include at least one modification` });
+      }
+    }
+
+    const user = await getOrCreateUser(email);
+
+    // Verify ownership and check status
+    const rows = await query('SELECT * FROM videos WHERE id = ? AND user_id = ?', [req.params.id, user.id]);
+    if (rows.length === 0) return res.status(404).json({ error: 'Video not found' });
+
+    const video = rows[0];
+    if (video.status !== 'completed') {
+      return res.status(409).json({ error: 'Video must be completed before editing segments' });
+    }
+
+    // Check segment_assets exist
+    const segmentAssets = video.segment_assets
+      ? (typeof video.segment_assets === 'string' ? JSON.parse(video.segment_assets) : video.segment_assets)
+      : null;
+    if (!segmentAssets || !segmentAssets.clips || Object.keys(segmentAssets.clips).length === 0) {
+      return res.status(409).json({ error: 'No segment assets available. Please regenerate the full video first.' });
+    }
+
+    // Start regeneration in background
+    res.json({ success: true, message: 'Segment regeneration started. Poll /api/videos/:id/status for progress.' });
+
+    regenerateSegments(req.params.id, user.id, changes).catch(err => {
+      console.error(`Segment regeneration failed for video ${req.params.id}:`, err.message);
+    });
+  } catch (err) {
+    console.error('Failed to start segment regeneration:', err);
+    res.status(500).json({ error: 'Failed to start segment regeneration' });
+  }
+});
+
+// POST /api/videos/:id/smart-edit — LLM-powered natural language segment editing
+app.post('/api/videos/:id/smart-edit', async (req, res) => {
+  try {
+    const { email, instruction } = req.body;
+    if (!email) return res.status(400).json({ error: 'Email required' });
+    if (!instruction || !instruction.trim()) {
+      return res.status(400).json({ error: 'Edit instruction is required' });
+    }
+
+    const user = await getOrCreateUser(email);
+    const rows = await query('SELECT * FROM videos WHERE id = ? AND user_id = ?', [req.params.id, user.id]);
+    if (rows.length === 0) return res.status(404).json({ error: 'Video not found' });
+
+    const video = rows[0];
+    if (video.status !== 'completed') {
+      return res.status(409).json({ error: 'Video must be completed before smart editing' });
+    }
+
+    const script = video.narration_script
+      ? (typeof video.narration_script === 'string' ? JSON.parse(video.narration_script) : video.narration_script)
+      : null;
+    if (!script || !script.segments) {
+      return res.status(409).json({ error: 'No script found' });
+    }
+
+    // Use LLM to parse the instruction into segment changes
+    const changes = await parseEditInstruction(
+      instruction.trim(),
+      script.segments,
+      video.brand_name || ''
+    );
+
+    if (changes.length === 0) {
+      return res.json({ changes: [], message: 'No actionable changes identified for that instruction. Try being more specific about which section to change.' });
+    }
+
+    res.json({ changes });
+  } catch (err) {
+    console.error('Smart edit failed:', err);
+    res.status(500).json({ error: 'Smart edit failed: ' + err.message });
   }
 });
 

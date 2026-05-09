@@ -237,8 +237,18 @@ async function composeVideo({
   // ── Step 6: Get duration ──
   const duration = await getVideoDuration(finalVideoPath);
 
-  // Cleanup intermediate files
-  for (const clip of normalizedClips) safeDelete(clip);
+  // Build segment clip map (order → normalized clip path) for selective regeneration.
+  // These clips will be uploaded to R2 by the orchestrator.
+  const segmentClipMap = [];
+  for (let i = 0; i < timelineEntries.length; i++) {
+    segmentClipMap.push({
+      order: timelineEntries[i].order,
+      type: timelineEntries[i].type,
+      clipPath: normalizedClips[i],
+    });
+  }
+
+  // Cleanup intermediate files (but NOT the normalized clips — the orchestrator uploads them first)
   safeDelete(silentVideoPath);
   safeDelete(concatPath);
   if (musicPath) safeDelete(musicPath);
@@ -248,6 +258,7 @@ async function composeVideo({
     videoPath: finalVideoPath,
     thumbnailPath,
     duration: Math.round(duration * 100) / 100,
+    segmentClips: segmentClipMap,  // for segment asset persistence
   };
 }
 

@@ -40,6 +40,7 @@ async function migrate() {
         "ALTER TABLE videos ADD COLUMN persona_image_url TEXT DEFAULT NULL",
         "ALTER TABLE videos ADD COLUMN brand_logo_url TEXT DEFAULT NULL",
         "ALTER TABLE videos ADD COLUMN custom_instructions TEXT DEFAULT NULL",
+        "ALTER TABLE videos ADD COLUMN segment_assets JSON DEFAULT NULL",
       ];
 
       const allAlters = [...sharedAlters, ...appAlters];

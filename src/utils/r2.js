@@ -196,10 +196,57 @@ async function deleteVideoAssets(userId, videoId) {
   return deleted;
 }
 
+/**
+ * Upload individual segment clips to R2 for selective regeneration.
+ * @param {number} userId
+ * @param {number} videoId
+ * @param {Array<{order: number, clipPath: string}>} clips - Array of {order, clipPath}
+ * @returns {Promise<object>} Map of order → R2 URL
+ */
+async function uploadSegmentClips(userId, videoId, clips) {
+  const ts = Date.now();
+  const prefix = `videos/${userId}/${videoId}/segments`;
+  const result = {};
+
+  for (const { order, clipPath } of clips) {
+    if (!clipPath || !fs.existsSync(clipPath)) continue;
+    try {
+      const url = await uploadFile(
+        `${prefix}/clip_${order}_${ts}.mp4`,
+        clipPath,
+        'video/mp4'
+      );
+      result[order] = url;
+    } catch (err) {
+      console.warn(`[R2] Failed to upload segment clip ${order}: ${err.message}`);
+    }
+  }
+
+  console.log(`[R2] Uploaded ${Object.keys(result).length}/${clips.length} segment clips`);
+  return result;
+}
+
+/**
+ * Download a file from a URL to a local path.
+ * Works with R2 public URLs and presigned URLs.
+ * @param {string} url - URL to download from
+ * @param {string} outputPath - Local path to save to
+ * @returns {Promise<string>} outputPath
+ */
+async function downloadFile(url, outputPath) {
+  const resp = await fetch(url);
+  if (!resp.ok) throw new Error(`Download failed: HTTP ${resp.status}`);
+  const buffer = Buffer.from(await resp.arrayBuffer());
+  fs.writeFileSync(outputPath, buffer);
+  return outputPath;
+}
+
 module.exports = {
   uploadFile,
   getPresignedUrl,
   deleteFile,
   uploadVideoAssets,
   deleteVideoAssets,
+  uploadSegmentClips,
+  downloadFile,
 };

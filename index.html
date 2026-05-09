@@ -1142,6 +1142,7 @@ async function viewVideo(id, skipPush) {
 
     currentVideoId = video.id;
     currentVideoData = video;
+    window._currentVideoFull = video;
 
     // Header
     document.getElementById('detail-breadcrumb').textContent = video.name;
@@ -1336,16 +1337,77 @@ function renderScript(script) {
   // Store the script data for editing
   window._currentScript = data;
 
+  // Check if segment assets exist (video has been generated)
+  const hasSegmentAssets = window._currentVideoFull && window._currentVideoFull.segment_assets
+    && window._currentVideoFull.segment_assets.clips
+    && Object.keys(window._currentVideoFull.segment_assets.clips).length > 0;
+  const isCompleted = window._currentVideoFull && window._currentVideoFull.status === 'completed';
+  const canEdit = hasSegmentAssets && isCompleted;
+
   const total = data.segments.length;
-  container.innerHTML = data.segments.map((seg, i) => {
+  let html = '';
+
+  // Smart-edit bar (natural language quick edit) — only show if video is completed with segment assets
+  if (canEdit) {
+    html += `
+    <div id="smart-edit-bar" style="margin-bottom: 16px; background: #F0F7FF; border: 1px solid #B8D4E8; border-radius: 10px; padding: 12px 14px;">
+      <div style="display: flex; gap: 8px; align-items: center;">
+        <span style="font-size: 16px; flex-shrink: 0;">✨</span>
+        <input id="smart-edit-input" type="text" placeholder="Quick edit — e.g. 'change the intro b-roll to focus on the product' or 'make the outro narration more energetic'"
+          style="flex: 1; font-size: 13px; padding: 8px 12px; border: 1px solid #D1D5DB; border-radius: 8px; outline: none; font-family: inherit;"
+          onkeydown="if(event.key==='Enter') runSmartEdit()">
+        <button onclick="runSmartEdit()" class="cursor-pointer" style="background: #0176D3; color: white; font-size: 12px; font-weight: 700; padding: 8px 14px; border-radius: 8px; border: none; white-space: nowrap;">Apply Edit</button>
+      </div>
+      <p style="font-size: 11px; color: #6B7280; margin-top: 6px; margin-left: 28px;">Describe what you want to change and we'll figure out which segments to update.</p>
+    </div>`;
+  }
+
+  // Batch regenerate bar — only show if video is completed with segment assets
+  if (canEdit) {
+    html += `
+    <div id="batch-regen-bar" class="hidden" style="margin-bottom: 12px; background: #FFFBEB; border: 1px solid #F59E0B; border-radius: 10px; padding: 10px 14px; display: flex; align-items: center; gap: 10px;">
+      <span style="font-size: 14px;">⚡</span>
+      <span id="batch-regen-count" style="font-size: 13px; color: #92400E; font-weight: 600;">0 sections selected</span>
+      <button onclick="regenerateSelectedSegments()" id="batch-regen-btn" class="cursor-pointer" style="margin-left: auto; background: #F59E0B; color: white; font-size: 12px; font-weight: 700; padding: 6px 14px; border-radius: 8px; border: none;">🔄 Regenerate Selected</button>
+      <button onclick="clearSegmentSelections()" class="cursor-pointer" style="background: none; border: 1px solid #D1D5DB; font-size: 12px; padding: 6px 10px; border-radius: 8px; color: #666;">Clear</button>
+    </div>`;
+  }
+
+  html += data.segments.map((seg, i) => {
     const typeColors = { intro: '#0176D3', scene: '#032D60', transition: '#6B7280', outro: '#0176D3' };
     const typeColor = typeColors[seg.type] || '#888';
     const typeLabel = seg.type === 'scene' ? `scene${seg.channel ? ' — ' + esc(seg.channel) : ''}` : seg.type;
+    const hasBroll = seg.visualType === 'broll' && seg.brollDescription;
+
+    // Expand panel for editing b-roll and selective regeneration
+    const expandPanel = canEdit ? `
+      <div id="seg-expand-${i}" class="seg-expand-panel" style="display: none; margin-top: 8px; background: #F9FAFB; border: 1px solid #E5E7EB; border-radius: 8px; padding: 10px 12px;">
+        ${hasBroll ? `
+        <div style="margin-bottom: 8px;">
+          <label style="font-size: 11px; font-weight: 600; color: #555; display: block; margin-bottom: 3px;">B-Roll Description</label>
+          <textarea data-broll-index="${i}" oninput="onSegmentBrollEdit(${i})" rows="2" style="width: 100%; font-size: 13px; color: #555; line-height: 1.4; border: 1px solid #D1D5DB; border-radius: 6px; padding: 6px 8px; resize: vertical; font-family: inherit;">${esc(seg.brollDescription || '')}</textarea>
+        </div>` : `
+        <div style="margin-bottom: 8px;">
+          <span style="font-size: 11px; color: #888;">Visual: ${seg.visualType === 'scene_capture' ? 'Scene capture (not editable)' : seg.visualType || 'none'}</span>
+        </div>`}
+        <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
+          <label style="display: flex; align-items: center; gap: 4px; font-size: 12px; color: #555; cursor: pointer;">
+            <input type="checkbox" class="seg-regen-narration" data-order="${seg.order}" onchange="updateBatchRegenBar()"> Re-gen narration voice
+          </label>
+          ${hasBroll ? `
+          <label style="display: flex; align-items: center; gap: 4px; font-size: 12px; color: #555; cursor: pointer;">
+            <input type="checkbox" class="seg-regen-broll" data-order="${seg.order}" onchange="updateBatchRegenBar()"> Re-gen visuals
+          </label>` : ''}
+          <button onclick="regenerateSingleSegment(${i})" class="cursor-pointer" style="margin-left: auto; background: #7C3AED; color: white; font-size: 11px; font-weight: 700; padding: 5px 12px; border-radius: 6px; border: none;">🔄 Regenerate This Section</button>
+        </div>
+      </div>` : '';
+
     return `
     <div class="script-seg-row" data-seg-index="${i}" style="padding: 12px 0; ${i < total - 1 ? 'border-bottom: 1px solid #f0f0f0;' : ''}">
       <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 6px;">
         <span style="font-size: 10px; font-weight: 700; text-transform: uppercase; color: ${typeColor}; letter-spacing: 0.04em;">${esc(typeLabel)}</span>
         <span style="font-size: 10px; color: #ccc;">~${seg.estimatedDuration || '?'}s</span>
+        ${canEdit ? `<button onclick="toggleSegExpand(${i})" class="cursor-pointer seg-expand-toggle" data-seg-index="${i}" title="Edit section details" style="background: none; border: 1px solid #E5E7EB; border-radius: 6px; width: 26px; height: 26px; display: flex; align-items: center; justify-content: center; font-size: 11px; color: #7C3AED; margin-left: 4px;">✎</button>` : ''}
         <span style="margin-left: auto; display: flex; gap: 2px;">
           ${i > 0 ? `<button onclick="moveSegment(${i}, -1)" title="Move up" class="cursor-pointer" style="background: none; border: 1px solid #e5e7eb; border-radius: 6px; width: 26px; height: 26px; display: flex; align-items: center; justify-content: center; font-size: 12px; color: #666;">↑</button>` : ''}
           ${i < total - 1 ? `<button onclick="moveSegment(${i}, 1)" title="Move down" class="cursor-pointer" style="background: none; border: 1px solid #e5e7eb; border-radius: 6px; width: 26px; height: 26px; display: flex; align-items: center; justify-content: center; font-size: 12px; color: #666;">↓</button>` : ''}
@@ -1353,8 +1415,11 @@ function renderScript(script) {
         </span>
       </div>
       <textarea data-seg-index="${i}" oninput="onScriptSegmentEdit()" rows="3" style="width: 100%; font-size: 14px; color: #333; line-height: 1.5; border: 1px solid #e5e7eb; border-radius: 8px; padding: 8px 10px; resize: vertical; font-family: inherit;">${esc(seg.narration || '')}</textarea>
+      ${expandPanel}
     </div>`;
   }).join('');
+
+  container.innerHTML = html;
 }
 
 function onScriptSegmentEdit() {
@@ -1575,6 +1640,198 @@ async function saveNarrationScript() {
   } finally {
     btn.disabled = false;
     btn.textContent = '💾 Save Script';
+  }
+}
+
+// ═══════════════════════════════════════════════
+// Segment Editor — Selective Regeneration
+// ═══════════════════════════════════════════════
+
+function toggleSegExpand(index) {
+  const panel = document.getElementById(`seg-expand-${index}`);
+  if (!panel) return;
+  const isVisible = panel.style.display !== 'none';
+  // Collapse all other panels first
+  document.querySelectorAll('.seg-expand-panel').forEach(p => p.style.display = 'none');
+  document.querySelectorAll('.seg-expand-toggle').forEach(b => {
+    b.style.background = 'none'; b.style.color = '#7C3AED'; b.style.borderColor = '#E5E7EB';
+  });
+  if (!isVisible) {
+    panel.style.display = 'block';
+    const toggle = document.querySelector(`.seg-expand-toggle[data-seg-index="${index}"]`);
+    if (toggle) { toggle.style.background = '#7C3AED'; toggle.style.color = 'white'; toggle.style.borderColor = '#7C3AED'; }
+  }
+}
+
+function onSegmentBrollEdit(index) {
+  const ta = document.querySelector(`textarea[data-broll-index="${index}"]`);
+  if (!ta || !window._currentScript) return;
+  const seg = window._currentScript.segments[index];
+  if (seg) seg.brollDescription = ta.value;
+  document.getElementById('save-script-btn').classList.remove('hidden');
+}
+
+function updateBatchRegenBar() {
+  const voiceChecks = document.querySelectorAll('.seg-regen-narration:checked');
+  const brollChecks = document.querySelectorAll('.seg-regen-broll:checked');
+  const totalChecked = voiceChecks.length + brollChecks.length;
+  const bar = document.getElementById('batch-regen-bar');
+  if (!bar) return;
+  if (totalChecked > 0) {
+    bar.classList.remove('hidden');
+    bar.style.display = 'flex';
+    document.getElementById('batch-regen-count').textContent = `${totalChecked} option${totalChecked !== 1 ? 's' : ''} selected`;
+  } else {
+    bar.classList.add('hidden');
+    bar.style.display = 'none';
+  }
+}
+
+function clearSegmentSelections() {
+  document.querySelectorAll('.seg-regen-narration, .seg-regen-broll').forEach(cb => cb.checked = false);
+  updateBatchRegenBar();
+}
+
+async function regenerateSingleSegment(index) {
+  if (!currentVideoId || !window._currentScript) return;
+  const seg = window._currentScript.segments[index];
+  if (!seg) return;
+
+  // Check what to regenerate from the panel checkboxes
+  const voiceCheck = document.querySelector(`.seg-regen-narration[data-order="${seg.order}"]`);
+  const brollCheck = document.querySelector(`.seg-regen-broll[data-order="${seg.order}"]`);
+  const regenVoiceover = voiceCheck ? voiceCheck.checked : false;
+  const regenBroll = brollCheck ? brollCheck.checked : false;
+
+  // If nothing is checked, default to regenerating b-roll (most common edit)
+  const change = {
+    order: seg.order,
+    regenerateVoiceover: regenVoiceover,
+    regenerateBroll: regenBroll || (!regenVoiceover && seg.visualType === 'broll'),
+  };
+
+  // Include current narration if voiceover is being regenerated
+  if (regenVoiceover) {
+    collectNarrationEdits();
+    change.narration = seg.narration;
+  }
+
+  // Include b-roll description if visuals are being regenerated
+  if (change.regenerateBroll && seg.brollDescription) {
+    change.brollDescription = seg.brollDescription;
+  }
+
+  await startSegmentRegeneration([change]);
+}
+
+async function regenerateSelectedSegments() {
+  if (!currentVideoId || !window._currentScript) return;
+  collectNarrationEdits();
+
+  const changes = [];
+  const voiceChecks = document.querySelectorAll('.seg-regen-narration:checked');
+  const brollChecks = document.querySelectorAll('.seg-regen-broll:checked');
+
+  // Collect all unique orders
+  const orderSet = new Set();
+  voiceChecks.forEach(cb => orderSet.add(parseInt(cb.dataset.order, 10)));
+  brollChecks.forEach(cb => orderSet.add(parseInt(cb.dataset.order, 10)));
+
+  for (const order of orderSet) {
+    const seg = window._currentScript.segments.find(s => s.order === order);
+    if (!seg) continue;
+    const regenVoiceover = !!document.querySelector(`.seg-regen-narration[data-order="${order}"]:checked`);
+    const regenBroll = !!document.querySelector(`.seg-regen-broll[data-order="${order}"]:checked`);
+    const change = { order, regenerateVoiceover: regenVoiceover, regenerateBroll: regenBroll };
+    if (regenVoiceover) change.narration = seg.narration;
+    if (regenBroll && seg.brollDescription) change.brollDescription = seg.brollDescription;
+    changes.push(change);
+  }
+
+  if (changes.length === 0) {
+    alert('Select at least one option to regenerate.');
+    return;
+  }
+
+  await startSegmentRegeneration(changes);
+}
+
+async function startSegmentRegeneration(changes) {
+  const email = document.getElementById('user-email').textContent;
+
+  // First save any pending script edits
+  collectNarrationEdits();
+  renumberSegments();
+  try {
+    await fetch(`/api/videos/${currentVideoId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, narrationScript: window._currentScript }),
+    });
+  } catch {}
+
+  // Start the regeneration
+  try {
+    const resp = await fetch(`/api/videos/${currentVideoId}/regenerate-segments`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, changes }),
+    });
+
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || 'Failed to start regeneration');
+
+    // Switch to polling mode
+    clearSegmentSelections();
+    startStatusPolling(currentVideoId);
+
+    // Update status badge
+    const badge = document.getElementById('detail-status-badge');
+    badge.className = 'status-badge status-compositing';
+    badge.textContent = 'Editing...';
+  } catch (err) {
+    alert('Segment regeneration failed: ' + err.message);
+  }
+}
+
+async function runSmartEdit() {
+  const input = document.getElementById('smart-edit-input');
+  if (!input) return;
+  const instruction = input.value.trim();
+  if (!instruction) { alert('Please describe what you want to change.'); return; }
+  if (!currentVideoId || !window._currentScript) return;
+
+  const email = document.getElementById('user-email').textContent;
+  const btn = input.nextElementSibling;
+  btn.disabled = true;
+  btn.textContent = '⏳ Thinking...';
+  input.disabled = true;
+
+  try {
+    const resp = await fetch(`/api/videos/${currentVideoId}/smart-edit`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, instruction }),
+    });
+
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || 'Smart edit failed');
+
+    // If the LLM returned changes, apply them
+    if (data.changes && data.changes.length > 0) {
+      input.value = '';
+      await startSegmentRegeneration(data.changes);
+    } else if (data.message) {
+      alert(data.message);
+    } else {
+      alert('No changes were identified for that instruction.');
+    }
+  } catch (err) {
+    alert('Smart edit failed: ' + err.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Apply Edit';
+    input.disabled = false;
   }
 }
 

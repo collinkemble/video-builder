@@ -36,6 +36,10 @@
     @keyframes spin {
       to { transform: rotate(360deg); }
     }
+    @keyframes pulse-edit {
+      0%, 100% { transform: scale(1); }
+      50% { transform: scale(1.3); background: #7C3AED; color: white; border-color: #7C3AED; }
+    }
   </style>
   <style>
     @media (max-width: 768px) {
@@ -1209,7 +1213,7 @@ async function viewVideo(id, skipPush) {
     const genBtn = document.getElementById('generate-btn');
     const isProcessing = ['scripting','voiceover','capturing','compositing','uploading'].includes(video.status);
     genBtn.disabled = false;
-    genBtn.textContent = isProcessing ? '⚠️ Pipeline Running (click to restart)' : (video.status === 'completed' ? '🔄 Regenerate' : '🎬 Generate Video');
+    genBtn.textContent = isProcessing ? '⚠️ Pipeline Running (click to restart)' : (video.status === 'completed' ? '🔄 Regenerate All Sections' : '🎬 Generate Video');
 
     // Scenes
     renderScenes(video.scene_data);
@@ -1362,14 +1366,14 @@ function renderScript(script) {
     </div>`;
   }
 
-  // Batch regenerate bar — only show if video is completed with segment assets
+  // Batch regenerate bar — always visible when canEdit, shows edited section count
   if (canEdit) {
     html += `
-    <div id="batch-regen-bar" class="hidden" style="margin-bottom: 12px; background: #FFFBEB; border: 1px solid #F59E0B; border-radius: 10px; padding: 10px 14px; display: flex; align-items: center; gap: 10px;">
+    <div id="batch-regen-bar" style="margin-bottom: 12px; background: #F9FAFB; border: 1px solid #E5E7EB; border-radius: 10px; padding: 10px 14px; display: flex; align-items: center; gap: 10px;">
       <span style="font-size: 14px;">⚡</span>
-      <span id="batch-regen-count" style="font-size: 13px; color: #92400E; font-weight: 600;">0 sections selected</span>
-      <button onclick="regenerateSelectedSegments()" id="batch-regen-btn" class="cursor-pointer" style="margin-left: auto; background: #F59E0B; color: white; font-size: 12px; font-weight: 700; padding: 6px 14px; border-radius: 8px; border: none;">🔄 Regenerate Selected</button>
-      <button onclick="clearSegmentSelections()" class="cursor-pointer" style="background: none; border: 1px solid #D1D5DB; font-size: 12px; padding: 6px 10px; border-radius: 8px; color: #666;">Clear</button>
+      <span id="batch-regen-count" style="font-size: 13px; color: #6B7280; font-weight: 600;">No sections edited</span>
+      <button onclick="regenerateSelectedSegments()" id="batch-regen-btn" class="cursor-pointer" disabled style="margin-left: auto; background: #D1D5DB; color: white; font-size: 12px; font-weight: 700; padding: 6px 14px; border-radius: 8px; border: none; transition: all 0.2s;">🔄 Regenerate Edited Sections</button>
+      <button onclick="clearSegmentEdits()" id="batch-clear-btn" class="cursor-pointer" style="display: none; background: none; border: 1px solid #D1D5DB; font-size: 12px; padding: 6px 10px; border-radius: 8px; color: #666;">Undo Edits</button>
     </div>`;
   }
 
@@ -1378,7 +1382,7 @@ function renderScript(script) {
     html += `
     <div id="seg-edit-hint" style="margin-bottom: 10px; padding: 8px 12px; background: #F3F0FF; border: 1px solid #DDD6FE; border-radius: 8px; display: flex; align-items: center; gap: 8px;">
       <span style="font-size: 13px; flex-shrink: 0;">✎</span>
-      <span style="font-size: 12px; color: #5B21B6;">Click the <strong style="background: #EDE9FE; padding: 1px 5px; border-radius: 4px; font-size: 11px;">✎</strong> button on any section below to edit its b-roll description, choose what to regenerate, or regenerate just that section.</span>
+      <span style="font-size: 12px; color: #5B21B6;">Click the <strong style="background: #EDE9FE; padding: 1px 5px; border-radius: 4px; font-size: 11px;">✎</strong> button on any section to edit narration or b-roll. Changed sections highlight and auto-queue for regeneration.</span>
       <button onclick="this.parentElement.style.display='none'" class="cursor-pointer" style="margin-left: auto; background: none; border: none; color: #A78BFA; font-size: 14px; padding: 0 4px; flex-shrink: 0;" title="Dismiss">✕</button>
     </div>`;
   }
@@ -1389,52 +1393,65 @@ function renderScript(script) {
     const typeLabel = seg.type === 'scene' ? `scene${seg.channel ? ' — ' + esc(seg.channel) : ''}` : seg.type;
     const hasBroll = seg.visualType === 'broll' && seg.brollDescription;
 
-    // Expand panel for editing b-roll and selective regeneration
+    // Expand panel for editing b-roll and per-section regeneration
     const expandPanel = canEdit ? `
-      <div id="seg-expand-${i}" class="seg-expand-panel" style="display: none; margin-top: 8px; background: #F9FAFB; border: 1px solid #E5E7EB; border-radius: 8px; padding: 10px 12px;">
+      <div id="seg-expand-${i}" class="seg-expand-panel" style="display: none; margin-top: 8px;">
         ${hasBroll ? `
-        <div style="margin-bottom: 8px;">
+        <div style="background: #F9FAFB; border: 1px solid #E5E7EB; border-radius: 8px; padding: 10px 12px; margin-bottom: 8px;">
           <label style="font-size: 11px; font-weight: 600; color: #555; display: block; margin-bottom: 3px;">B-Roll Description</label>
           <textarea data-broll-index="${i}" oninput="onSegmentBrollEdit(${i})" rows="2" style="width: 100%; font-size: 13px; color: #555; line-height: 1.4; border: 1px solid #D1D5DB; border-radius: 6px; padding: 6px 8px; resize: vertical; font-family: inherit;">${esc(seg.brollDescription || '')}</textarea>
           <p style="font-size: 10px; color: #9CA3AF; margin: 3px 0 0 0; line-height: 1.3;">💡 Each clip is max 8 seconds. Longer sections use multiple clips with varied angles around your description. Be specific for better results.</p>
         </div>` : `
-        <div style="margin-bottom: 8px;">
+        <div style="background: #F9FAFB; border: 1px solid #E5E7EB; border-radius: 8px; padding: 10px 12px; margin-bottom: 8px;">
           <span style="font-size: 11px; color: #888;">Visual: ${seg.visualType === 'scene_capture' ? 'Scene capture (not editable)' : seg.visualType || 'none'}</span>
         </div>`}
-        <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
-          <label style="display: flex; align-items: center; gap: 4px; font-size: 12px; color: #555; cursor: pointer;">
-            <input type="checkbox" class="seg-regen-narration" data-order="${seg.order}" onchange="updateBatchRegenBar()"> Re-gen narration voice
-          </label>
-          ${hasBroll ? `
-          <label style="display: flex; align-items: center; gap: 4px; font-size: 12px; color: #555; cursor: pointer;">
-            <input type="checkbox" class="seg-regen-broll" data-order="${seg.order}" onchange="updateBatchRegenBar()"> Re-gen visuals
-          </label>` : ''}
-          <button onclick="regenerateSingleSegment(${i})" class="cursor-pointer" style="margin-left: auto; background: #7C3AED; color: white; font-size: 11px; font-weight: 700; padding: 5px 12px; border-radius: 6px; border: none;">🔄 Regenerate This Section</button>
-        </div>
+        <button onclick="regenerateSingleSegment(${i})" class="cursor-pointer seg-regen-btn" data-seg-index="${i}" style="width: 100%; background: #7C3AED; color: white; font-size: 12px; font-weight: 700; padding: 8px 14px; border-radius: 8px; border: none; transition: all 0.2s;">🔄 Regenerate This Section</button>
       </div>` : '';
 
     return `
-    <div class="script-seg-row" data-seg-index="${i}" style="padding: 12px 0; ${i < total - 1 ? 'border-bottom: 1px solid #f0f0f0;' : ''}">
+    <div class="script-seg-row" data-seg-index="${i}" data-seg-order="${seg.order}" style="padding: 12px 0; ${i < total - 1 ? 'border-bottom: 1px solid #f0f0f0;' : ''} transition: background 0.2s, border-color 0.2s;">
       <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 6px;">
         <span style="font-size: 10px; font-weight: 700; text-transform: uppercase; color: ${typeColor}; letter-spacing: 0.04em;">${esc(typeLabel)}</span>
         <span style="font-size: 10px; color: #ccc;">~${seg.estimatedDuration || '?'}s</span>
-        ${canEdit ? `<button onclick="toggleSegExpand(${i})" class="cursor-pointer seg-expand-toggle" data-seg-index="${i}" title="Edit section details" style="background: none; border: 1px solid #E5E7EB; border-radius: 6px; width: 26px; height: 26px; display: flex; align-items: center; justify-content: center; font-size: 11px; color: #7C3AED; margin-left: 4px;">✎</button>` : ''}
+        ${canEdit ? `<span id="seg-changed-badge-${i}" class="seg-changed-badge" style="display: none; font-size: 9px; font-weight: 700; color: #F59E0B; background: #FFFBEB; border: 1px solid #FDE68A; padding: 1px 6px; border-radius: 4px; text-transform: uppercase; letter-spacing: 0.03em;">edited</span>` : ''}
+        ${canEdit ? `<button onclick="toggleSegExpand(${i})" class="cursor-pointer seg-expand-toggle" data-seg-index="${i}" title="Edit this section" style="background: none; border: 1px solid #E5E7EB; border-radius: 6px; width: 26px; height: 26px; display: flex; align-items: center; justify-content: center; font-size: 11px; color: #7C3AED; margin-left: 4px;">✎</button>` : ''}
         <span style="margin-left: auto; display: flex; gap: 2px;">
           ${i > 0 ? `<button onclick="moveSegment(${i}, -1)" title="Move up" class="cursor-pointer" style="background: none; border: 1px solid #e5e7eb; border-radius: 6px; width: 26px; height: 26px; display: flex; align-items: center; justify-content: center; font-size: 12px; color: #666;">↑</button>` : ''}
           ${i < total - 1 ? `<button onclick="moveSegment(${i}, 1)" title="Move down" class="cursor-pointer" style="background: none; border: 1px solid #e5e7eb; border-radius: 6px; width: 26px; height: 26px; display: flex; align-items: center; justify-content: center; font-size: 12px; color: #666;">↓</button>` : ''}
           <button onclick="deleteSegment(${i})" title="Delete section" class="cursor-pointer" style="background: none; border: 1px solid #FEE2E2; border-radius: 6px; width: 26px; height: 26px; display: flex; align-items: center; justify-content: center; font-size: 12px; color: #EF4444;">✕</button>
         </span>
       </div>
-      <textarea data-seg-index="${i}" oninput="onScriptSegmentEdit()" rows="3" style="width: 100%; font-size: 14px; color: #333; line-height: 1.5; border: 1px solid #e5e7eb; border-radius: 8px; padding: 8px 10px; resize: vertical; font-family: inherit;">${esc(seg.narration || '')}</textarea>
+      <textarea data-seg-index="${i}" oninput="onScriptSegmentEdit(${i})" rows="3" ${canEdit ? 'readonly' : ''} style="width: 100%; font-size: 14px; color: #333; line-height: 1.5; border: 1px solid #e5e7eb; border-radius: 8px; padding: 8px 10px; resize: vertical; font-family: inherit; ${canEdit ? 'background: #FAFAFA; cursor: default;' : ''}" ${canEdit ? `onfocus="this.blur()" onclick="promptEditSegment(${i})"` : ''}>${esc(seg.narration || '')}</textarea>
       ${expandPanel}
     </div>`;
   }).join('');
 
   container.innerHTML = html;
+
+  // Store original segment values for change tracking (only on first render or re-render after regen)
+  if (canEdit) storeOriginalSegments();
 }
 
-function onScriptSegmentEdit() {
+function onScriptSegmentEdit(index) {
   document.getElementById('save-script-btn').classList.remove('hidden');
+  if (index !== undefined) markSegmentEdited(index, 'narration');
+}
+
+// Prompt user to click the edit button when they try to type in a readonly narration
+function promptEditSegment(index) {
+  const toggle = document.querySelector(`.seg-expand-toggle[data-seg-index="${index}"]`);
+  if (toggle) {
+    toggle.style.animation = 'none';
+    toggle.offsetHeight; // trigger reflow
+    toggle.style.animation = 'pulse-edit 0.6s ease 2';
+    // Also briefly highlight it
+    toggle.style.background = '#EDE9FE';
+    setTimeout(() => {
+      if (!toggle.style.background.includes('124')) { // not actively toggled purple
+        toggle.style.background = 'none';
+      }
+    }, 1500);
+  }
 }
 
 // ── Script segment management ──
@@ -1658,6 +1675,67 @@ async function saveNarrationScript() {
 // Segment Editor — Selective Regeneration
 // ═══════════════════════════════════════════════
 
+// Track original values so we know what changed
+window._originalSegments = {};
+
+function storeOriginalSegments() {
+  if (!window._currentScript || !window._currentScript.segments) return;
+  window._originalSegments = {};
+  window._editedSegments = new Set();
+  window._currentScript.segments.forEach((seg, i) => {
+    window._originalSegments[i] = {
+      narration: seg.narration || '',
+      brollDescription: seg.brollDescription || '',
+    };
+  });
+}
+
+function markSegmentEdited(index, field) {
+  if (!window._originalSegments || !window._currentScript) return;
+  const seg = window._currentScript.segments[index];
+  const orig = window._originalSegments[index];
+  if (!seg || !orig) return;
+
+  const narrationChanged = (seg.narration || '') !== orig.narration;
+  const brollChanged = (seg.brollDescription || '') !== orig.brollDescription;
+  const isEdited = narrationChanged || brollChanged;
+
+  const badge = document.getElementById(`seg-changed-badge-${index}`);
+  const row = document.querySelector(`.script-seg-row[data-seg-index="${index}"]`);
+
+  if (isEdited) {
+    window._editedSegments = window._editedSegments || new Set();
+    window._editedSegments.add(index);
+    if (badge) {
+      // Show what was changed
+      const parts = [];
+      if (narrationChanged) parts.push('narration');
+      if (brollChanged) parts.push('visuals');
+      badge.textContent = parts.join(' + ') + ' edited';
+      badge.style.display = 'inline';
+    }
+    if (row) {
+      row.style.background = '#FFFBEB';
+      row.style.borderRadius = '8px';
+      row.style.padding = '12px 8px';
+      row.style.marginLeft = '-8px';
+      row.style.marginRight = '-8px';
+    }
+  } else {
+    if (window._editedSegments) window._editedSegments.delete(index);
+    if (badge) badge.style.display = 'none';
+    if (row) {
+      row.style.background = '';
+      row.style.borderRadius = '';
+      row.style.padding = '12px 0';
+      row.style.marginLeft = '';
+      row.style.marginRight = '';
+    }
+  }
+
+  updateBatchRegenBar();
+}
+
 function toggleSegExpand(index) {
   const panel = document.getElementById(`seg-expand-${index}`);
   if (!panel) return;
@@ -1667,10 +1745,32 @@ function toggleSegExpand(index) {
   document.querySelectorAll('.seg-expand-toggle').forEach(b => {
     b.style.background = 'none'; b.style.color = '#7C3AED'; b.style.borderColor = '#E5E7EB';
   });
+
   if (!isVisible) {
     panel.style.display = 'block';
     const toggle = document.querySelector(`.seg-expand-toggle[data-seg-index="${index}"]`);
     if (toggle) { toggle.style.background = '#7C3AED'; toggle.style.color = 'white'; toggle.style.borderColor = '#7C3AED'; }
+
+    // Make narration textarea editable when panel is open
+    const narrationTa = document.querySelector(`textarea[data-seg-index="${index}"]`);
+    if (narrationTa) {
+      narrationTa.removeAttribute('readonly');
+      narrationTa.style.background = '#fff';
+      narrationTa.style.cursor = 'text';
+      narrationTa.removeAttribute('onfocus');
+      narrationTa.removeAttribute('onclick');
+      narrationTa.oninput = function() { onScriptSegmentEdit(index); };
+    }
+  } else {
+    // Lock narration textarea back to readonly
+    const narrationTa = document.querySelector(`textarea[data-seg-index="${index}"]`);
+    if (narrationTa) {
+      narrationTa.setAttribute('readonly', '');
+      narrationTa.style.background = '#FAFAFA';
+      narrationTa.style.cursor = 'default';
+      narrationTa.setAttribute('onfocus', 'this.blur()');
+      narrationTa.setAttribute('onclick', `promptEditSegment(${index})`);
+    }
   }
 }
 
@@ -1680,69 +1780,107 @@ function onSegmentBrollEdit(index) {
   const seg = window._currentScript.segments[index];
   if (seg) seg.brollDescription = ta.value;
   document.getElementById('save-script-btn').classList.remove('hidden');
+  markSegmentEdited(index, 'broll');
 }
 
 function updateBatchRegenBar() {
-  const voiceChecks = document.querySelectorAll('.seg-regen-narration:checked');
-  const brollChecks = document.querySelectorAll('.seg-regen-broll:checked');
-  const totalChecked = voiceChecks.length + brollChecks.length;
+  const edited = window._editedSegments ? window._editedSegments.size : 0;
   const bar = document.getElementById('batch-regen-bar');
   if (!bar) return;
-  if (totalChecked > 0) {
-    bar.classList.remove('hidden');
-    bar.style.display = 'flex';
-    document.getElementById('batch-regen-count').textContent = `${totalChecked} option${totalChecked !== 1 ? 's' : ''} selected`;
+
+  const countEl = document.getElementById('batch-regen-count');
+  const btn = document.getElementById('batch-regen-btn');
+  const clearBtn = document.getElementById('batch-clear-btn');
+
+  if (edited > 0) {
+    bar.style.background = '#FFFBEB';
+    bar.style.borderColor = '#F59E0B';
+    countEl.textContent = `${edited} section${edited !== 1 ? 's' : ''} edited`;
+    countEl.style.color = '#92400E';
+    btn.disabled = false;
+    btn.style.background = '#F59E0B';
+    btn.style.cursor = 'pointer';
+    clearBtn.style.display = 'inline-block';
   } else {
-    bar.classList.add('hidden');
-    bar.style.display = 'none';
+    bar.style.background = '#F9FAFB';
+    bar.style.borderColor = '#E5E7EB';
+    countEl.textContent = 'No sections edited';
+    countEl.style.color = '#6B7280';
+    btn.disabled = true;
+    btn.style.background = '#D1D5DB';
+    btn.style.cursor = 'default';
+    clearBtn.style.display = 'none';
   }
 }
 
+function clearSegmentEdits() {
+  if (!window._originalSegments || !window._currentScript) return;
+  // Revert all edited segments to original values
+  for (const idx of (window._editedSegments || [])) {
+    const orig = window._originalSegments[idx];
+    const seg = window._currentScript.segments[idx];
+    if (orig && seg) {
+      seg.narration = orig.narration;
+      seg.brollDescription = orig.brollDescription;
+    }
+  }
+  window._editedSegments = new Set();
+  renderScript(window._currentScript);
+}
+
 function clearSegmentSelections() {
-  document.querySelectorAll('.seg-regen-narration, .seg-regen-broll').forEach(cb => cb.checked = false);
+  window._editedSegments = new Set();
   updateBatchRegenBar();
+}
+
+function buildChangeForSegment(index) {
+  const seg = window._currentScript.segments[index];
+  const orig = window._originalSegments[index];
+  if (!seg || !orig) return null;
+
+  const narrationChanged = (seg.narration || '') !== orig.narration;
+  const brollChanged = (seg.brollDescription || '') !== orig.brollDescription;
+
+  if (!narrationChanged && !brollChanged) return null;
+
+  const change = {
+    order: seg.order,
+    regenerateVoiceover: narrationChanged,
+    regenerateBroll: brollChanged && seg.visualType === 'broll',
+  };
+
+  if (narrationChanged) change.narration = seg.narration;
+  if (brollChanged && seg.brollDescription) change.brollDescription = seg.brollDescription;
+
+  return change;
 }
 
 async function regenerateSingleSegment(index) {
   if (!currentVideoId || !window._currentScript) return;
-  collectNarrationEdits(); // Always sync textarea edits first
+  collectNarrationEdits();
   const seg = window._currentScript.segments[index];
   if (!seg) return;
 
-  // Check what to regenerate from the panel checkboxes
-  const voiceCheck = document.querySelector(`.seg-regen-narration[data-order="${seg.order}"]`);
-  const brollCheck = document.querySelector(`.seg-regen-broll[data-order="${seg.order}"]`);
-  let regenVoiceover = voiceCheck ? voiceCheck.checked : false;
-  let regenBroll = brollCheck ? brollCheck.checked : false;
+  // Auto-detect what changed by comparing to originals
+  let change = buildChangeForSegment(index);
 
-  // Smart defaults: if neither checkbox is checked, auto-detect what changed
-  if (!regenVoiceover && !regenBroll) {
-    // If this segment has b-roll, default to regenerating visuals (most common edit intent)
+  // If nothing was detected as changed, use smart defaults
+  if (!change) {
+    change = { order: seg.order };
     if (seg.visualType === 'broll') {
-      regenBroll = true;
+      change.regenerateBroll = true;
+      change.regenerateVoiceover = false;
+      if (seg.brollDescription) change.brollDescription = seg.brollDescription;
     } else {
-      // Scene capture — can only regenerate voiceover
-      regenVoiceover = true;
+      change.regenerateVoiceover = true;
+      change.regenerateBroll = false;
+      change.narration = seg.narration;
     }
   }
 
-  const change = {
-    order: seg.order,
-    regenerateVoiceover: regenVoiceover,
-    regenerateBroll: regenBroll,
-  };
-
-  // Always include current narration & broll description so edits are applied
-  if (regenVoiceover) {
-    change.narration = seg.narration;
-  }
-  if (regenBroll && seg.brollDescription) {
-    change.brollDescription = seg.brollDescription;
-  }
-
   // Disable the button to show it's working
-  const btn = document.querySelector(`#seg-expand-${index} button[onclick="regenerateSingleSegment(${index})"]`);
-  if (btn) { btn.disabled = true; btn.textContent = '⏳ Regenerating...'; }
+  const btn = document.querySelector(`.seg-regen-btn[data-seg-index="${index}"]`);
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Regenerating...'; btn.style.background = '#A78BFA'; }
 
   await startSegmentRegeneration([change]);
 }
@@ -1752,29 +1890,19 @@ async function regenerateSelectedSegments() {
   collectNarrationEdits();
 
   const changes = [];
-  const voiceChecks = document.querySelectorAll('.seg-regen-narration:checked');
-  const brollChecks = document.querySelectorAll('.seg-regen-broll:checked');
-
-  // Collect all unique orders
-  const orderSet = new Set();
-  voiceChecks.forEach(cb => orderSet.add(parseInt(cb.dataset.order, 10)));
-  brollChecks.forEach(cb => orderSet.add(parseInt(cb.dataset.order, 10)));
-
-  for (const order of orderSet) {
-    const seg = window._currentScript.segments.find(s => s.order === order);
-    if (!seg) continue;
-    const regenVoiceover = !!document.querySelector(`.seg-regen-narration[data-order="${order}"]:checked`);
-    const regenBroll = !!document.querySelector(`.seg-regen-broll[data-order="${order}"]:checked`);
-    const change = { order, regenerateVoiceover: regenVoiceover, regenerateBroll: regenBroll };
-    if (regenVoiceover) change.narration = seg.narration;
-    if (regenBroll && seg.brollDescription) change.brollDescription = seg.brollDescription;
-    changes.push(change);
+  for (const index of (window._editedSegments || [])) {
+    const change = buildChangeForSegment(index);
+    if (change) changes.push(change);
   }
 
   if (changes.length === 0) {
-    alert('Select at least one option to regenerate.');
+    alert('No sections have been edited. Click the ✎ button on a section to edit it first.');
     return;
   }
+
+  // Disable the batch button
+  const btn = document.getElementById('batch-regen-btn');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Regenerating...'; btn.style.background = '#A78BFA'; }
 
   await startSegmentRegeneration(changes);
 }
@@ -1804,11 +1932,25 @@ async function startSegmentRegeneration(changes) {
     const data = await resp.json();
     if (!resp.ok) throw new Error(data.error || 'Failed to start regeneration');
 
-    // Show clear visual feedback
-    clearSegmentSelections();
+    // Clear edit tracking and visual indicators
+    window._editedSegments = new Set();
+    document.querySelectorAll('.seg-changed-badge').forEach(b => b.style.display = 'none');
+    document.querySelectorAll('.script-seg-row').forEach(r => {
+      r.style.background = ''; r.style.borderRadius = ''; r.style.padding = '12px 0';
+      r.style.marginLeft = ''; r.style.marginRight = '';
+    });
+    updateBatchRegenBar();
 
-    // Collapse any open expand panels
+    // Collapse any open expand panels and lock narrations back to readonly
     document.querySelectorAll('.seg-expand-panel').forEach(p => p.style.display = 'none');
+    document.querySelectorAll('.seg-expand-toggle').forEach(b => {
+      b.style.background = 'none'; b.style.color = '#7C3AED'; b.style.borderColor = '#E5E7EB';
+    });
+    document.querySelectorAll('textarea[data-seg-index]').forEach(ta => {
+      ta.setAttribute('readonly', '');
+      ta.style.background = '#FAFAFA';
+      ta.style.cursor = 'default';
+    });
 
     // Show a prominent "regenerating" banner replacing the hint bar
     const hintEl = document.getElementById('seg-edit-hint');

@@ -534,4 +534,4 @@ async function generateAllBroll(segments, brandName, outputDir, onProgress, pers
   return results;
 }
 
-module.exports = { generateBrollImage, generateBrollVideo, generateBroll, generateAllBroll };
+module.exports = { generateBrollImage, generateBrollVideo, generateBroll, generateAllBroll, calcClipsNeeded };

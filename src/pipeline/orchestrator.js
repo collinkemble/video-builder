@@ -627,6 +627,18 @@ async function regenerateSegments(videoId, userId, changes) {
       // Resolve persona image
       let personaImageUrl = video.persona_image_url || null;
 
+      const { generateBroll, calcClipsNeeded } = require('./brollGenerator');
+      const { spawn } = require('child_process');
+      const ffmpegPath = process.env.FFMPEG_PATH || 'ffmpeg';
+
+      // Variation styles for multi-clip segments (same as full pipeline)
+      const variationStyles = [
+        null,  // First clip uses the original description unchanged
+        'Show a COMPLETELY DIFFERENT scene and setting — different location, different activity, different mood. Do NOT repeat any action or prop from the previous shot.',
+        'Show an OUTDOOR establishing shot — wide angle, environmental, no close-ups of objects. Completely different from previous clips.',
+        'Show a warm CLOSE-UP of hands or a facial expression — intimate, emotional moment. No props, no objects, no packages.',
+      ];
+
       for (const c of brollChanges) {
         const seg = script.segments.find(s => s.order === c.order);
         if (!seg || !seg.brollDescription) continue;
@@ -636,48 +648,73 @@ async function regenerateSegments(videoId, userId, changes) {
         }
 
         try {
-          const { generateBroll } = require('./brollGenerator');
-          const mediaPath = await generateBroll({
-            description: seg.brollDescription,
-            brandName: video.brand_name || sceneData.brand_name || 'Brand',
-            brandDescription: sceneData.brand_description || '',
-            personaDescription: sceneData.persona_description || '',
-            outputDir: workDir,
-            segmentType: seg.type || '',
-            segmentChannel: seg.channel || '',
-            personaImageUrl,
-          });
+          // Calculate target duration from timestamps
+          const tsMap = {};
+          if (timestamps && timestamps.segments) {
+            timestamps.segments.forEach(ts => { tsMap[ts.order] = ts; });
+          }
+          const orderedTs = timestamps && timestamps.segments
+            ? timestamps.segments.slice().sort((a, b) => a.order - b.order)
+            : [];
 
-          if (mediaPath) {
-            // Normalize the new b-roll clip to match timeline duration
-            const { buildTimeline: _unused, ...compositorFns } = require('./videoCompositor');
-            // We need to normalize the clip — compute its target duration from timestamps
-            const tsMap = {};
-            if (timestamps && timestamps.segments) {
-              timestamps.segments.forEach(ts => { tsMap[ts.order] = ts; });
+          const ts = tsMap[seg.order];
+          let duration = seg.estimatedDuration || 10;
+          if (ts) {
+            const tsIdx = orderedTs.findIndex(t => t.order === seg.order);
+            const nextTs = (tsIdx >= 0 && tsIdx < orderedTs.length - 1) ? orderedTs[tsIdx + 1] : null;
+            duration = nextTs ? (nextTs.startTime - ts.startTime) : (ts.endTime - ts.startTime);
+          }
+          if (duration < 1) duration = 1;
+
+          // Calculate how many 8s clips we need (same logic as full pipeline)
+          const clipsNeeded = calcClipsNeeded(seg, timestamps, script.segments);
+          console.log(`[Regen] Segment ${c.order}: ${duration.toFixed(1)}s → generating ${clipsNeeded} clip(s)`);
+
+          // Generate all clips for this segment in parallel with varied descriptions
+          const clipPromises = [];
+          for (let ci = 0; ci < clipsNeeded; ci++) {
+            let desc = seg.brollDescription || 'Professional lifestyle image';
+            if (ci > 0 && ci < variationStyles.length) {
+              desc = `${variationStyles[ci]} General theme: ${desc.substring(0, 80)}`;
+            } else if (ci >= variationStyles.length) {
+              desc = `Cinematic environmental wide shot — cityscape, nature, or architecture. Unrelated to previous clips. Theme context: ${desc.substring(0, 60)}`;
             }
-            const orderedTs = timestamps && timestamps.segments
-              ? timestamps.segments.slice().sort((a, b) => a.order - b.order)
-              : [];
 
-            const ts = tsMap[seg.order];
-            let duration = seg.estimatedDuration || 10;
-            if (ts) {
-              const tsIdx = orderedTs.findIndex(t => t.order === seg.order);
-              const nextTs = (tsIdx >= 0 && tsIdx < orderedTs.length - 1) ? orderedTs[tsIdx + 1] : null;
-              duration = nextTs ? (nextTs.startTime - ts.startTime) : (ts.endTime - ts.startTime);
-            }
-            if (duration < 1) duration = 1;
+            // Only first clip gets persona reference for consistency
+            const usePersona = personaImageUrl && ci === 0;
 
-            // Check if it's a video or image
+            clipPromises.push(
+              generateBroll({
+                description: desc,
+                brandName: video.brand_name || sceneData.brand_name || 'Brand',
+                brandDescription: sceneData.brand_description || '',
+                personaDescription: sceneData.persona_description || '',
+                outputDir: workDir,
+                segmentType: seg.type || '',
+                segmentChannel: seg.channel || '',
+                personaImageUrl: usePersona ? personaImageUrl : null,
+              })
+            );
+          }
+
+          const mediaPaths = await Promise.all(clipPromises);
+          const validPaths = mediaPaths.filter(p => p);
+
+          if (validPaths.length === 0) {
+            console.warn(`[Regen] No clips generated for segment ${c.order}`);
+            continue;
+          }
+
+          const normalizedPath = path.join(workDir, `regen_clip_${c.order}.mp4`);
+
+          if (validPaths.length === 1) {
+            // Single clip — normalize to fill duration
+            const mediaPath = validPaths[0];
             const isVideo = mediaPath.endsWith('.mp4');
-            const normalizedPath = path.join(workDir, `regen_clip_${c.order}.mp4`);
 
             if (isVideo) {
-              // Normalize using FFmpeg — import the function
-              const { execSync, spawn } = require('child_process');
-              // Simple FFmpeg normalization for b-roll (loop to fill)
-              const ffmpegPath = process.env.FFMPEG_PATH || 'ffmpeg';
+              // For a single clip ≤8s covering a ≤8s segment, no looping needed.
+              // For a single clip covering a longer segment (fallback), loop is acceptable.
               await new Promise((resolve, reject) => {
                 const proc = spawn(ffmpegPath, [
                   '-y', '-stream_loop', '-1', '-i', mediaPath,
@@ -692,8 +729,7 @@ async function regenerateSegments(videoId, userId, changes) {
                 proc.on('error', reject);
               });
             } else {
-              // Image → video with zoom effect (same as compositor's imageToVideo)
-              const ffmpegPath = process.env.FFMPEG_PATH || 'ffmpeg';
+              // Image → video with zoom effect
               const totalFrames = Math.ceil(duration * 30);
               await new Promise((resolve, reject) => {
                 const proc = spawn(ffmpegPath, [
@@ -709,10 +745,76 @@ async function regenerateSegments(videoId, userId, changes) {
                 proc.on('error', reject);
               });
             }
+          } else {
+            // Multiple clips — normalize each, then concatenate and trim to target duration
+            console.log(`[Regen] Concatenating ${validPaths.length} clips for segment ${c.order}...`);
+            const normalizedParts = [];
 
-            newBrollClips[c.order] = normalizedPath;
-            console.log(`[Regen] ✓ B-roll regenerated for segment ${c.order}`);
+            for (let j = 0; j < validPaths.length; j++) {
+              const mediaPath = validPaths[j];
+              const isVideo = mediaPath.endsWith('.mp4');
+              const partPath = path.join(workDir, `regen_part_${c.order}_${j}.mp4`);
+
+              if (isVideo) {
+                await new Promise((resolve, reject) => {
+                  const proc = spawn(ffmpegPath, [
+                    '-y', '-i', mediaPath,
+                    '-vf', 'scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,format=yuv420p',
+                    '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '23',
+                    '-r', '30', '-pix_fmt', 'yuv420p',
+                    '-an', '-movflags', '+faststart', partPath,
+                  ], { stdio: ['ignore', 'pipe', 'pipe'] });
+                  let stderr = '';
+                  proc.stderr.on('data', d => stderr += d);
+                  proc.on('close', code => code === 0 ? resolve() : reject(new Error(`FFmpeg failed: ${stderr.slice(-200)}`)));
+                  proc.on('error', reject);
+                });
+              } else {
+                // Image fallback — create 8s zoom clip
+                const partFrames = Math.ceil(8 * 30);
+                await new Promise((resolve, reject) => {
+                  const proc = spawn(ffmpegPath, [
+                    '-y', '-loop', '1', '-i', mediaPath,
+                    '-vf', `scale=2208:1242,crop='1920-((1920-1651)*n/${partFrames})':'1080-((1080-929)*n/${partFrames})',scale=1920:1080,format=yuv420p`,
+                    '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '23',
+                    '-t', '8', '-r', '30', '-pix_fmt', 'yuv420p',
+                    '-movflags', '+faststart', partPath,
+                  ], { stdio: ['ignore', 'pipe', 'pipe'] });
+                  let stderr = '';
+                  proc.stderr.on('data', d => stderr += d);
+                  proc.on('close', code => code === 0 ? resolve() : reject(new Error(`FFmpeg failed: ${stderr.slice(-200)}`)));
+                  proc.on('error', reject);
+                });
+              }
+              normalizedParts.push(partPath);
+            }
+
+            // Concatenate all normalized parts and trim to target duration
+            const concatFilePath = path.join(workDir, `regen_concat_${c.order}.txt`);
+            fs.writeFileSync(concatFilePath, normalizedParts.map(p => `file '${p.replace(/'/g, "'\\''")}'`).join('\n'));
+
+            await new Promise((resolve, reject) => {
+              const proc = spawn(ffmpegPath, [
+                '-y', '-f', 'concat', '-safe', '0', '-i', concatFilePath,
+                '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '23',
+                '-t', String(duration), '-r', '30', '-pix_fmt', 'yuv420p',
+                '-an', '-movflags', '+faststart', normalizedPath,
+              ], { stdio: ['ignore', 'pipe', 'pipe'] });
+              let stderr = '';
+              proc.stderr.on('data', d => stderr += d);
+              proc.on('close', code => code === 0 ? resolve() : reject(new Error(`Concat failed: ${stderr.slice(-200)}`)));
+              proc.on('error', reject);
+            });
+
+            // Clean up parts
+            for (const p of normalizedParts) {
+              try { if (fs.existsSync(p)) fs.unlinkSync(p); } catch {}
+            }
+            try { if (fs.existsSync(concatFilePath)) fs.unlinkSync(concatFilePath); } catch {}
           }
+
+          newBrollClips[c.order] = normalizedPath;
+          console.log(`[Regen] ✓ B-roll regenerated for segment ${c.order} (${validPaths.length} clip(s), ${duration.toFixed(1)}s)`);
         } catch (err) {
           console.warn(`[Regen] B-roll regen failed for segment ${c.order}: ${err.message}`);
         }

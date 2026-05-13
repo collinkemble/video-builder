@@ -1373,6 +1373,16 @@ function renderScript(script) {
     </div>`;
   }
 
+  // Persistent hint for segment editing — always visible when canEdit
+  if (canEdit) {
+    html += `
+    <div id="seg-edit-hint" style="margin-bottom: 10px; padding: 8px 12px; background: #F3F0FF; border: 1px solid #DDD6FE; border-radius: 8px; display: flex; align-items: center; gap: 8px;">
+      <span style="font-size: 13px; flex-shrink: 0;">✎</span>
+      <span style="font-size: 12px; color: #5B21B6;">Click the <strong style="background: #EDE9FE; padding: 1px 5px; border-radius: 4px; font-size: 11px;">✎</strong> button on any section below to edit its b-roll description, choose what to regenerate, or regenerate just that section.</span>
+      <button onclick="this.parentElement.style.display='none'" class="cursor-pointer" style="margin-left: auto; background: none; border: none; color: #A78BFA; font-size: 14px; padding: 0 4px; flex-shrink: 0;" title="Dismiss">✕</button>
+    </div>`;
+  }
+
   html += data.segments.map((seg, i) => {
     const typeColors = { intro: '#0176D3', scene: '#032D60', transition: '#6B7280', outro: '#0176D3' };
     const typeColor = typeColors[seg.type] || '#888';

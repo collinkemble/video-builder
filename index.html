@@ -1704,32 +1704,44 @@ function clearSegmentSelections() {
 
 async function regenerateSingleSegment(index) {
   if (!currentVideoId || !window._currentScript) return;
+  collectNarrationEdits(); // Always sync textarea edits first
   const seg = window._currentScript.segments[index];
   if (!seg) return;
 
   // Check what to regenerate from the panel checkboxes
   const voiceCheck = document.querySelector(`.seg-regen-narration[data-order="${seg.order}"]`);
   const brollCheck = document.querySelector(`.seg-regen-broll[data-order="${seg.order}"]`);
-  const regenVoiceover = voiceCheck ? voiceCheck.checked : false;
-  const regenBroll = brollCheck ? brollCheck.checked : false;
+  let regenVoiceover = voiceCheck ? voiceCheck.checked : false;
+  let regenBroll = brollCheck ? brollCheck.checked : false;
 
-  // If nothing is checked, default to regenerating b-roll (most common edit)
+  // Smart defaults: if neither checkbox is checked, auto-detect what changed
+  if (!regenVoiceover && !regenBroll) {
+    // If this segment has b-roll, default to regenerating visuals (most common edit intent)
+    if (seg.visualType === 'broll') {
+      regenBroll = true;
+    } else {
+      // Scene capture — can only regenerate voiceover
+      regenVoiceover = true;
+    }
+  }
+
   const change = {
     order: seg.order,
     regenerateVoiceover: regenVoiceover,
-    regenerateBroll: regenBroll || (!regenVoiceover && seg.visualType === 'broll'),
+    regenerateBroll: regenBroll,
   };
 
-  // Include current narration if voiceover is being regenerated
+  // Always include current narration & broll description so edits are applied
   if (regenVoiceover) {
-    collectNarrationEdits();
     change.narration = seg.narration;
   }
-
-  // Include b-roll description if visuals are being regenerated
-  if (change.regenerateBroll && seg.brollDescription) {
+  if (regenBroll && seg.brollDescription) {
     change.brollDescription = seg.brollDescription;
   }
+
+  // Disable the button to show it's working
+  const btn = document.querySelector(`#seg-expand-${index} button[onclick="regenerateSingleSegment(${index})"]`);
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Regenerating...'; }
 
   await startSegmentRegeneration([change]);
 }
@@ -1791,14 +1803,34 @@ async function startSegmentRegeneration(changes) {
     const data = await resp.json();
     if (!resp.ok) throw new Error(data.error || 'Failed to start regeneration');
 
-    // Switch to polling mode
+    // Show clear visual feedback
     clearSegmentSelections();
-    startStatusPolling(currentVideoId);
 
-    // Update status badge
+    // Collapse any open expand panels
+    document.querySelectorAll('.seg-expand-panel').forEach(p => p.style.display = 'none');
+
+    // Show a prominent "regenerating" banner replacing the hint bar
+    const hintEl = document.getElementById('seg-edit-hint');
+    if (hintEl) hintEl.style.display = 'none';
+    const smartBar = document.getElementById('smart-edit-bar');
+    if (smartBar) {
+      smartBar.innerHTML = `
+        <div style="display: flex; gap: 10px; align-items: center; padding: 2px 0;">
+          <div style="width: 18px; height: 18px; border: 3px solid #0176D3; border-top-color: transparent; border-radius: 50%; animation: spin 0.8s linear infinite; flex-shrink: 0;"></div>
+          <span style="font-size: 14px; font-weight: 600; color: #0176D3;">Regenerating ${changes.length} section${changes.length !== 1 ? 's' : ''}...</span>
+          <span style="font-size: 12px; color: #6B7280; margin-left: 4px;">This may take a few minutes. The video will update when complete.</span>
+        </div>`;
+    }
+
+    // Start polling & update status badge
+    startStatusPolling(currentVideoId);
     const badge = document.getElementById('detail-status-badge');
     badge.className = 'status-badge status-compositing';
     badge.textContent = 'Editing...';
+
+    // Scroll to the pipeline progress area so the user sees the steps
+    const progressEl = document.getElementById('pipeline-progress');
+    if (progressEl) progressEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   } catch (err) {
     alert('Segment regeneration failed: ' + err.message);
   }

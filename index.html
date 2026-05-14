@@ -2065,7 +2065,18 @@ function renderPipelineSteps(jobs) {
   const jobMap = {};
   jobs.forEach(j => { jobMap[j.step] = j; });
 
-  container.innerHTML = STEP_ORDER.map(step => {
+  // Determine which steps to show based on available jobs
+  // If only regen-relevant jobs exist (no script/capture), show only those
+  const hasFullPipeline = !!jobMap['script'] || !!jobMap['capture'];
+  const stepsToShow = hasFullPipeline ? STEP_ORDER : STEP_ORDER.filter(s => !!jobMap[s]);
+
+  // If no steps to show, show nothing
+  if (stepsToShow.length === 0) {
+    container.innerHTML = '';
+    return;
+  }
+
+  container.innerHTML = stepsToShow.map(step => {
     const job = jobMap[step];
     const status = job ? job.status : 'pending';
     const label = STEP_LABELS[step] || step;

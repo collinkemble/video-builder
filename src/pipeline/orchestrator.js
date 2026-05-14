@@ -534,6 +534,9 @@ async function regenerateSegments(videoId, userId, changes) {
 
     await updateVideoStatus(videoId, 'compositing');
 
+    // Delete any old jobs for this video so pipeline progress shows fresh state
+    await query('DELETE FROM video_jobs WHERE video_id = ?', [videoId]);
+
     // Build a map of which orders are being changed
     const changeMap = {};
     for (const c of changes) {
@@ -560,15 +563,21 @@ async function regenerateSegments(videoId, userId, changes) {
 
     // Determine if any segment needs voiceover regeneration
     const needsVoiceover = changes.some(c => c.regenerateVoiceover || (c.narration !== undefined && c.narration !== null));
+    const needsBroll = changes.some(c => c.regenerateBroll);
+
+    // Create tracking jobs for pipeline progress display
+    const voiceoverJobId = await createJob(videoId, userId, 'voiceover');
+    const brollJobId = needsBroll ? await createJob(videoId, userId, 'broll') : null;
+    const compositeJobId = await createJob(videoId, userId, 'composite');
+    const uploadJobId = await createJob(videoId, userId, 'upload');
 
     // ── Regenerate voiceover if needed ──
     let voiceoverResult = null;
     let voiceoverPath = null;
 
+    await updateJob(voiceoverJobId, 'running');
     if (needsVoiceover) {
       console.log('[Regen] Regenerating full voiceover (narration changed)...');
-      // We regenerate the FULL voiceover since ElevenLabs produces a single audio track
-      // and segment timestamps depend on the full audio alignment
       const narrationSegments = script.segments.filter(s => s.narration);
       voiceoverResult = await generateVoiceover({
         segments: narrationSegments,
@@ -576,7 +585,6 @@ async function regenerateSegments(videoId, userId, changes) {
         outputDir: workDir,
       });
 
-      // Update timestamps in DB
       await query(
         'UPDATE videos SET voiceover_timestamps = ? WHERE id = ?',
         [JSON.stringify(voiceoverResult.timestamps), videoId]
@@ -591,6 +599,7 @@ async function regenerateSegments(videoId, userId, changes) {
         console.log('[Regen] Downloaded existing voiceover');
       }
     }
+    await completeJob(voiceoverJobId, { regenVoiceover: needsVoiceover });
 
     // Use updated or existing timestamps
     const timestamps = voiceoverResult
@@ -621,6 +630,7 @@ async function regenerateSegments(videoId, userId, changes) {
     const brollChanges = changes.filter(c => c.regenerateBroll);
     const newBrollClips = {}; // order → local path
 
+    if (brollJobId) await updateJob(brollJobId, 'running');
     if (brollChanges.length > 0) {
       console.log(`[Regen] Regenerating b-roll for ${brollChanges.length} segment(s)...`);
 
@@ -670,8 +680,10 @@ async function regenerateSegments(videoId, userId, changes) {
           const clipsNeeded = calcClipsNeeded(seg, timestamps, script.segments);
           console.log(`[Regen] Segment ${c.order}: ${duration.toFixed(1)}s → generating ${clipsNeeded} clip(s)`);
 
-          // Generate all clips for this segment in parallel with varied descriptions
-          const clipPromises = [];
+          // Generate clips SEQUENTIALLY to avoid Veo rate limits during regen
+          // (full pipeline uses parallel because it has many segments, but regen
+          // focuses on 1-2 segments so sequential avoids rate-limit fallback to images)
+          const mediaPaths = [];
           for (let ci = 0; ci < clipsNeeded; ci++) {
             let desc = seg.brollDescription || 'Professional lifestyle image';
             if (ci > 0 && ci < variationStyles.length) {
@@ -683,21 +695,25 @@ async function regenerateSegments(videoId, userId, changes) {
             // Only first clip gets persona reference for consistency
             const usePersona = personaImageUrl && ci === 0;
 
-            clipPromises.push(
-              generateBroll({
-                description: desc,
-                brandName: video.brand_name || sceneData.brand_name || 'Brand',
-                brandDescription: sceneData.brand_description || '',
-                personaDescription: sceneData.persona_description || '',
-                outputDir: workDir,
-                segmentType: seg.type || '',
-                segmentChannel: seg.channel || '',
-                personaImageUrl: usePersona ? personaImageUrl : null,
-              })
-            );
-          }
+            // Small delay between clips to avoid rate limiting (skip for first clip)
+            if (ci > 0) {
+              console.log(`[Regen] Waiting 3s before generating clip ${ci + 1}/${clipsNeeded}...`);
+              await new Promise(r => setTimeout(r, 3000));
+            }
 
-          const mediaPaths = await Promise.all(clipPromises);
+            const mediaPath = await generateBroll({
+              description: desc,
+              brandName: video.brand_name || sceneData.brand_name || 'Brand',
+              brandDescription: sceneData.brand_description || '',
+              personaDescription: sceneData.persona_description || '',
+              outputDir: workDir,
+              segmentType: seg.type || '',
+              segmentChannel: seg.channel || '',
+              personaImageUrl: usePersona ? personaImageUrl : null,
+            });
+            mediaPaths.push(mediaPath);
+            console.log(`[Regen] Clip ${ci + 1}/${clipsNeeded}: ${mediaPath ? (mediaPath.endsWith('.mp4') ? 'VIDEO' : 'IMAGE') : 'FAILED'}`);
+          }
           const validPaths = mediaPaths.filter(p => p);
 
           if (validPaths.length === 0) {
@@ -821,6 +837,8 @@ async function regenerateSegments(videoId, userId, changes) {
       }
     }
 
+    if (brollJobId) await completeJob(brollJobId, { clips: Object.keys(newBrollClips).length });
+
     // ── Build final clip list in order ──
     const allSegmentOrders = script.segments.map(s => s.order).sort((a, b) => a - b);
     const orderedClipPaths = [];
@@ -840,6 +858,7 @@ async function regenerateSegments(videoId, userId, changes) {
     }
 
     // ── Recomposite ──
+    await updateJob(compositeJobId, 'running');
     console.log(`[Regen] Recompositing with ${orderedClipPaths.length} clips...`);
     const concatPath = path.join(workDir, 'concat.txt');
     fs.writeFileSync(concatPath, orderedClipPaths.map(p => `file '${p.replace(/'/g, "'\\''")}'`).join('\n'));
@@ -915,6 +934,8 @@ async function regenerateSegments(videoId, userId, changes) {
     }
 
     // ── Upload new video ──
+    await completeJob(compositeJobId, {});
+    await updateJob(uploadJobId, 'running');
     await updateVideoStatus(videoId, 'uploading');
 
     const urls = await uploadVideoAssets(userId, videoId, {
@@ -965,6 +986,7 @@ async function regenerateSegments(videoId, userId, changes) {
       ]
     );
 
+    await completeJob(uploadJobId, urls);
     cleanupDir(workDir);
 
     const [finalVideo] = await query('SELECT * FROM videos WHERE id = ?', [videoId]);

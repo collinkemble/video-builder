@@ -1405,6 +1405,16 @@ function renderScript(script) {
         <div style="background: #F9FAFB; border: 1px solid #E5E7EB; border-radius: 8px; padding: 10px 12px; margin-bottom: 8px;">
           <span style="font-size: 11px; color: #888;">Visual: ${seg.visualType === 'scene_capture' ? 'Scene capture (not editable)' : seg.visualType || 'none'}</span>
         </div>`}
+        <div style="display: flex; gap: 14px; margin-bottom: 8px; padding: 0 2px;">
+          <label style="display: flex; align-items: center; gap: 5px; font-size: 12px; color: #555; cursor: pointer;">
+            <input type="checkbox" id="seg-only-narration-${i}" data-seg-index="${i}" style="accent-color: #7C3AED; cursor: pointer;">
+            Only regenerate narration
+          </label>
+          <label style="display: flex; align-items: center; gap: 5px; font-size: 12px; color: #555; cursor: pointer;">
+            <input type="checkbox" id="seg-only-visuals-${i}" data-seg-index="${i}" style="accent-color: #7C3AED; cursor: pointer;">
+            Only regenerate visuals
+          </label>
+        </div>
         <button onclick="regenerateSingleSegment(${i})" class="cursor-pointer seg-regen-btn" data-seg-index="${i}" style="width: 100%; background: #7C3AED; color: white; font-size: 12px; font-weight: 700; padding: 8px 14px; border-radius: 8px; border: none; transition: all 0.2s;">🔄 Regenerate This Section</button>
       </div>` : '';
 
@@ -1453,6 +1463,24 @@ function promptEditSegment(index) {
     }, 1500);
   }
 }
+
+// Mutual exclusion for "Only regenerate" checkboxes — checking one unchecks the other
+document.addEventListener('change', function(e) {
+  if (e.target.id && e.target.id.startsWith('seg-only-narration-')) {
+    const idx = e.target.dataset.segIndex;
+    if (e.target.checked) {
+      const other = document.getElementById(`seg-only-visuals-${idx}`);
+      if (other) other.checked = false;
+    }
+  }
+  if (e.target.id && e.target.id.startsWith('seg-only-visuals-')) {
+    const idx = e.target.dataset.segIndex;
+    if (e.target.checked) {
+      const other = document.getElementById(`seg-only-narration-${idx}`);
+      if (other) other.checked = false;
+    }
+  }
+});
 
 // ── Script segment management ──
 
@@ -1861,20 +1889,46 @@ async function regenerateSingleSegment(index) {
   const seg = window._currentScript.segments[index];
   if (!seg) return;
 
-  // Auto-detect what changed by comparing to originals
-  let change = buildChangeForSegment(index);
+  // Check "Only regenerate" checkboxes — these override auto-detection
+  const onlyNarration = document.getElementById(`seg-only-narration-${index}`);
+  const onlyVisuals = document.getElementById(`seg-only-visuals-${index}`);
+  const forceNarrationOnly = onlyNarration && onlyNarration.checked;
+  const forceVisualsOnly = onlyVisuals && onlyVisuals.checked;
 
-  // If nothing was detected as changed, use smart defaults
-  if (!change) {
-    change = { order: seg.order };
-    if (seg.visualType === 'broll') {
-      change.regenerateBroll = true;
-      change.regenerateVoiceover = false;
-      if (seg.brollDescription) change.brollDescription = seg.brollDescription;
-    } else {
-      change.regenerateVoiceover = true;
-      change.regenerateBroll = false;
-      change.narration = seg.narration;
+  let change;
+
+  if (forceNarrationOnly) {
+    // User explicitly wants ONLY narration regenerated
+    change = {
+      order: seg.order,
+      regenerateVoiceover: true,
+      regenerateBroll: false,
+      narration: seg.narration,
+    };
+  } else if (forceVisualsOnly) {
+    // User explicitly wants ONLY visuals regenerated
+    change = {
+      order: seg.order,
+      regenerateVoiceover: false,
+      regenerateBroll: seg.visualType === 'broll',
+    };
+    if (seg.brollDescription) change.brollDescription = seg.brollDescription;
+  } else {
+    // Auto-detect what changed by comparing to originals
+    change = buildChangeForSegment(index);
+
+    // If nothing was detected as changed, use smart defaults
+    if (!change) {
+      change = { order: seg.order };
+      if (seg.visualType === 'broll') {
+        change.regenerateBroll = true;
+        change.regenerateVoiceover = false;
+        if (seg.brollDescription) change.brollDescription = seg.brollDescription;
+      } else {
+        change.regenerateVoiceover = true;
+        change.regenerateBroll = false;
+        change.narration = seg.narration;
+      }
     }
   }
 

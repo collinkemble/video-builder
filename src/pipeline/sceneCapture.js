@@ -6,6 +6,53 @@ const { execSync, spawn } = require('child_process');
 
 const POCKETSIC_BASE = process.env.POCKETSIC_BASE_URL || 'https://pocketsic.aubreydemo.com';
 
+// Emoji font URL — Noto Color Emoji (Google Fonts, ~10MB TTF)
+const EMOJI_FONT_URL = 'https://github.com/googlefonts/noto-emoji/raw/main/fonts/NotoColorEmoji.ttf';
+let emojiFontInstalled = false;
+
+/**
+ * Download and install Noto Color Emoji to ~/.fonts so Chrome can render emojis.
+ * Heroku containers don't ship with emoji fonts — Chrome shows □ for all emoji.
+ * Only downloads once per dyno lifecycle.
+ */
+async function ensureEmojiFont() {
+  if (emojiFontInstalled) return;
+
+  const fontDir = path.join(os.homedir(), '.fonts');
+  const fontPath = path.join(fontDir, 'NotoColorEmoji.ttf');
+
+  // Already downloaded?
+  if (fs.existsSync(fontPath)) {
+    console.log('[SceneCapture] Emoji font already installed');
+    emojiFontInstalled = true;
+    return;
+  }
+
+  try {
+    fs.mkdirSync(fontDir, { recursive: true });
+    console.log('[SceneCapture] Downloading Noto Color Emoji font...');
+
+    const resp = await fetch(EMOJI_FONT_URL, { redirect: 'follow' });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+
+    const buffer = Buffer.from(await resp.arrayBuffer());
+    fs.writeFileSync(fontPath, buffer);
+    console.log(`[SceneCapture] ✅ Emoji font installed (${(buffer.length / 1024 / 1024).toFixed(1)}MB) → ${fontPath}`);
+
+    // Rebuild fontconfig cache so Chrome discovers the new font
+    try {
+      execSync('fc-cache -fv 2>/dev/null || true', { encoding: 'utf-8', timeout: 15000 });
+      console.log('[SceneCapture] Fontconfig cache rebuilt');
+    } catch {
+      console.log('[SceneCapture] fc-cache not available — font should still work via ~/.fonts discovery');
+    }
+
+    emojiFontInstalled = true;
+  } catch (err) {
+    console.warn(`[SceneCapture] Emoji font download failed: ${err.message} — emojis may not render correctly`);
+  }
+}
+
 // How long to record each scene (seconds). Each segment's narration duration
 // is the ideal, but we enforce a min/max to keep captures reasonable.
 const MIN_CAPTURE_SECS = 5;
@@ -603,6 +650,7 @@ async function captureScene({ sceneId, channel, duration, outputDir, browser }) 
     console.log(`[SceneCapture] Page status: ${response ? response.status() : 'no response'}`);
 
     // Let the page fully render before starting capture
+    // (Emoji font is installed at the system level via ensureEmojiFont in launchBrowser)
     await new Promise(r => setTimeout(r, 1500));
 
     // ── Block external navigation (PocketSIC CTAs link to real websites) ──
@@ -950,6 +998,7 @@ function findChromePath() {
 }
 
 async function launchBrowser() {
+  await ensureEmojiFont();
   const executablePath = findChromePath();
   console.log(`Launching Chrome from: ${executablePath}`);
 

@@ -23,6 +23,18 @@ const HEIGHT = 1080;
 const FPS = 30;
 
 /**
+ * Determine if a channel is "passive" — i.e., it has native CSS/JS animations
+ * that play on their own and should LOOP when the clip is shorter than the target.
+ * Interactive channels (messaging, website, retail) should FREEZE on the last frame
+ * because looping would replay the entire conversation/interaction sequence.
+ */
+function isPassiveChannel(channel) {
+  if (!channel) return false;
+  const ch = (channel || '').toLowerCase().replace(/[^a-z]/g, '');
+  return ch.includes('instagram') || ch.includes('social') || ch.includes('facebook') || ch.includes('tiktok');
+}
+
+/**
  * Compose a final video from scene video clips, b-roll images, and voiceover audio.
  *
  * Pipeline:
@@ -87,10 +99,15 @@ async function composeVideo({
       await concatBrollClips(entry.sourcePaths, clipPath, entry.duration, workDir, i);
     } else if (entry.isVideo) {
       // Single video clip — scale/pad to 1920x1080 and trim to target duration
-      // For scene captures: freeze on last frame if too short (don't loop — looping replays the interaction)
-      // For b-roll: loop to fill time (b-roll clips are ambient footage, safe to loop)
+      // For INTERACTIVE scene captures (messaging, website, retail): freeze on last frame
+      //   → looping would replay the entire conversation/clicks
+      // For PASSIVE/animated scenes (Instagram, social, TikTok): loop the animation
+      //   → these have native CSS/JS animations that naturally repeat
+      // For b-roll: loop to fill time (ambient footage, safe to repeat)
       const isSceneCapture = entry.type === 'scene';
-      await normalizeVideoClip(entry.sourcePath, clipPath, entry.duration, isSceneCapture);
+      const isPassiveScene = isSceneCapture && isPassiveChannel(entry.channel);
+      const freezeIfShort = isSceneCapture && !isPassiveScene;
+      await normalizeVideoClip(entry.sourcePath, clipPath, entry.duration, freezeIfShort);
     } else {
       // B-roll still image — create a video of the image held for the duration
       await imageToVideo(entry.sourcePath, clipPath, entry.duration);
@@ -351,6 +368,7 @@ function buildTimeline(segments, timestamps, sceneImages, brollImages) {
       isVideo,
       duration,
       type: seg.type,
+      channel: seg.channel || null,  // Needed to determine loop vs freeze for scene clips
     });
   }
 
@@ -471,8 +489,8 @@ async function normalizeVideoClip(inputPath, outputPath, targetDuration, freezeI
 
       return;
     } else {
-      // B-ROLL: loop to fill time (ambient footage, safe to repeat)
-      console.log(`[Compositor] B-roll clip ${clipDuration.toFixed(1)}s < target ${targetDuration.toFixed(1)}s — looping to fill`);
+      // B-ROLL or PASSIVE SCENE (Instagram/social): loop to fill time
+      console.log(`[Compositor] Clip ${clipDuration.toFixed(1)}s < target ${targetDuration.toFixed(1)}s — looping to fill`);
       return runFfmpeg([
         '-y',
         '-stream_loop', '-1',  // Loop input indefinitely

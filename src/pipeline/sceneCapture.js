@@ -755,11 +755,55 @@ async function captureScene({ sceneId, channel, duration, outputDir, browser }) 
       }
     }
 
+    // For passive scenes (Instagram/social): schedule animation restarts so the
+    // animation loops instead of freezing after its initial cycle (~14s).
+    // We restart CSS/JS animations by briefly adding a class then removing it.
+    const PASSIVE_ANIM_CYCLE = 14; // approx. seconds per animation cycle
+    const passiveRestartFrames = new Set();
+    if (!interactive && captureDuration > PASSIVE_ANIM_CYCLE + 2) {
+      const restartInterval = Math.round(PASSIVE_ANIM_CYCLE * FRAME_RATE);
+      for (let f = restartInterval; f < totalFrames - Math.round(2 * FRAME_RATE); f += restartInterval) {
+        passiveRestartFrames.add(f);
+      }
+      console.log(`[SceneCapture] Passive animation restarts at frames: [${[...passiveRestartFrames].join(',')}]`);
+    }
+
     console.log(`[SceneCapture] Capturing ${totalFrames} frames at ${FRAME_RATE}fps` +
       (interactive ? `, clicks at frames: [${[...clickFrames].sort((a,b) => a-b).join(',')}] (${clickStrategy})` : ' (passive)') + '...');
 
     let capturedFrames = 0;
     for (let i = 0; i < totalFrames; i++) {
+      // ── Restart animations for passive scenes (Instagram/social) ──
+      if (passiveRestartFrames.has(i)) {
+        try {
+          console.log(`[SceneCapture] Restarting animations at frame ${i} (${(i / FRAME_RATE).toFixed(1)}s)`);
+          await page.evaluate(() => {
+            // Restart all CSS animations by toggling a restart trick:
+            // remove and re-add all animated elements' animation properties
+            const all = document.querySelectorAll('*');
+            all.forEach(el => {
+              const cs = getComputedStyle(el);
+              if (cs.animationName && cs.animationName !== 'none') {
+                const anim = el.style.animation;
+                el.style.animation = 'none';
+                // Force reflow
+                void el.offsetHeight;
+                el.style.animation = anim || '';
+              }
+            });
+            // Also restart any CSS transitions by re-triggering class-based animations
+            // PocketSIC often uses class-based transitions that fire on load
+            document.body.classList.add('___restart');
+            void document.body.offsetHeight;
+            document.body.classList.remove('___restart');
+          });
+          // Brief pause to let animations re-initialize
+          await new Promise(r => setTimeout(r, 100));
+        } catch (e) {
+          console.warn(`[SceneCapture] Animation restart failed at frame ${i}: ${e.message}`);
+        }
+      }
+
       // ── Perform click BEFORE the screenshot at this frame ──
       if (clickFrames.has(i) && clickCount < clickLimit) {
         try {

@@ -7,7 +7,7 @@ const { generateScript } = require('./scriptGenerator');
 const { generateVoiceover } = require('./voiceoverGenerator');
 const { captureAllScenes } = require('./sceneCapture');
 const { generateAllBroll } = require('./brollGenerator');
-const { composeVideo } = require('./videoCompositor');
+const { composeVideo, applyIntroLogoOverlay } = require('./videoCompositor');
 const { uploadVideoAssets, uploadSegmentClips } = require('../utils/r2');
 
 /**
@@ -857,6 +857,47 @@ async function regenerateSegments(videoId, userId, changes) {
       throw new Error('No clips available for recomposition');
     }
 
+    // ── Apply logo overlay to intro and outro BEFORE concat ──
+    // Only apply to clips that were regenerated — existing clips already have the overlay baked in.
+    const brandLogoUrl = video.brand_logo_url || sceneData.brand_logo_url || null;
+    if (brandLogoUrl) {
+      const introSeg = script.segments.find(s => s.type === 'intro');
+      if (introSeg && newBrollClips[introSeg.order]) {
+        const introIdx = allSegmentOrders.indexOf(introSeg.order);
+        if (introIdx >= 0 && orderedClipPaths[introIdx]) {
+          try {
+            const introClip = orderedClipPaths[introIdx];
+            const overlaidClip = path.join(workDir, `regen_intro_overlay.mp4`);
+            console.log(`[Regen] Applying logo overlay to regenerated intro (segment ${introSeg.order})...`);
+            await applyIntroLogoOverlay(introClip, overlaidClip, brandLogoUrl, workDir);
+            try { fs.unlinkSync(introClip); } catch {}
+            fs.renameSync(overlaidClip, introClip);
+            console.log('[Regen] ✓ Intro logo overlay applied');
+          } catch (err) {
+            console.warn(`[Regen] Logo overlay failed for intro (non-fatal): ${err.message}`);
+          }
+        }
+      }
+
+      const outroSeg = script.segments.find(s => s.type === 'outro');
+      if (outroSeg && newBrollClips[outroSeg.order]) {
+        const outroIdx = allSegmentOrders.indexOf(outroSeg.order);
+        if (outroIdx >= 0 && orderedClipPaths[outroIdx]) {
+          try {
+            const outroClip = orderedClipPaths[outroIdx];
+            const overlaidOutro = path.join(workDir, `regen_outro_overlay.mp4`);
+            console.log(`[Regen] Applying logo overlay to regenerated outro (segment ${outroSeg.order})...`);
+            await applyIntroLogoOverlay(outroClip, overlaidOutro, brandLogoUrl, workDir);
+            try { fs.unlinkSync(outroClip); } catch {}
+            fs.renameSync(overlaidOutro, outroClip);
+            console.log('[Regen] ✓ Outro logo overlay applied');
+          } catch (err) {
+            console.warn(`[Regen] Logo overlay failed for outro (non-fatal): ${err.message}`);
+          }
+        }
+      }
+    }
+
     // ── Recomposite ──
     await updateJob(compositeJobId, 'running');
     console.log(`[Regen] Recompositing with ${orderedClipPaths.length} clips...`);
@@ -877,9 +918,6 @@ async function regenerateSegments(videoId, userId, changes) {
       proc.on('close', code => code === 0 ? resolve() : reject(new Error(`Concat failed: ${stderr.slice(-200)}`)));
       proc.on('error', reject);
     });
-
-    // ── Apply logo overlay to intro and outro ──
-    // Skip for now — logo overlay is already baked into the existing clips
 
     // ── Overlay voiceover audio ──
     const finalPath = path.join(workDir, `video_regen_${Date.now()}.mp4`);

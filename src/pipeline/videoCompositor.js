@@ -971,4 +971,4 @@ function safeDelete(filePath) {
   try { if (filePath && fs.existsSync(filePath)) fs.unlinkSync(filePath); } catch { /* ignore */ }
 }
 
-module.exports = { composeVideo };
+module.exports = { composeVideo, applyIntroLogoOverlay };

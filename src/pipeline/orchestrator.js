@@ -651,7 +651,8 @@ async function regenerateSegments(videoId, userId, changes) {
 
       for (const c of brollChanges) {
         const seg = script.segments.find(s => s.order === c.order);
-        if (!seg || !seg.brollDescription) continue;
+        if (!seg) continue;
+        // Scene captures don't have brollDescription — handle them first
         if (seg.visualType === 'scene_capture' && seg.sceneId) {
           // Recapture the PocketSIC scene instead of skipping
           try {
@@ -717,6 +718,9 @@ async function regenerateSegments(videoId, userId, changes) {
           }
           continue;
         }
+
+        // B-roll segments require a description for generation
+        if (!seg.brollDescription) continue;
 
         try {
           // Calculate target duration from timestamps

@@ -16,7 +16,7 @@ const { parseEditInstruction } = require('./src/pipeline/smartEditParser');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const BUILD_VERSION = 'v167-fix-instagram-freeze';
+const BUILD_VERSION = 'v168-fix-scene-regen-skip';
 
 // Health/version endpoint — verify which code is deployed
 app.get('/api/version', (req, res) => {

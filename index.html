@@ -21,6 +21,7 @@
   </style>
   <script src="https://assets.meshmesh.io/system/tailwindcss-browser-4.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/magic-sdk/dist/magic.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.4/build/qrcode.min.js"></script>
   <style type="text/tailwindcss">
     @theme {
       --color-brand: #0176D3;
@@ -375,6 +376,13 @@
                 <button onclick="copyShareUrl()" id="copy-share-btn" class="px-3 py-2 text-sm font-bold text-white rounded-lg cursor-pointer" style="background: #0176D3; white-space: nowrap;">📋 Copy</button>
                 <a id="public-preview-link" href="#" target="_blank" class="px-3 py-2 text-sm font-bold rounded-lg cursor-pointer" style="background: #E5E7EB; color: #374151; white-space: nowrap; text-decoration: none;">↗ Open</a>
               </div>
+            </div>
+
+            <!-- QR Code -->
+            <div style="background: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 10px; padding: 14px; margin-bottom: 14px; text-align: center;">
+              <label class="block text-xs font-bold mb-2" style="color: #032D60;">QR Code</label>
+              <canvas id="public-qr-code" style="margin: 0 auto; max-width: 160px; max-height: 160px; width: 160px; height: 160px;"></canvas>
+              <p class="mt-2" style="font-size: 11px; color: #6B7280;">Scan to open the public player page.</p>
             </div>
 
             <!-- Password Protection -->
@@ -1238,6 +1246,12 @@ async function viewVideo(id, skipPush) {
     const shareUrl = `${window.location.origin}/watch/${video.id}`;
     document.getElementById('public-share-url').value = shareUrl;
     document.getElementById('public-preview-link').href = shareUrl;
+
+    // Generate QR code for the share URL
+    try {
+      const qrCanvas = document.getElementById('public-qr-code');
+      QRCode.toCanvas(qrCanvas, shareUrl, { width: 160, margin: 1, color: { dark: '#032D60', light: '#F8FAFC' } });
+    } catch (e) { console.warn('QR code generation failed:', e); }
 
     const hasPassword = !!video.hasPassword;
     document.getElementById('edit-password-enabled').checked = hasPassword;

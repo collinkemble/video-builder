@@ -16,7 +16,7 @@ const { parseEditInstruction } = require('./src/pipeline/smartEditParser');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const BUILD_VERSION = 'v163-qr-code';
+const BUILD_VERSION = 'v164-instagram-loop-fix';
 
 // Health/version endpoint — verify which code is deployed
 app.get('/api/version', (req, res) => {

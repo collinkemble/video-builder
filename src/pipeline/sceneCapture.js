@@ -774,33 +774,33 @@ async function captureScene({ sceneId, channel, duration, outputDir, browser }) 
     let capturedFrames = 0;
     for (let i = 0; i < totalFrames; i++) {
       // ── Restart animations for passive scenes (Instagram/social) ──
+      // Reload the page to fully restart JS-driven animations (feed scrolls,
+      // Stories progress bars, etc.). CSS-only restart tricks don't work for
+      // JS-driven PocketSIC scenes. The 1-2s reload is invisible because
+      // the last frame before reload is identical to the first frame after.
       if (passiveRestartFrames.has(i)) {
         try {
-          console.log(`[SceneCapture] Restarting animations at frame ${i} (${(i / FRAME_RATE).toFixed(1)}s)`);
+          console.log(`[SceneCapture] Reloading page to restart animations at frame ${i} (${(i / FRAME_RATE).toFixed(1)}s)`);
+          const sceneUrl = `${POCKETSIC_BASE}/scene/${sceneId}`;
+          await page.goto(sceneUrl, { waitUntil: 'networkidle0', timeout: 20000 });
+          // Re-dismiss PWA banner and re-block external navigation after reload
           await page.evaluate(() => {
-            // Restart all CSS animations by toggling a restart trick:
-            // remove and re-add all animated elements' animation properties
-            const all = document.querySelectorAll('*');
-            all.forEach(el => {
-              const cs = getComputedStyle(el);
-              if (cs.animationName && cs.animationName !== 'none') {
-                const anim = el.style.animation;
-                el.style.animation = 'none';
-                // Force reflow
-                void el.offsetHeight;
-                el.style.animation = anim || '';
+            const pwa = document.querySelector('.pwa-install-banner, .pwa-banner, [class*="pwa-install"], [class*="pwa-dismiss"]');
+            if (pwa) pwa.remove();
+            document.addEventListener('click', (e) => {
+              const link = e.target.closest('a[href]');
+              if (link && link.href && !link.href.startsWith(window.location.origin)) {
+                e.preventDefault();
+                e.stopPropagation();
               }
-            });
-            // Also restart any CSS transitions by re-triggering class-based animations
-            // PocketSIC often uses class-based transitions that fire on load
-            document.body.classList.add('___restart');
-            void document.body.offsetHeight;
-            document.body.classList.remove('___restart');
+            }, true);
+            window.open = () => null;
           });
-          // Brief pause to let animations re-initialize
-          await new Promise(r => setTimeout(r, 100));
+          // Let the page settle after reload
+          await new Promise(r => setTimeout(r, 1500));
+          console.log(`[SceneCapture] Page reloaded — animations restarted`);
         } catch (e) {
-          console.warn(`[SceneCapture] Animation restart failed at frame ${i}: ${e.message}`);
+          console.warn(`[SceneCapture] Animation restart (reload) failed at frame ${i}: ${e.message}`);
         }
       }
 

@@ -5,7 +5,7 @@ const os = require('os');
 const { query } = require('../db/connection');
 const { generateScript } = require('./scriptGenerator');
 const { generateVoiceover } = require('./voiceoverGenerator');
-const { captureAllScenes } = require('./sceneCapture');
+const { captureAllScenes, captureScene } = require('./sceneCapture');
 const { generateAllBroll } = require('./brollGenerator');
 const { composeVideo, applyIntroLogoOverlay } = require('./videoCompositor');
 const { uploadVideoAssets, uploadSegmentClips } = require('../utils/r2');
@@ -652,8 +652,69 @@ async function regenerateSegments(videoId, userId, changes) {
       for (const c of brollChanges) {
         const seg = script.segments.find(s => s.order === c.order);
         if (!seg || !seg.brollDescription) continue;
-        if (seg.visualType === 'scene_capture') {
-          console.log(`[Regen] Skipping scene capture segment ${c.order} — cannot regenerate scene captures`);
+        if (seg.visualType === 'scene_capture' && seg.sceneId) {
+          // Recapture the PocketSIC scene instead of skipping
+          try {
+            // Calculate target duration from timestamps
+            const tsMap = {};
+            if (timestamps && timestamps.segments) {
+              timestamps.segments.forEach(ts => { tsMap[ts.order] = ts; });
+            }
+            const orderedTs = timestamps && timestamps.segments
+              ? timestamps.segments.slice().sort((a, b) => a.order - b.order)
+              : [];
+            const ts = tsMap[seg.order];
+            let duration = seg.estimatedDuration || 10;
+            if (ts) {
+              const tsIdx = orderedTs.findIndex(t => t.order === seg.order);
+              const nextTs = (tsIdx >= 0 && tsIdx < orderedTs.length - 1) ? orderedTs[tsIdx + 1] : null;
+              duration = nextTs ? (nextTs.startTime - ts.startTime) : (ts.endTime - ts.startTime);
+            }
+            if (duration < 1) duration = 1;
+
+            console.log(`[Regen] Recapturing scene ${seg.sceneId} (channel: ${seg.channel}, ${duration.toFixed(1)}s)...`);
+            const clipPath = await captureScene({
+              sceneId: seg.sceneId,
+              channel: seg.channel || 'default',
+              duration,
+              outputDir: workDir,
+            });
+
+            if (clipPath && fs.existsSync(clipPath)) {
+              // Normalize the captured clip to 1920x1080 and target duration
+              const normalizedPath = path.join(workDir, `regen_clip_${c.order}.mp4`);
+              const isPassive = (seg.channel || '').toLowerCase().replace(/[^a-z]/g, '');
+              const shouldLoop = isPassive.includes('instagram') || isPassive.includes('social') || isPassive.includes('facebook') || isPassive.includes('tiktok');
+
+              if (shouldLoop) {
+                // Passive scenes (Instagram): loop to fill target duration
+                await new Promise((resolve, reject) => {
+                  const proc = spawn(ffmpegPath, [
+                    '-y', '-stream_loop', '-1', '-i', clipPath,
+                    '-vf', 'scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,format=yuv420p',
+                    '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '23',
+                    '-t', String(duration), '-r', '30', '-pix_fmt', 'yuv420p',
+                    '-an', '-movflags', '+faststart', normalizedPath,
+                  ], { stdio: ['ignore', 'pipe', 'pipe'] });
+                  let stderr = '';
+                  proc.stderr.on('data', d => stderr += d);
+                  proc.on('close', code => code === 0 ? resolve() : reject(new Error(`FFmpeg failed: ${stderr.slice(-200)}`)));
+                  proc.on('error', reject);
+                });
+              } else {
+                // Interactive scenes: freeze last frame if too short
+                const { normalizeVideoClip } = require('./videoCompositor');
+                await normalizeVideoClip(clipPath, normalizedPath, duration, true);
+              }
+
+              newBrollClips[c.order] = normalizedPath;
+              console.log(`[Regen] ✓ Scene ${seg.sceneId} recaptured and normalized (${duration.toFixed(1)}s)`);
+            } else {
+              console.warn(`[Regen] Scene capture returned no clip — keeping existing`);
+            }
+          } catch (err) {
+            console.warn(`[Regen] Scene recapture failed for segment ${c.order}: ${err.message}`);
+          }
           continue;
         }
 

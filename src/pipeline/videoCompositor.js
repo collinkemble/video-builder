@@ -989,4 +989,4 @@ function safeDelete(filePath) {
   try { if (filePath && fs.existsSync(filePath)) fs.unlinkSync(filePath); } catch { /* ignore */ }
 }
 
-module.exports = { composeVideo, applyIntroLogoOverlay };
+module.exports = { composeVideo, applyIntroLogoOverlay, normalizeVideoClip };

@@ -21,7 +21,6 @@
   </style>
   <script src="https://assets.meshmesh.io/system/tailwindcss-browser-4.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/magic-sdk/dist/magic.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.4/build/qrcode.min.js"></script>
   <style type="text/tailwindcss">
     @theme {
       --color-brand: #0176D3;
@@ -381,7 +380,7 @@
             <!-- QR Code -->
             <div style="background: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 10px; padding: 14px; margin-bottom: 14px; text-align: center;">
               <label class="block text-xs font-bold mb-2" style="color: #032D60;">QR Code</label>
-              <canvas id="public-qr-code" style="margin: 0 auto; max-width: 160px; max-height: 160px; width: 160px; height: 160px;"></canvas>
+              <img id="public-qr-code" alt="QR Code" style="margin: 0 auto; width: 160px; height: 160px; border-radius: 8px;">
               <p class="mt-2" style="font-size: 11px; color: #6B7280;">Scan to open the public player page.</p>
             </div>
 
@@ -1247,11 +1246,8 @@ async function viewVideo(id, skipPush) {
     document.getElementById('public-share-url').value = shareUrl;
     document.getElementById('public-preview-link').href = shareUrl;
 
-    // Generate QR code for the share URL
-    try {
-      const qrCanvas = document.getElementById('public-qr-code');
-      QRCode.toCanvas(qrCanvas, shareUrl, { width: 160, margin: 1, color: { dark: '#032D60', light: '#F8FAFC' } });
-    } catch (e) { console.warn('QR code generation failed:', e); }
+    // Generate QR code for the share URL via API
+    document.getElementById('public-qr-code').src = `https://api.qrserver.com/v1/create-qr-code/?size=160x160&data=${encodeURIComponent(shareUrl)}&bgcolor=F8FAFC&color=032D60`;
 
     const hasPassword = !!video.hasPassword;
     document.getElementById('edit-password-enabled').checked = hasPassword;

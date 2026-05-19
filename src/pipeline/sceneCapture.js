@@ -74,7 +74,7 @@ function normalizeChannel(channel) {
 function shouldInteract(channel) {
   const ch = normalizeChannel(channel);
   // These channels have video/animation that plays on its own
-  if (ch.includes('instagram') || ch.includes('social') || ch.includes('facebook') || ch.includes('tiktok')) return false;
+  if (ch.includes('insta') || ch.includes('social') || ch.includes('facebook') || ch.includes('tiktok')) return false;
   // Email is mostly static
   if (ch.includes('email')) return false;
   // Everything else (website, chat, imessage, sms, whatsapp, retail, etc.) needs clicks

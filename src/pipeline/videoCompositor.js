@@ -31,7 +31,7 @@ const FPS = 30;
 function isPassiveChannel(channel) {
   if (!channel) return false;
   const ch = (channel || '').toLowerCase().replace(/[^a-z]/g, '');
-  return ch.includes('instagram') || ch.includes('social') || ch.includes('facebook') || ch.includes('tiktok');
+  return ch.includes('insta') || ch.includes('social') || ch.includes('facebook') || ch.includes('tiktok');
 }
 
 /**

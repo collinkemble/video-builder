@@ -685,7 +685,7 @@ async function regenerateSegments(videoId, userId, changes) {
               // Normalize the captured clip to 1920x1080 and target duration
               const normalizedPath = path.join(workDir, `regen_clip_${c.order}.mp4`);
               const isPassive = (seg.channel || '').toLowerCase().replace(/[^a-z]/g, '');
-              const shouldLoop = isPassive.includes('instagram') || isPassive.includes('social') || isPassive.includes('facebook') || isPassive.includes('tiktok');
+              const shouldLoop = isPassive.includes('insta') || isPassive.includes('social') || isPassive.includes('facebook') || isPassive.includes('tiktok');
 
               if (shouldLoop) {
                 // Passive scenes (Instagram): loop to fill target duration

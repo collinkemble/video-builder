@@ -16,7 +16,7 @@ const { parseEditInstruction } = require('./src/pipeline/smartEditParser');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const BUILD_VERSION = 'v161-watch-logo-actual-file';
+const BUILD_VERSION = 'v162-logos-right-aligned';
 
 // Health/version endpoint — verify which code is deployed
 app.get('/api/version', (req, res) => {
@@ -1700,7 +1700,7 @@ function renderWatchPage(video, showLogin) {
 <body>
   <!-- Header -->
   <header style="background: white; border-bottom: 1px solid #E5E7EB; padding: 16px 24px;">
-    <div style="max-width: 900px; margin: 0 auto; display: flex; align-items: center;">
+    <div style="max-width: 900px; margin: 0 auto; display: flex; align-items: center; justify-content: flex-end;">
       ${brandLogoHtml}
     </div>
   </header>

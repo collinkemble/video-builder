@@ -107,6 +107,7 @@ async function composeVideo({
       const isSceneCapture = entry.type === 'scene';
       const isPassiveScene = isSceneCapture && isPassiveChannel(entry.channel);
       const freezeIfShort = isSceneCapture && !isPassiveScene;
+      console.log(`[Compositor] Scene clip decision: type=${entry.type}, channel=${entry.channel}, isSceneCapture=${isSceneCapture}, isPassive=${isPassiveScene}, freezeIfShort=${freezeIfShort}`);
       // Passive scenes (Instagram/social) must ALWAYS loop — their captured clips
       // may have frozen frames at the tail from animations completing. Even if the
       // clip duration is close to target, we loop to avoid showing the freeze.
@@ -405,11 +406,13 @@ function buildTimeline(segments, timestamps, sceneImages, brollImages) {
 async function normalizeVideoClip(inputPath, outputPath, targetDuration, freezeIfShort = false, forceLoop = false) {
   const clipDuration = await getVideoDuration(inputPath);
 
-  // If forceLoop is set (passive scenes like Instagram/social), ALWAYS loop
-  // regardless of how close the clip is to the target. This prevents frozen
-  // animation tails from appearing in the output.
-  if (forceLoop && !freezeIfShort && clipDuration <= targetDuration * 1.1) {
-    console.log(`[Compositor] Passive scene clip ${clipDuration.toFixed(1)}s → looping to fill ${targetDuration.toFixed(1)}s (forceLoop)`);
+  // If forceLoop is set (passive scenes like Instagram/social), ALWAYS loop.
+  // These scenes have CSS/JS animations that play once (~14s) then freeze.
+  // Looping with -stream_loop + -t trim ensures the animation repeats
+  // seamlessly for the full narration duration, regardless of whether the
+  // captured clip is shorter, equal to, or longer than the target.
+  if (forceLoop && !freezeIfShort) {
+    console.log(`[Compositor] Passive scene clip ${clipDuration.toFixed(1)}s → looping to fill ${targetDuration.toFixed(1)}s (forceLoop, ALWAYS loop for passive)`);
     return runFfmpeg([
       '-y',
       '-stream_loop', '-1',

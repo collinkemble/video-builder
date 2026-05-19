@@ -16,7 +16,7 @@ const { parseEditInstruction } = require('./src/pipeline/smartEditParser');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const BUILD_VERSION = 'v168-fix-scene-regen-skip';
+const BUILD_VERSION = 'v169-always-loop-passive-scenes';
 
 // Health/version endpoint — verify which code is deployed
 app.get('/api/version', (req, res) => {

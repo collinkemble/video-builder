@@ -1971,7 +1971,7 @@ function buildChangeForSegment(index) {
   const change = {
     order: seg.order,
     regenerateVoiceover: narrationChanged,
-    regenerateBroll: brollChanged && seg.visualType === 'broll',
+    regenerateBroll: brollChanged && (seg.visualType === 'broll' || seg.visualType === 'scene_capture'),
   };
 
   if (narrationChanged) change.narration = seg.narration;
@@ -2004,10 +2004,11 @@ async function regenerateSingleSegment(index) {
     };
   } else if (forceVisualsOnly) {
     // User explicitly wants ONLY visuals regenerated
+    // Both broll and scene_capture segments need regenerateBroll=true to trigger visual regen
     change = {
       order: seg.order,
       regenerateVoiceover: false,
-      regenerateBroll: seg.visualType === 'broll',
+      regenerateBroll: seg.visualType === 'broll' || seg.visualType === 'scene_capture',
     };
     if (seg.brollDescription) change.brollDescription = seg.brollDescription;
   } else {
@@ -2017,7 +2018,7 @@ async function regenerateSingleSegment(index) {
     // If nothing was detected as changed, use smart defaults
     if (!change) {
       change = { order: seg.order };
-      if (seg.visualType === 'broll') {
+      if (seg.visualType === 'broll' || seg.visualType === 'scene_capture') {
         change.regenerateBroll = true;
         change.regenerateVoiceover = false;
         if (seg.brollDescription) change.brollDescription = seg.brollDescription;

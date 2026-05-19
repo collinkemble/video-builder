@@ -693,7 +693,7 @@ async function regenerateSegments(videoId, userId, changes) {
                   const proc = spawn(ffmpegPath, [
                     '-y', '-stream_loop', '-1', '-i', clipPath,
                     '-vf', 'scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,format=yuv420p',
-                    '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '23',
+                    '-c:v', 'libx264', '-preset', 'fast', '-crf', '26',
                     '-t', String(duration), '-r', '30', '-pix_fmt', 'yuv420p',
                     '-an', '-movflags', '+faststart', normalizedPath,
                   ], { stdio: ['ignore', 'pipe', 'pipe'] });
@@ -800,7 +800,7 @@ async function regenerateSegments(videoId, userId, changes) {
                 const proc = spawn(ffmpegPath, [
                   '-y', '-stream_loop', '-1', '-i', mediaPath,
                   '-vf', 'scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,format=yuv420p',
-                  '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '23',
+                  '-c:v', 'libx264', '-preset', 'fast', '-crf', '26',
                   '-t', String(duration), '-r', '30', '-pix_fmt', 'yuv420p',
                   '-an', '-movflags', '+faststart', normalizedPath,
                 ], { stdio: ['ignore', 'pipe', 'pipe'] });
@@ -816,7 +816,7 @@ async function regenerateSegments(videoId, userId, changes) {
                 const proc = spawn(ffmpegPath, [
                   '-y', '-loop', '1', '-i', mediaPath,
                   '-vf', `scale=2208:1242,crop='1920-((1920-1651)*n/${totalFrames})':'1080-((1080-929)*n/${totalFrames})',scale=1920:1080,format=yuv420p`,
-                  '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '23',
+                  '-c:v', 'libx264', '-preset', 'fast', '-crf', '26',
                   '-t', String(duration), '-r', '30', '-pix_fmt', 'yuv420p',
                   '-movflags', '+faststart', normalizedPath,
                 ], { stdio: ['ignore', 'pipe', 'pipe'] });
@@ -841,7 +841,7 @@ async function regenerateSegments(videoId, userId, changes) {
                   const proc = spawn(ffmpegPath, [
                     '-y', '-i', mediaPath,
                     '-vf', 'scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,format=yuv420p',
-                    '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '23',
+                    '-c:v', 'libx264', '-preset', 'fast', '-crf', '26',
                     '-r', '30', '-pix_fmt', 'yuv420p',
                     '-an', '-movflags', '+faststart', partPath,
                   ], { stdio: ['ignore', 'pipe', 'pipe'] });
@@ -857,7 +857,7 @@ async function regenerateSegments(videoId, userId, changes) {
                   const proc = spawn(ffmpegPath, [
                     '-y', '-loop', '1', '-i', mediaPath,
                     '-vf', `scale=2208:1242,crop='1920-((1920-1651)*n/${partFrames})':'1080-((1080-929)*n/${partFrames})',scale=1920:1080,format=yuv420p`,
-                    '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '23',
+                    '-c:v', 'libx264', '-preset', 'fast', '-crf', '26',
                     '-t', '8', '-r', '30', '-pix_fmt', 'yuv420p',
                     '-movflags', '+faststart', partPath,
                   ], { stdio: ['ignore', 'pipe', 'pipe'] });
@@ -877,7 +877,7 @@ async function regenerateSegments(videoId, userId, changes) {
             await new Promise((resolve, reject) => {
               const proc = spawn(ffmpegPath, [
                 '-y', '-f', 'concat', '-safe', '0', '-i', concatFilePath,
-                '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '23',
+                '-c:v', 'libx264', '-preset', 'fast', '-crf', '26',
                 '-t', String(duration), '-r', '30', '-pix_fmt', 'yuv420p',
                 '-an', '-movflags', '+faststart', normalizedPath,
               ], { stdio: ['ignore', 'pipe', 'pipe'] });

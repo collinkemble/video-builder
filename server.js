@@ -16,7 +16,7 @@ const { parseEditInstruction } = require('./src/pipeline/smartEditParser');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const BUILD_VERSION = 'v171-fix-insta-channel-match';
+const BUILD_VERSION = 'v172-reduce-video-filesize';
 
 // Health/version endpoint — verify which code is deployed
 app.get('/api/version', (req, res) => {

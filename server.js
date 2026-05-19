@@ -5,6 +5,7 @@ const cors = require('cors');
 const path = require('path');
 const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
+const bcrypt = require('bcryptjs');
 const { query } = require('./src/db/connection');
 const { migrate } = require('./src/db/migrate');
 const { runPipeline, getPipelineStatus, regenerateSegments } = require('./src/pipeline/orchestrator');
@@ -15,7 +16,7 @@ const { parseEditInstruction } = require('./src/pipeline/smartEditParser');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const BUILD_VERSION = 'v156-segment-editor';
+const BUILD_VERSION = 'v157-public-player-page';
 
 // Health/version endpoint — verify which code is deployed
 app.get('/api/version', (req, res) => {
@@ -563,6 +564,10 @@ app.get('/api/videos/:id', async (req, res) => {
       }
     }
 
+    // Never expose password hash to client — expose hasPassword boolean instead
+    video.hasPassword = !!video.public_password;
+    delete video.public_password;
+
     res.json({ video });
   } catch (err) {
     console.error('Failed to get video:', err);
@@ -684,6 +689,37 @@ app.put('/api/videos/:id', async (req, res) => {
     if (brandLogoUrl !== undefined && brandLogoUrl !== null) {
       sets.push('brand_logo_url = ?');
       params.push(brandLogoUrl === '' ? null : brandLogoUrl);
+    }
+
+    // Description field
+    const { description } = req.body;
+    if (description !== undefined && description !== null) {
+      sets.push('description = ?');
+      params.push(description === '' ? null : description.trim());
+    }
+
+    // Public player page fields
+    const { publicEnabled, publicUsername, publicPassword } = req.body;
+    if (publicEnabled !== undefined && publicEnabled !== null) {
+      sets.push('public_enabled = ?');
+      params.push(publicEnabled ? 1 : 0);
+    }
+    if (publicUsername !== undefined && publicUsername !== null) {
+      sets.push('public_username = ?');
+      params.push(publicUsername === '' ? null : publicUsername.trim());
+    }
+    if (publicPassword !== undefined && publicPassword !== null) {
+      if (publicPassword === '') {
+        // Clear password protection
+        sets.push('public_password = ?');
+        params.push(null);
+      } else if (publicPassword !== '••••••••') {
+        // Hash new password with bcrypt
+        const hash = await bcrypt.hash(publicPassword, 10);
+        sets.push('public_password = ?');
+        params.push(hash);
+      }
+      // If '••••••••' → skip (unchanged placeholder)
     }
 
     if (sets.length > 0) {
@@ -1574,6 +1610,306 @@ app.post('/api/videos/:id/share/confirm', async (req, res) => {
   } catch (err) {
     console.error('Failed to confirm share:', err);
     res.status(500).json({ error: 'Failed to complete share action' });
+  }
+});
+
+// ═══════════════════════════════════════════════
+// PUBLIC VIDEO PLAYER PAGE (unauthenticated)
+// ═══════════════════════════════════════════════
+
+// JWT secret for short-lived watch tokens (scoped to individual videos)
+const WATCH_JWT_SECRET = crypto.createHash('sha256').update('watch-token:' + (process.env.MAGIC_LINK_SECRET || 'dev')).digest('hex');
+
+// Rate limiting for password attempts (in-memory, per video)
+const _watchAttempts = {};
+
+function renderWatchPage(video, showLogin) {
+  const safeTitle = (video.name || 'Untitled Video').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const safeDesc = (video.description || '').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '<br>');
+  const brandLogoHtml = video.brand_logo_url
+    ? `<img src="${video.brand_logo_url}" alt="Brand logo" style="max-height: 40px; max-width: 160px; object-fit: contain;">`
+    : '';
+
+  const loginFormHtml = `
+    <div id="watch-login" style="background: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 12px; padding: 32px; max-width: 400px; margin: 32px auto; text-align: center;">
+      <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#0176D3" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="margin: 0 auto 16px;"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+      <h3 style="font-size: 18px; font-weight: 700; color: #032D60; margin-bottom: 4px;">This video is password protected</h3>
+      <p style="font-size: 14px; color: #6B7280; margin-bottom: 24px;">Enter the credentials provided to you to watch this video.</p>
+      <div id="watch-error" style="display: none; background: #FEF2F2; border: 1px solid #FECACA; border-radius: 8px; padding: 10px; margin-bottom: 16px; color: #991B1B; font-size: 13px;"></div>
+      <form id="watch-auth-form" onsubmit="return watchLogin(event)">
+        <input id="watch-user" type="text" placeholder="Username" required autocomplete="username" style="width: 100%; padding: 10px 14px; border: 1px solid #D1D5DB; border-radius: 8px; font-size: 14px; margin-bottom: 12px; box-sizing: border-box; font-family: 'Salesforce Sans', sans-serif;">
+        <input id="watch-pass" type="password" placeholder="Password" required autocomplete="current-password" style="width: 100%; padding: 10px 14px; border: 1px solid #D1D5DB; border-radius: 8px; font-size: 14px; margin-bottom: 16px; box-sizing: border-box; font-family: 'Salesforce Sans', sans-serif;">
+        <button type="submit" id="watch-submit-btn" style="width: 100%; padding: 12px; background: #0176D3; color: white; border: none; border-radius: 8px; font-size: 15px; font-weight: 700; cursor: pointer; font-family: 'Salesforce Sans', sans-serif;">▶ Watch Video</button>
+      </form>
+    </div>`;
+
+  const videoPlayerHtml = `
+    <div id="watch-player" style="margin-top: 24px;">
+      <div style="position: relative; width: 100%; border-radius: 12px; overflow: hidden; background: #000; box-shadow: 0 4px 20px rgba(0,0,0,0.15);">
+        <video id="watch-video" controls playsinline preload="metadata" poster="${video.thumbnail_url || ''}"
+          style="width: 100%; display: block; border-radius: 12px;"
+          src="${video.video_url || ''}">
+          Your browser does not support the video tag.
+        </video>
+      </div>
+      ${safeDesc ? `<div style="margin-top: 20px; padding: 20px; background: #F8FAFC; border-radius: 10px; border: 1px solid #E2E8F0;"><p style="font-size: 14px; line-height: 1.7; color: #334155;">${safeDesc}</p></div>` : ''}
+    </div>`;
+
+  const noVideoHtml = `
+    <div style="margin-top: 32px; text-align: center; padding: 48px 24px; background: #F8FAFC; border-radius: 12px; border: 1px solid #E2E8F0;">
+      <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="margin: 0 auto 16px;"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+      <p style="font-size: 16px; color: #6B7280;">This video is not yet available.</p>
+    </div>`;
+
+  const hasVideo = video.status === 'completed' && video.video_url;
+
+  let bodyContent;
+  if (showLogin) {
+    bodyContent = loginFormHtml;
+  } else if (hasVideo) {
+    bodyContent = videoPlayerHtml;
+  } else {
+    bodyContent = noVideoHtml;
+  }
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>${safeTitle}</title>
+  <meta property="og:title" content="${safeTitle}">
+  <meta property="og:type" content="video.other">
+  ${video.thumbnail_url ? `<meta property="og:image" content="${video.thumbnail_url}">` : ''}
+  <style>
+    @font-face { font-family: 'Salesforce Sans'; src: url('https://www.salesforce.com/etc.clientlibs/sfdc-aem-master/clientlibs_base/resources/fonts/SalesforceSans-Regular.woff2') format('woff2'); font-weight: 400; }
+    @font-face { font-family: 'Salesforce Sans'; src: url('https://www.salesforce.com/etc.clientlibs/sfdc-aem-master/clientlibs_base/resources/fonts/SalesforceSans-Bold.woff2') format('woff2'); font-weight: 700; }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: 'Salesforce Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #F3F4F6; min-height: 100vh; }
+    a { color: #0176D3; text-decoration: none; }
+    input:focus, button:focus { outline: 2px solid #0176D3; outline-offset: 2px; }
+    button:hover { opacity: 0.9; }
+  </style>
+</head>
+<body>
+  <!-- Header -->
+  <header style="background: white; border-bottom: 1px solid #E5E7EB; padding: 16px 24px;">
+    <div style="max-width: 900px; margin: 0 auto; display: flex; align-items: center; justify-content: space-between;">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 32" style="height: 28px; width: auto;">
+        <path d="M19.8 3.8c1.7-1.8 4-2.8 6.6-2.8 3.2 0 6 1.6 7.7 4.1 1.5-.7 3.1-1 4.8-1 6.3 0 11.4 5.1 11.4 11.4s-5.1 11.4-11.4 11.4c-1 0-2-.1-2.9-.4-1.5 2.5-4.3 4.2-7.4 4.2-1.6 0-3-.4-4.3-1.1-1.5 2.7-4.4 4.5-7.7 4.5-3.7 0-6.8-2.2-8.1-5.4-.7.1-1.5.2-2.2.2C2.8 28.9 0 25 0 20.7c0-3.7 2.1-6.9 5.2-8.5-.3-1-.5-2-.5-3.1C4.7 4.1 8.8 0 13.8 0c2.5 0 4.7 1 6.3 2.6l-.3 1.2z" fill="#00A1E0"/>
+      </svg>
+      ${brandLogoHtml}
+    </div>
+  </header>
+
+  <!-- Content -->
+  <main style="max-width: 900px; margin: 0 auto; padding: 32px 24px;">
+    <h1 style="font-size: 28px; font-weight: 700; color: #032D60; line-height: 1.3;">${safeTitle}</h1>
+    ${bodyContent}
+  </main>
+
+  <!-- Footer -->
+  <footer style="text-align: center; padding: 32px 24px; color: #9CA3AF; font-size: 12px;">
+    Powered by Salesforce
+  </footer>
+
+  ${showLogin ? `
+  <script>
+    async function watchLogin(e) {
+      e.preventDefault();
+      const btn = document.getElementById('watch-submit-btn');
+      const errDiv = document.getElementById('watch-error');
+      btn.disabled = true;
+      btn.textContent = 'Verifying...';
+      errDiv.style.display = 'none';
+
+      try {
+        const resp = await fetch('/watch/${video.id}/auth', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            username: document.getElementById('watch-user').value,
+            password: document.getElementById('watch-pass').value,
+          }),
+        });
+
+        if (!resp.ok) {
+          const data = await resp.json().catch(() => ({}));
+          throw new Error(data.error || 'Invalid credentials');
+        }
+
+        const { token } = await resp.json();
+        sessionStorage.setItem('watch_token_${video.id}', token);
+
+        // Fetch video data with token
+        const vResp = await fetch('/watch/${video.id}/verify', {
+          headers: { 'Authorization': 'Bearer ' + token },
+        });
+        if (!vResp.ok) throw new Error('Failed to load video');
+        const vData = await vResp.json();
+
+        // Replace login form with player
+        const loginEl = document.getElementById('watch-login');
+        loginEl.outerHTML = '<div id="watch-player" style="margin-top: 24px;">' +
+          '<div style="position: relative; width: 100%; border-radius: 12px; overflow: hidden; background: #000; box-shadow: 0 4px 20px rgba(0,0,0,0.15);">' +
+          '<video controls playsinline preload="metadata"' +
+          (vData.thumbnail_url ? ' poster="' + vData.thumbnail_url + '"' : '') +
+          ' style="width: 100%; display: block; border-radius: 12px;"' +
+          ' src="' + vData.video_url + '">Your browser does not support the video tag.</video></div>' +
+          (vData.description ? '<div style="margin-top: 20px; padding: 20px; background: #F8FAFC; border-radius: 10px; border: 1px solid #E2E8F0;"><p style="font-size: 14px; line-height: 1.7; color: #334155;">' + vData.description.replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\\n/g, '<br>') + '</p></div>' : '') +
+          '</div>';
+      } catch (err) {
+        errDiv.textContent = err.message;
+        errDiv.style.display = 'block';
+        btn.disabled = false;
+        btn.textContent = '▶ Watch Video';
+      }
+    }
+
+    // Auto-login if we have a stored token
+    (async function() {
+      const token = sessionStorage.getItem('watch_token_${video.id}');
+      if (!token) return;
+      try {
+        const resp = await fetch('/watch/${video.id}/verify', {
+          headers: { 'Authorization': 'Bearer ' + token },
+        });
+        if (resp.ok) {
+          const vData = await resp.json();
+          const loginEl = document.getElementById('watch-login');
+          if (loginEl) {
+            loginEl.outerHTML = '<div id="watch-player" style="margin-top: 24px;">' +
+              '<div style="position: relative; width: 100%; border-radius: 12px; overflow: hidden; background: #000; box-shadow: 0 4px 20px rgba(0,0,0,0.15);">' +
+              '<video controls playsinline preload="metadata"' +
+              (vData.thumbnail_url ? ' poster="' + vData.thumbnail_url + '"' : '') +
+              ' style="width: 100%; display: block; border-radius: 12px;"' +
+              ' src="' + vData.video_url + '">Your browser does not support the video tag.</video></div>' +
+              (vData.description ? '<div style="margin-top: 20px; padding: 20px; background: #F8FAFC; border-radius: 10px; border: 1px solid #E2E8F0;"><p style="font-size: 14px; line-height: 1.7; color: #334155;">' + vData.description.replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\\n/g, '<br>') + '</p></div>' : '') +
+              '</div>';
+          }
+        }
+      } catch (e) { /* ignore — show login form */ }
+    })();
+  </script>
+  ` : ''}
+</body>
+</html>`;
+}
+
+// GET /watch/:id — public video player page (unauthenticated)
+app.get('/watch/:id', async (req, res) => {
+  try {
+    const rows = await query(
+      'SELECT id, name, brand_name, brand_logo_url, description, video_url, thumbnail_url, status, public_enabled, public_username, public_password FROM videos WHERE id = ?',
+      [req.params.id]
+    );
+
+    if (rows.length === 0 || !rows[0].public_enabled) {
+      return res.status(404).send(renderWatchPage({ name: 'Video Not Found', status: 'draft' }, false).replace(
+        /<main[^>]*>[\s\S]*<\/main>/,
+        '<main style="max-width: 900px; margin: 0 auto; padding: 80px 24px; text-align: center;"><h1 style="font-size: 24px; color: #6B7280;">This video is not available</h1><p style="margin-top: 12px; color: #9CA3AF;">The video you\'re looking for doesn\'t exist or isn\'t publicly shared.</p></main>'
+      ));
+    }
+
+    const video = rows[0];
+    const needsAuth = !!video.public_password;
+
+    res.send(renderWatchPage(video, needsAuth));
+  } catch (err) {
+    console.error('[Watch] Failed to load watch page:', err);
+    res.status(500).send('Something went wrong. Please try again later.');
+  }
+});
+
+// POST /watch/:id/auth — password verification for protected videos
+app.post('/watch/:id/auth', express.json(), async (req, res) => {
+  try {
+    const { username, password } = req.body;
+    if (!username || !password) {
+      return res.status(400).json({ error: 'Username and password are required' });
+    }
+
+    // Rate limiting: max 5 attempts per video per 60 seconds
+    const key = `watch_${req.params.id}`;
+    const now = Date.now();
+    if (!_watchAttempts[key]) _watchAttempts[key] = [];
+    _watchAttempts[key] = _watchAttempts[key].filter(t => now - t < 60000);
+    if (_watchAttempts[key].length >= 5) {
+      return res.status(429).json({ error: 'Too many attempts. Please wait a minute and try again.' });
+    }
+    _watchAttempts[key].push(now);
+
+    const rows = await query(
+      'SELECT id, public_enabled, public_username, public_password FROM videos WHERE id = ?',
+      [req.params.id]
+    );
+
+    if (rows.length === 0 || !rows[0].public_enabled || !rows[0].public_password) {
+      return res.status(404).json({ error: 'Video not found' });
+    }
+
+    const video = rows[0];
+
+    // Check username (case-insensitive)
+    if (video.public_username && username.toLowerCase() !== video.public_username.toLowerCase()) {
+      return res.status(401).json({ error: 'Invalid username or password' });
+    }
+
+    // Check password
+    const passwordValid = await bcrypt.compare(password, video.public_password);
+    if (!passwordValid) {
+      return res.status(401).json({ error: 'Invalid username or password' });
+    }
+
+    // Issue short-lived JWT scoped to this video
+    const token = jwt.sign({ videoId: video.id, type: 'watch' }, WATCH_JWT_SECRET, { expiresIn: '24h' });
+    res.json({ token });
+  } catch (err) {
+    console.error('[Watch] Auth failed:', err);
+    res.status(500).json({ error: 'Authentication failed' });
+  }
+});
+
+// GET /watch/:id/verify — return video data for authenticated watch sessions
+app.get('/watch/:id/verify', async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({ error: 'Token required' });
+    }
+
+    const token = authHeader.split(' ')[1];
+    let payload;
+    try {
+      payload = jwt.verify(token, WATCH_JWT_SECRET);
+    } catch (e) {
+      return res.status(401).json({ error: 'Invalid or expired token' });
+    }
+
+    if (payload.videoId !== parseInt(req.params.id) || payload.type !== 'watch') {
+      return res.status(403).json({ error: 'Token not valid for this video' });
+    }
+
+    const rows = await query(
+      'SELECT id, name, description, video_url, thumbnail_url, brand_logo_url, status, public_enabled FROM videos WHERE id = ?',
+      [req.params.id]
+    );
+
+    if (rows.length === 0 || !rows[0].public_enabled) {
+      return res.status(404).json({ error: 'Video not found' });
+    }
+
+    const video = rows[0];
+    res.json({
+      name: video.name,
+      description: video.description,
+      video_url: video.status === 'completed' ? video.video_url : null,
+      thumbnail_url: video.thumbnail_url,
+      brand_logo_url: video.brand_logo_url,
+    });
+  } catch (err) {
+    console.error('[Watch] Verify failed:', err);
+    res.status(500).json({ error: 'Verification failed' });
   }
 });
 

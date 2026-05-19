@@ -339,10 +339,76 @@
           <p class="mt-1" style="font-size: 11px; color: #6B7280;">These instructions will guide how the script and narration are generated.</p>
         </div>
 
+        <div style="margin-top: 12px;">
+          <label class="block text-xs font-bold mb-1" style="color: #032D60;">Description</label>
+          <textarea id="edit-description" rows="3" class="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm" placeholder="Add a description for the public player page..." style="resize: vertical; min-height: 60px;"></textarea>
+          <p class="mt-1" style="font-size: 11px; color: #6B7280;">Shown below the video on the public player page.</p>
+        </div>
+
         <div id="save-settings-bar" class="hidden" style="margin-top: 14px; display: none;">
           <div class="flex items-center justify-between" style="background: #FFFBEB; border: 1px solid #F59E0B; border-radius: 10px; padding: 10px 16px;">
             <span style="font-size: 13px; color: #92400E;">⚠️ You have unsaved changes</span>
             <button id="save-settings-btn" onclick="saveVideoSettings()" class="px-4 py-2 text-sm font-bold text-white rounded-lg cursor-pointer" style="background: #16A34A; height: 36px;">💾 Save Settings</button>
+          </div>
+        </div>
+
+        <!-- Public Player Page Section -->
+        <div style="margin-top: 20px; border-top: 1px solid #E5E7EB; padding-top: 20px;">
+          <div class="flex items-center justify-between mb-3">
+            <p class="font-bold" style="font-size: 15px; color: #032D60;">Public Player Page</p>
+            <label class="flex items-center gap-2 cursor-pointer" style="user-select: none;">
+              <span id="public-toggle-label" style="font-size: 12px; color: #6B7280;">Disabled</span>
+              <div style="position: relative; width: 44px; height: 24px;">
+                <input type="checkbox" id="edit-public-enabled" onchange="togglePublicEnabled()" style="opacity: 0; position: absolute; width: 44px; height: 24px; cursor: pointer; z-index: 1; margin: 0;">
+                <div id="public-toggle-track" style="position: absolute; top: 0; left: 0; width: 44px; height: 24px; background: #D1D5DB; border-radius: 12px; transition: background 0.2s;"></div>
+                <div id="public-toggle-knob" style="position: absolute; top: 2px; left: 2px; width: 20px; height: 20px; background: white; border-radius: 50%; box-shadow: 0 1px 3px rgba(0,0,0,0.2); transition: transform 0.2s;"></div>
+              </div>
+            </label>
+          </div>
+
+          <div id="public-settings-panel" style="display: none;">
+            <!-- Share URL -->
+            <div style="background: #EFF6FF; border: 1px solid #BFDBFE; border-radius: 10px; padding: 14px; margin-bottom: 14px;">
+              <label class="block text-xs font-bold mb-2" style="color: #1E40AF;">Share Link</label>
+              <div class="flex items-center gap-2">
+                <input id="public-share-url" type="text" readonly class="flex-1 px-3 py-2 rounded-lg border border-blue-200 bg-white text-sm" style="color: #1E40AF; font-family: monospace;">
+                <button onclick="copyShareUrl()" id="copy-share-btn" class="px-3 py-2 text-sm font-bold text-white rounded-lg cursor-pointer" style="background: #0176D3; white-space: nowrap;">📋 Copy</button>
+                <a id="public-preview-link" href="#" target="_blank" class="px-3 py-2 text-sm font-bold rounded-lg cursor-pointer" style="background: #E5E7EB; color: #374151; white-space: nowrap; text-decoration: none;">↗ Open</a>
+              </div>
+            </div>
+
+            <!-- Password Protection -->
+            <div style="background: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 10px; padding: 14px;">
+              <div class="flex items-center justify-between mb-2">
+                <label class="text-xs font-bold" style="color: #032D60;">Password Protection</label>
+                <label class="flex items-center gap-2 cursor-pointer" style="user-select: none;">
+                  <span id="password-toggle-label" style="font-size: 12px; color: #6B7280;">Off</span>
+                  <div style="position: relative; width: 36px; height: 20px;">
+                    <input type="checkbox" id="edit-password-enabled" onchange="togglePasswordProtection()" style="opacity: 0; position: absolute; width: 36px; height: 20px; cursor: pointer; z-index: 1; margin: 0;">
+                    <div id="password-toggle-track" style="position: absolute; top: 0; left: 0; width: 36px; height: 20px; background: #D1D5DB; border-radius: 10px; transition: background 0.2s;"></div>
+                    <div id="password-toggle-knob" style="position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; background: white; border-radius: 50%; box-shadow: 0 1px 2px rgba(0,0,0,0.2); transition: transform 0.2s;"></div>
+                  </div>
+                </label>
+              </div>
+
+              <div id="password-fields" style="display: none; margin-top: 10px;">
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+                  <div>
+                    <label class="block text-xs font-bold mb-1" style="color: #032D60;">Username</label>
+                    <input id="edit-public-username" type="text" class="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm" placeholder="e.g. demo" autocomplete="off">
+                  </div>
+                  <div>
+                    <label class="block text-xs font-bold mb-1" style="color: #032D60;">Password</label>
+                    <input id="edit-public-password" type="password" class="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm" placeholder="Enter password" autocomplete="new-password">
+                  </div>
+                </div>
+                <p class="mt-2" style="font-size: 11px; color: #6B7280;">Viewers will need these credentials to watch the video. Leave password blank to keep the existing one.</p>
+              </div>
+            </div>
+          </div>
+
+          <div id="public-disabled-hint" style="margin-top: 4px;">
+            <p style="font-size: 12px; color: #9CA3AF;">Enable to create a shareable link for external viewers.</p>
           </div>
         </div>
       </div>
@@ -1161,7 +1227,23 @@ async function viewVideo(id, skipPush) {
     document.getElementById('edit-duration').value = String(video.duration_target || 180);
     document.getElementById('edit-music').value = video.music_track_id || 'corporate-technology';
     document.getElementById('edit-custom-instructions').value = video.custom_instructions || '';
+    document.getElementById('edit-description').value = video.description || '';
     updateMusicPreviewButton();
+
+    // Public player page controls
+    const publicEnabled = !!video.public_enabled;
+    document.getElementById('edit-public-enabled').checked = publicEnabled;
+    updatePublicToggleUI(publicEnabled);
+
+    const shareUrl = `${window.location.origin}/watch/${video.id}`;
+    document.getElementById('public-share-url').value = shareUrl;
+    document.getElementById('public-preview-link').href = shareUrl;
+
+    const hasPassword = !!video.hasPassword;
+    document.getElementById('edit-password-enabled').checked = hasPassword;
+    updatePasswordToggleUI(hasPassword);
+    document.getElementById('edit-public-username').value = video.public_username || '';
+    document.getElementById('edit-public-password').value = hasPassword ? '••••••••' : '';
 
     // Store originals
     window._origSettings = {
@@ -1171,6 +1253,7 @@ async function viewVideo(id, skipPush) {
       duration: String(video.duration_target || 180),
       music: video.music_track_id || 'corporate-technology',
       'custom-instructions': video.custom_instructions || '',
+      description: video.description || '',
     };
     hideSaveSettingsBar();
 
@@ -2216,7 +2299,7 @@ async function startGeneration(force = false) {
 function checkSettingsChanged() {
   const orig = window._origSettings;
   if (!orig) return;
-  const changed = ['name', 'brand', 'voice', 'duration', 'music', 'custom-instructions'].some(f => {
+  const changed = ['name', 'brand', 'voice', 'duration', 'music', 'custom-instructions', 'description'].some(f => {
     const el = document.getElementById('edit-' + f);
     return el && el.value !== orig[f];
   });
@@ -2243,18 +2326,36 @@ async function saveVideoSettings() {
     const durationTarget = parseInt(document.getElementById('edit-duration').value);
     const musicTrackId = document.getElementById('edit-music').value;
     const customInstructions = document.getElementById('edit-custom-instructions').value.trim();
+    const description = document.getElementById('edit-description').value.trim();
+
+    // Public player page fields
+    const publicEnabled = document.getElementById('edit-public-enabled').checked;
+    const passwordEnabled = document.getElementById('edit-password-enabled').checked;
+    const publicUsername = passwordEnabled ? document.getElementById('edit-public-username').value.trim() : '';
+    const publicPassword = passwordEnabled ? document.getElementById('edit-public-password').value : '';
 
     if (!name) { alert('Name is required.'); btn.textContent = '💾 Save Settings'; btn.disabled = false; return; }
 
     const email = document.getElementById('user-email').textContent;
+    const body = { email, name, brandName, voiceId, durationTarget, musicTrackId, customInstructions, description, publicEnabled };
+    // Only send password fields if password protection is enabled
+    if (passwordEnabled) {
+      body.publicUsername = publicUsername;
+      body.publicPassword = publicPassword;
+    } else {
+      // Disable password: clear username and password
+      body.publicUsername = '';
+      body.publicPassword = '';
+    }
+
     const resp = await fetch(`/api/videos/${currentVideoId}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, name, brandName, voiceId, durationTarget, musicTrackId, customInstructions }),
+      body: JSON.stringify(body),
     });
     if (!resp.ok) throw new Error('Save failed');
 
-    window._origSettings = { name, brand: brandName, voice: voiceId, duration: String(durationTarget), music: musicTrackId, 'custom-instructions': customInstructions };
+    window._origSettings = { name, brand: brandName, voice: voiceId, duration: String(durationTarget), music: musicTrackId, 'custom-instructions': customInstructions, description };
     document.getElementById('detail-breadcrumb').textContent = name;
     hideSaveSettingsBar();
     btn.textContent = '✓ Saved!';
@@ -2266,13 +2367,82 @@ async function saveVideoSettings() {
   }
 }
 
-['edit-name', 'edit-brand', 'edit-voice', 'edit-duration', 'edit-music', 'edit-custom-instructions'].forEach(id => {
+['edit-name', 'edit-brand', 'edit-voice', 'edit-duration', 'edit-music', 'edit-custom-instructions', 'edit-description'].forEach(id => {
   const el = document.getElementById(id);
   if (el) {
     el.addEventListener('input', checkSettingsChanged);
     el.addEventListener('change', checkSettingsChanged);
   }
 });
+
+// ═══════════════════════════════════════════════
+// Public Player Page Controls
+// ═══════════════════════════════════════════════
+function updatePublicToggleUI(enabled) {
+  const track = document.getElementById('public-toggle-track');
+  const knob = document.getElementById('public-toggle-knob');
+  const label = document.getElementById('public-toggle-label');
+  const panel = document.getElementById('public-settings-panel');
+  const hint = document.getElementById('public-disabled-hint');
+
+  if (enabled) {
+    track.style.background = '#0176D3';
+    knob.style.transform = 'translateX(20px)';
+    label.textContent = 'Enabled';
+    label.style.color = '#0176D3';
+    panel.style.display = 'block';
+    hint.style.display = 'none';
+  } else {
+    track.style.background = '#D1D5DB';
+    knob.style.transform = 'translateX(0)';
+    label.textContent = 'Disabled';
+    label.style.color = '#6B7280';
+    panel.style.display = 'none';
+    hint.style.display = 'block';
+  }
+}
+
+function togglePublicEnabled() {
+  const enabled = document.getElementById('edit-public-enabled').checked;
+  updatePublicToggleUI(enabled);
+  checkSettingsChanged();
+}
+
+function updatePasswordToggleUI(enabled) {
+  const track = document.getElementById('password-toggle-track');
+  const knob = document.getElementById('password-toggle-knob');
+  const label = document.getElementById('password-toggle-label');
+  const fields = document.getElementById('password-fields');
+
+  if (enabled) {
+    track.style.background = '#0176D3';
+    knob.style.transform = 'translateX(16px)';
+    label.textContent = 'On';
+    label.style.color = '#0176D3';
+    fields.style.display = 'block';
+  } else {
+    track.style.background = '#D1D5DB';
+    knob.style.transform = 'translateX(0)';
+    label.textContent = 'Off';
+    label.style.color = '#6B7280';
+    fields.style.display = 'none';
+  }
+}
+
+function togglePasswordProtection() {
+  const enabled = document.getElementById('edit-password-enabled').checked;
+  updatePasswordToggleUI(enabled);
+  checkSettingsChanged();
+}
+
+function copyShareUrl() {
+  const url = document.getElementById('public-share-url').value;
+  navigator.clipboard.writeText(url).then(() => {
+    const btn = document.getElementById('copy-share-btn');
+    btn.textContent = '✓ Copied!';
+    setTimeout(() => { btn.textContent = '📋 Copy'; }, 2000);
+  });
+}
 
 // ═══════════════════════════════════════════════
 // Brand Logo (display / URL / upload / auto-fetch)

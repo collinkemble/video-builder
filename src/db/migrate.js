@@ -41,6 +41,11 @@ async function migrate() {
         "ALTER TABLE videos ADD COLUMN brand_logo_url TEXT DEFAULT NULL",
         "ALTER TABLE videos ADD COLUMN custom_instructions TEXT DEFAULT NULL",
         "ALTER TABLE videos ADD COLUMN segment_assets JSON DEFAULT NULL",
+        // Public player page columns
+        "ALTER TABLE videos ADD COLUMN description TEXT DEFAULT NULL",
+        "ALTER TABLE videos ADD COLUMN public_enabled TINYINT(1) DEFAULT 0",
+        "ALTER TABLE videos ADD COLUMN public_username VARCHAR(255) DEFAULT NULL",
+        "ALTER TABLE videos ADD COLUMN public_password VARCHAR(255) DEFAULT NULL",
       ];
 
       const allAlters = [...sharedAlters, ...appAlters];

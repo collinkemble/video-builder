@@ -153,4 +153,9 @@ CREATE TABLE IF NOT EXISTS shared_videos (
   FOREIGN KEY (copied_video_id) REFERENCES videos(id) ON DELETE SET NULL,
   INDEX idx_recipient (recipient_email),
   INDEX idx_sender_video (sender_user_id, video_id)
-)
+);
+
+-- =============================================
+-- PUBLIC PLAYER PAGE — Video Builder
+-- =============================================
+-- (Applied via migrate.js ALTER statements)

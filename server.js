@@ -16,7 +16,7 @@ const { parseEditInstruction } = require('./src/pipeline/smartEditParser');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const BUILD_VERSION = 'v169-always-loop-passive-scenes';
+const BUILD_VERSION = 'v170-diag-logs';
 
 // Health/version endpoint — verify which code is deployed
 app.get('/api/version', (req, res) => {
@@ -24,6 +24,33 @@ app.get('/api/version', (req, res) => {
 });
 
 console.log(`[VideoBuilder] Starting server — build: ${BUILD_VERSION}`);
+
+// ─── Diagnostic log ring buffer ───
+// Captures recent [Compositor] and [SceneCapture] logs for debugging
+const DIAG_LOG_MAX = 200;
+const diagLogs = [];
+const origConsoleLog = console.log;
+const origConsoleWarn = console.warn;
+console.log = function(...args) {
+  origConsoleLog.apply(console, args);
+  const msg = args.map(a => typeof a === 'string' ? a : JSON.stringify(a)).join(' ');
+  if (msg.includes('[Compositor]') || msg.includes('[SceneCapture]') || msg.includes('[Regen]')) {
+    diagLogs.push({ t: Date.now(), msg });
+    if (diagLogs.length > DIAG_LOG_MAX) diagLogs.shift();
+  }
+};
+console.warn = function(...args) {
+  origConsoleWarn.apply(console, args);
+  const msg = args.map(a => typeof a === 'string' ? a : JSON.stringify(a)).join(' ');
+  if (msg.includes('[Compositor]') || msg.includes('[SceneCapture]') || msg.includes('[Regen]')) {
+    diagLogs.push({ t: Date.now(), msg: `WARN: ${msg}` });
+    if (diagLogs.length > DIAG_LOG_MAX) diagLogs.shift();
+  }
+};
+
+app.get('/api/diag-logs', (req, res) => {
+  res.json({ version: BUILD_VERSION, count: diagLogs.length, logs: diagLogs.map(l => ({ ts: new Date(l.t).toISOString(), msg: l.msg })) });
+});
 
 // ─── JWT Session Tokens ───
 const JWT_SECRET = process.env.JWT_SECRET || (process.env.MAGIC_LINK_SECRET

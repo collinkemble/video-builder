@@ -1254,6 +1254,10 @@ async function viewVideo(id, skipPush) {
       music: video.music_track_id || 'corporate-technology',
       'custom-instructions': video.custom_instructions || '',
       description: video.description || '',
+      publicEnabled: !!video.public_enabled,
+      passwordEnabled: !!video.hasPassword,
+      publicUsername: video.public_username || '',
+      publicPassword: video.hasPassword ? '••••••••' : '',
     };
     hideSaveSettingsBar();
 
@@ -2299,10 +2303,23 @@ async function startGeneration(force = false) {
 function checkSettingsChanged() {
   const orig = window._origSettings;
   if (!orig) return;
-  const changed = ['name', 'brand', 'voice', 'duration', 'music', 'custom-instructions', 'description'].some(f => {
+  let changed = ['name', 'brand', 'voice', 'duration', 'music', 'custom-instructions', 'description'].some(f => {
     const el = document.getElementById('edit-' + f);
     return el && el.value !== orig[f];
   });
+  // Also check public player page toggle and password fields
+  if (!changed) {
+    const publicEnabled = document.getElementById('edit-public-enabled').checked;
+    const passwordEnabled = document.getElementById('edit-password-enabled').checked;
+    if (publicEnabled !== !!orig.publicEnabled) changed = true;
+    if (passwordEnabled !== !!orig.passwordEnabled) changed = true;
+    if (passwordEnabled) {
+      const username = document.getElementById('edit-public-username').value;
+      const password = document.getElementById('edit-public-password').value;
+      if (username !== (orig.publicUsername || '')) changed = true;
+      if (password !== (orig.publicPassword || '')) changed = true;
+    }
+  }
   const bar = document.getElementById('save-settings-bar');
   bar.classList.toggle('hidden', !changed);
   bar.style.display = changed ? 'block' : 'none';
@@ -2368,6 +2385,14 @@ async function saveVideoSettings() {
 }
 
 ['edit-name', 'edit-brand', 'edit-voice', 'edit-duration', 'edit-music', 'edit-custom-instructions', 'edit-description'].forEach(id => {
+  const el = document.getElementById(id);
+  if (el) {
+    el.addEventListener('input', checkSettingsChanged);
+    el.addEventListener('change', checkSettingsChanged);
+  }
+});
+// Also listen for public/password field changes
+['edit-public-username', 'edit-public-password'].forEach(id => {
   const el = document.getElementById(id);
   if (el) {
     el.addEventListener('input', checkSettingsChanged);

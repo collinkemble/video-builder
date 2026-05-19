@@ -756,13 +756,15 @@ async function captureScene({ sceneId, channel, duration, outputDir, browser }) 
     }
 
     // For passive scenes (Instagram/social): schedule animation restarts so the
-    // animation loops instead of freezing after its initial cycle (~14s).
-    // We restart CSS/JS animations by briefly adding a class then removing it.
-    const PASSIVE_ANIM_CYCLE = 14; // approx. seconds per animation cycle
+    // animation loops instead of freezing after its initial cycle.
+    // We restart CSS/JS animations by toggling the animation property off/on.
+    // Cycle time is ~12s to restart BEFORE animations finish (~14s) so there's
+    // never a frozen tail in the captured frames.
+    const PASSIVE_ANIM_CYCLE = 12; // restart before animations finish (~14s)
     const passiveRestartFrames = new Set();
-    if (!interactive && captureDuration > PASSIVE_ANIM_CYCLE + 2) {
+    if (!interactive && captureDuration > PASSIVE_ANIM_CYCLE) {
       const restartInterval = Math.round(PASSIVE_ANIM_CYCLE * FRAME_RATE);
-      for (let f = restartInterval; f < totalFrames - Math.round(2 * FRAME_RATE); f += restartInterval) {
+      for (let f = restartInterval; f < totalFrames - Math.round(1 * FRAME_RATE); f += restartInterval) {
         passiveRestartFrames.add(f);
       }
       console.log(`[SceneCapture] Passive animation restarts at frames: [${[...passiveRestartFrames].join(',')}]`);
@@ -774,33 +776,33 @@ async function captureScene({ sceneId, channel, duration, outputDir, browser }) 
     let capturedFrames = 0;
     for (let i = 0; i < totalFrames; i++) {
       // ── Restart animations for passive scenes (Instagram/social) ──
-      // Reload the page to fully restart JS-driven animations (feed scrolls,
-      // Stories progress bars, etc.). CSS-only restart tricks don't work for
-      // JS-driven PocketSIC scenes. The 1-2s reload is invisible because
-      // the last frame before reload is identical to the first frame after.
       if (passiveRestartFrames.has(i)) {
         try {
-          console.log(`[SceneCapture] Reloading page to restart animations at frame ${i} (${(i / FRAME_RATE).toFixed(1)}s)`);
-          const sceneUrl = `${POCKETSIC_BASE}/scene/${sceneId}`;
-          await page.goto(sceneUrl, { waitUntil: 'networkidle0', timeout: 20000 });
-          // Re-dismiss PWA banner and re-block external navigation after reload
+          console.log(`[SceneCapture] Restarting animations at frame ${i} (${(i / FRAME_RATE).toFixed(1)}s)`);
           await page.evaluate(() => {
-            const pwa = document.querySelector('.pwa-install-banner, .pwa-banner, [class*="pwa-install"], [class*="pwa-dismiss"]');
-            if (pwa) pwa.remove();
-            document.addEventListener('click', (e) => {
-              const link = e.target.closest('a[href]');
-              if (link && link.href && !link.href.startsWith(window.location.origin)) {
-                e.preventDefault();
-                e.stopPropagation();
+            // Restart all CSS animations by toggling a restart trick:
+            // remove and re-add all animated elements' animation properties
+            const all = document.querySelectorAll('*');
+            all.forEach(el => {
+              const cs = getComputedStyle(el);
+              if (cs.animationName && cs.animationName !== 'none') {
+                const anim = el.style.animation;
+                el.style.animation = 'none';
+                // Force reflow
+                void el.offsetHeight;
+                el.style.animation = anim || '';
               }
-            }, true);
-            window.open = () => null;
+            });
+            // Also restart any CSS transitions by re-triggering class-based animations
+            // PocketSIC often uses class-based transitions that fire on load
+            document.body.classList.add('___restart');
+            void document.body.offsetHeight;
+            document.body.classList.remove('___restart');
           });
-          // Let the page settle after reload
-          await new Promise(r => setTimeout(r, 1500));
-          console.log(`[SceneCapture] Page reloaded — animations restarted`);
+          // Brief pause to let animations re-initialize
+          await new Promise(r => setTimeout(r, 100));
         } catch (e) {
-          console.warn(`[SceneCapture] Animation restart (reload) failed at frame ${i}: ${e.message}`);
+          console.warn(`[SceneCapture] Animation restart failed at frame ${i}: ${e.message}`);
         }
       }
 

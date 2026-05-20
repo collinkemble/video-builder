@@ -16,7 +16,7 @@ const { parseEditInstruction } = require('./src/pipeline/smartEditParser');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const BUILD_VERSION = 'v172-reduce-video-filesize';
+const BUILD_VERSION = 'v173-fix-audio-overlay-timeout';
 
 // Health/version endpoint — verify which code is deployed
 app.get('/api/version', (req, res) => {

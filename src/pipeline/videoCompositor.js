@@ -896,6 +896,7 @@ async function overlayAudio(videoPath, audioPath, outputPath, onProgress, musicP
   if (musicPath && fs.existsSync(musicPath)) {
     // Mix voiceover + background music using amix filter
     // Voiceover at full volume, music at ~12% volume (subtle background)
+    // Video is already encoded — copy it, only encode audio
     return runFfmpeg([
       '-y',
       '-i', videoPath,
@@ -905,7 +906,7 @@ async function overlayAudio(videoPath, audioPath, outputPath, onProgress, musicP
       '[1:a]volume=1.0[voice];[2:a]volume=0.12[music];[voice][music]amix=inputs=2:duration=longest:dropout_transition=3[aout]',
       '-map', '0:v:0',
       '-map', '[aout]',
-      '-c:v', 'libx264', '-preset', 'fast', '-crf', '26',
+      '-c:v', 'copy',
       '-c:a', 'aac', '-b:a', '192k',
       '-t', String(Math.ceil(targetDuration)),
       '-movflags', '+faststart',
@@ -913,11 +914,12 @@ async function overlayAudio(videoPath, audioPath, outputPath, onProgress, musicP
     ], 'audio overlay + music mix');
   } else {
     // Voiceover only (no background music)
+    // Video is already encoded — copy it, only encode audio
     return runFfmpeg([
       '-y',
       '-i', videoPath,
       '-i', audioPath,
-      '-c:v', 'libx264', '-preset', 'fast', '-crf', '26',
+      '-c:v', 'copy',
       '-c:a', 'aac', '-b:a', '192k',
       '-map', '0:v:0', '-map', '1:a:0',
       '-t', String(Math.ceil(targetDuration)),
@@ -931,6 +933,7 @@ async function overlayAudio(videoPath, audioPath, outputPath, onProgress, musicP
  * Overlay only background music (no voiceover) onto a video.
  */
 function overlayMusicOnly(videoPath, musicPath, outputPath, onProgress) {
+  // Video is already encoded — copy it, only encode audio
   return runFfmpeg([
     '-y',
     '-i', videoPath,
@@ -938,7 +941,7 @@ function overlayMusicOnly(videoPath, musicPath, outputPath, onProgress) {
     '-filter_complex', '[1:a]volume=0.3[music]',
     '-map', '0:v:0',
     '-map', '[music]',
-    '-c:v', 'libx264', '-preset', 'fast', '-crf', '26',
+    '-c:v', 'copy',
     '-c:a', 'aac', '-b:a', '192k',
     '-shortest',
     '-movflags', '+faststart',
@@ -954,9 +957,9 @@ function runFfmpeg(args, label) {
     const proc = spawn(FFMPEG_PATH, args, { stdio: ['ignore', 'pipe', 'pipe'] });
 
     const timeout = setTimeout(() => {
-      console.error(`[FFmpeg] Timeout (3 min) for ${label}. Killing.`);
+      console.error(`[FFmpeg] Timeout (5 min) for ${label}. Killing.`);
       proc.kill('SIGKILL');
-    }, 3 * 60 * 1000);
+    }, 5 * 60 * 1000);
 
     let stderr = '';
     proc.stderr.on('data', (chunk) => { stderr += chunk.toString(); });

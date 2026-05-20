@@ -28,7 +28,8 @@ CRITICAL RULES YOU MUST FOLLOW:
 6. Slow cinematic motion only — no rapid movement.
 7. ABSOLUTELY NO morphing between people — the person must remain the SAME throughout. Do NOT transition one person into a different person.
 8. Show only ONE person (the reference person) per shot. Never add random other people.
-9. NO delivery trucks, shipping vehicles, or logistics imagery.`;
+9. NO delivery trucks, shipping vehicles, or logistics imagery.
+10. The person must NOT be talking, speaking, mouthing words, or moving their lips unless the scene description explicitly calls for speaking or conversation. Show them in silent, contemplative, or active moments — smiling is fine, but their mouth must stay CLOSED or in a natural resting position.`;
 
 // Rules for clips WITHOUT persona reference — NO PEOPLE to avoid random strangers
 const VIDEO_PROMPT_RULES_NO_PERSONA = `Style: Cinematic b-roll footage. Smooth, slow camera movement. Warm natural lighting. Shallow depth of field. High production value.

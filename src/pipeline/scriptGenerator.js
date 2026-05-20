@@ -153,6 +153,7 @@ B-ROLL RELEVANCE RULES (CRITICAL — b-roll MUST match the story):
 - Transition b-roll should describe the specific ENVIRONMENT or PRODUCT context change (e.g., for a makeup buyer: "Close-up of beautifully arranged luxury cosmetics and brushes on a marble vanity with soft warm light" NOT "person running through Manhattan").
 - The outro b-roll should describe a warm concluding ENVIRONMENT or MOOD relevant to the brand (e.g., for a beauty brand: "Golden hour light streaming through a chic boutique window with fresh flowers and beauty products" NOT "generic sunset over a city").
 - NEVER describe random people or generic activities. Focus on the brand's WORLD — its products, stores, environments, and atmosphere.
+- NEVER describe people talking, speaking, or having conversations in b-roll descriptions unless the narration script explicitly calls for it. People in b-roll should be in silent, contemplative, or active moments (walking, browsing, smiling) — NOT speaking or mouthing words.
 
 B-ROLL UNIQUENESS RULES (CRITICAL):
 - Every brollDescription MUST be completely unique and visually distinct from every other brollDescription.

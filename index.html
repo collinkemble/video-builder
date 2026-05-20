@@ -399,17 +399,11 @@
               </div>
 
               <div id="password-fields" style="display: none; margin-top: 10px;">
-                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
-                  <div>
-                    <label class="block text-xs font-bold mb-1" style="color: #032D60;">Username</label>
-                    <input id="edit-public-username" type="text" class="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm" placeholder="e.g. demo" autocomplete="off">
-                  </div>
-                  <div>
-                    <label class="block text-xs font-bold mb-1" style="color: #032D60;">Password</label>
-                    <input id="edit-public-password" type="password" class="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm" placeholder="Enter password" autocomplete="new-password">
-                  </div>
+                <div>
+                  <label class="block text-xs font-bold mb-1" style="color: #032D60;">Password</label>
+                  <input id="edit-public-password" type="password" class="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm" placeholder="Enter password" autocomplete="new-password">
                 </div>
-                <p class="mt-2" style="font-size: 11px; color: #6B7280;">Viewers will need these credentials to watch the video. Leave password blank to keep the existing one.</p>
+                <p class="mt-2" style="font-size: 11px; color: #6B7280;">Viewers will need this password to watch the video. Leave blank to keep the existing one.</p>
               </div>
             </div>
           </div>
@@ -1252,7 +1246,6 @@ async function viewVideo(id, skipPush) {
     const hasPassword = !!video.hasPassword;
     document.getElementById('edit-password-enabled').checked = hasPassword;
     updatePasswordToggleUI(hasPassword);
-    document.getElementById('edit-public-username').value = video.public_username || '';
     document.getElementById('edit-public-password').value = hasPassword ? '••••••••' : '';
 
     // Store originals
@@ -1266,7 +1259,6 @@ async function viewVideo(id, skipPush) {
       description: video.description || '',
       publicEnabled: !!video.public_enabled,
       passwordEnabled: !!video.hasPassword,
-      publicUsername: video.public_username || '',
       publicPassword: video.hasPassword ? '••••••••' : '',
     };
     hideSaveSettingsBar();
@@ -2325,9 +2317,7 @@ function checkSettingsChanged() {
     if (publicEnabled !== !!orig.publicEnabled) changed = true;
     if (passwordEnabled !== !!orig.passwordEnabled) changed = true;
     if (passwordEnabled) {
-      const username = document.getElementById('edit-public-username').value;
       const password = document.getElementById('edit-public-password').value;
-      if (username !== (orig.publicUsername || '')) changed = true;
       if (password !== (orig.publicPassword || '')) changed = true;
     }
   }
@@ -2359,7 +2349,6 @@ async function saveVideoSettings() {
     // Public player page fields
     const publicEnabled = document.getElementById('edit-public-enabled').checked;
     const passwordEnabled = document.getElementById('edit-password-enabled').checked;
-    const publicUsername = passwordEnabled ? document.getElementById('edit-public-username').value.trim() : '';
     const publicPassword = passwordEnabled ? document.getElementById('edit-public-password').value : '';
 
     if (!name) { alert('Name is required.'); btn.textContent = '💾 Save Settings'; btn.disabled = false; return; }
@@ -2368,11 +2357,8 @@ async function saveVideoSettings() {
     const body = { email, name, brandName, voiceId, durationTarget, musicTrackId, customInstructions, description, publicEnabled };
     // Only send password fields if password protection is enabled
     if (passwordEnabled) {
-      body.publicUsername = publicUsername;
       body.publicPassword = publicPassword;
     } else {
-      // Disable password: clear username and password
-      body.publicUsername = '';
       body.publicPassword = '';
     }
 
@@ -2403,7 +2389,7 @@ async function saveVideoSettings() {
   }
 });
 // Also listen for public/password field changes
-['edit-public-username', 'edit-public-password'].forEach(id => {
+['edit-public-password'].forEach(id => {
   const el = document.getElementById(id);
   if (el) {
     el.addEventListener('input', checkSettingsChanged);

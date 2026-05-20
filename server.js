@@ -726,14 +726,10 @@ app.put('/api/videos/:id', async (req, res) => {
     }
 
     // Public player page fields
-    const { publicEnabled, publicUsername, publicPassword } = req.body;
+    const { publicEnabled, publicPassword } = req.body;
     if (publicEnabled !== undefined && publicEnabled !== null) {
       sets.push('public_enabled = ?');
       params.push(publicEnabled ? 1 : 0);
-    }
-    if (publicUsername !== undefined && publicUsername !== null) {
-      sets.push('public_username = ?');
-      params.push(publicUsername === '' ? null : publicUsername.trim());
     }
     if (publicPassword !== undefined && publicPassword !== null) {
       if (publicPassword === '') {
@@ -1667,10 +1663,9 @@ function renderWatchPage(video, showLogin) {
     <div id="watch-login" style="background: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 12px; padding: 32px; max-width: 400px; margin: 32px auto; text-align: center;">
       <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#0176D3" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="margin: 0 auto 16px;"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
       <h3 style="font-size: 18px; font-weight: 700; color: #032D60; margin-bottom: 4px;">This video is password protected</h3>
-      <p style="font-size: 14px; color: #6B7280; margin-bottom: 24px;">Enter the credentials provided to you to watch this video.</p>
+      <p style="font-size: 14px; color: #6B7280; margin-bottom: 24px;">Enter the password to watch this video.</p>
       <div id="watch-error" style="display: none; background: #FEF2F2; border: 1px solid #FECACA; border-radius: 8px; padding: 10px; margin-bottom: 16px; color: #991B1B; font-size: 13px;"></div>
       <form id="watch-auth-form" onsubmit="return watchLogin(event)">
-        <input id="watch-user" type="text" placeholder="Username" required autocomplete="username" style="width: 100%; padding: 10px 14px; border: 1px solid #D1D5DB; border-radius: 8px; font-size: 14px; margin-bottom: 12px; box-sizing: border-box; font-family: 'Salesforce Sans', sans-serif;">
         <input id="watch-pass" type="password" placeholder="Password" required autocomplete="current-password" style="width: 100%; padding: 10px 14px; border: 1px solid #D1D5DB; border-radius: 8px; font-size: 14px; margin-bottom: 16px; box-sizing: border-box; font-family: 'Salesforce Sans', sans-serif;">
         <button type="submit" id="watch-submit-btn" style="width: 100%; padding: 12px; background: #0176D3; color: white; border: none; border-radius: 8px; font-size: 15px; font-weight: 700; cursor: pointer; font-family: 'Salesforce Sans', sans-serif;">▶ Watch Video</button>
       </form>
@@ -1758,7 +1753,6 @@ function renderWatchPage(video, showLogin) {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            username: document.getElementById('watch-user').value,
             password: document.getElementById('watch-pass').value,
           }),
         });
@@ -1830,7 +1824,7 @@ function renderWatchPage(video, showLogin) {
 app.get('/watch/:id', async (req, res) => {
   try {
     const rows = await query(
-      'SELECT id, name, brand_name, brand_logo_url, description, video_url, thumbnail_url, status, public_enabled, public_username, public_password FROM videos WHERE id = ?',
+      'SELECT id, name, brand_name, brand_logo_url, description, video_url, thumbnail_url, status, public_enabled, public_password FROM videos WHERE id = ?',
       [req.params.id]
     );
 
@@ -1854,9 +1848,9 @@ app.get('/watch/:id', async (req, res) => {
 // POST /watch/:id/auth — password verification for protected videos
 app.post('/watch/:id/auth', express.json(), async (req, res) => {
   try {
-    const { username, password } = req.body;
-    if (!username || !password) {
-      return res.status(400).json({ error: 'Username and password are required' });
+    const { password } = req.body;
+    if (!password) {
+      return res.status(400).json({ error: 'Password is required' });
     }
 
     // Rate limiting: max 5 attempts per video per 60 seconds
@@ -1870,7 +1864,7 @@ app.post('/watch/:id/auth', express.json(), async (req, res) => {
     _watchAttempts[key].push(now);
 
     const rows = await query(
-      'SELECT id, public_enabled, public_username, public_password FROM videos WHERE id = ?',
+      'SELECT id, public_enabled, public_password FROM videos WHERE id = ?',
       [req.params.id]
     );
 
@@ -1880,15 +1874,10 @@ app.post('/watch/:id/auth', express.json(), async (req, res) => {
 
     const video = rows[0];
 
-    // Check username (case-insensitive)
-    if (video.public_username && username.toLowerCase() !== video.public_username.toLowerCase()) {
-      return res.status(401).json({ error: 'Invalid username or password' });
-    }
-
     // Check password
     const passwordValid = await bcrypt.compare(password, video.public_password);
     if (!passwordValid) {
-      return res.status(401).json({ error: 'Invalid username or password' });
+      return res.status(401).json({ error: 'Invalid password' });
     }
 
     // Issue short-lived JWT scoped to this video

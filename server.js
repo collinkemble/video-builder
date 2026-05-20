@@ -488,7 +488,7 @@ app.get('/api/videos', async (req, res) => {
     const videos = await query(
       `SELECT id, name, brand_name, pocketsic_project_name, status,
               video_url, thumbnail_url, duration_actual, error,
-              shared_by, shared_at, created_at, updated_at
+              public_enabled, shared_by, shared_at, created_at, updated_at
        FROM videos WHERE user_id = ? ORDER BY updated_at DESC`,
       [user.id]
     );

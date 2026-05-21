@@ -382,8 +382,9 @@ async function generateBroll({ description, brandName, brandDescription = '', pe
   const videoPath = await generateBrollVideo({ description, brandName, brandDescription, personaDescription, outputDir, segmentType, segmentChannel, personaImageUrl });
   if (videoPath) return videoPath;
 
-  // Retry Veo once with a simplified prompt and no persona reference
-  console.log(`[B-Roll] Retrying Veo with simplified prompt (no persona)...`);
+  // Wait before retrying to avoid rate-limit (429) cascading failures
+  console.log(`[B-Roll] Retry 2: waiting 5s before simplified prompt (no persona)...`);
+  await new Promise(r => setTimeout(r, 5000));
   const retryPath = await generateBrollVideo({
     description: `Cinematic lifestyle footage: ${description.substring(0, 100)}`,
     brandName, brandDescription, personaDescription, outputDir, segmentType, segmentChannel,
@@ -391,8 +392,9 @@ async function generateBroll({ description, brandName, brandDescription = '', pe
   });
   if (retryPath) return retryPath;
 
-  // Third attempt: ultra-minimal prompt — just the core visual concept
-  console.log(`[B-Roll] Retrying Veo with minimal prompt (attempt 3)...`);
+  // Third attempt with longer delay — ultra-minimal prompt
+  console.log(`[B-Roll] Retry 3: waiting 10s before minimal prompt...`);
+  await new Promise(r => setTimeout(r, 10000));
   const minimalDesc = segmentType === 'intro'
     ? `Beautiful cinematic opening shot. Slow camera movement across a stunning ${brandName || 'modern'} environment. Warm golden lighting. No text. No screens.`
     : segmentType === 'outro'
@@ -478,73 +480,104 @@ async function generateAllBroll(segments, brandName, outputDir, onProgress, pers
 
   const totalClips = segmentClipCounts.reduce((sum, s) => sum + s.clipsNeeded, 0);
 
-  console.log(`[B-Roll] Launching ${totalClips} clip generations for ${segments.length} segments in parallel...${personaImageUrl ? ' (with persona reference image)' : ''}`);
+  console.log(`[B-Roll] Generating ${totalClips} clips for ${segments.length} segments (staggered, max 5 concurrent)...${personaImageUrl ? ' (with persona reference image)' : ''}`);
   let completed = 0;
 
-  // Launch ALL clip generations in parallel
-  const promises = segmentClipCounts.map(({ seg, clipsNeeded }, i) => {
-    console.log(`[B-Roll] Segment ${i + 1}/${segments.length} (${seg.type || 'broll'}): ${clipsNeeded} clip(s) — "${seg.brollDescription?.substring(0, 50)}..."`);
+  // Build a flat list of all clip tasks with their segment info
+  const allClipTasks = [];
+  const variationStyles = [
+    null,  // First clip uses the original description unchanged
+    'Show a COMPLETELY DIFFERENT scene and setting — different location, different activity, different mood. Do NOT repeat any action or prop from the previous shot.',
+    'Show an OUTDOOR establishing shot — wide angle, environmental, no close-ups of objects. Completely different from previous clips.',
+    'Show a warm CLOSE-UP of hands or a facial expression — intimate, emotional moment. No props, no objects, no packages.',
+  ];
 
-    // Generate clipsNeeded clips for this segment, all in parallel.
-    // Each clip gets a DISTINCT visual description to avoid repetitive themes.
-    const clipPromises = [];
-    const variationStyles = [
-      null,  // First clip uses the original description unchanged
-      'Show a COMPLETELY DIFFERENT scene and setting — different location, different activity, different mood. Do NOT repeat any action or prop from the previous shot.',
-      'Show an OUTDOOR establishing shot — wide angle, environmental, no close-ups of objects. Completely different from previous clips.',
-      'Show a warm CLOSE-UP of hands or a facial expression — intimate, emotional moment. No props, no objects, no packages.',
-    ];
-
+  for (const { seg, clipsNeeded } of segmentClipCounts) {
     for (let c = 0; c < clipsNeeded; c++) {
       let desc = seg.brollDescription || 'Professional lifestyle image';
       if (c > 0 && c < variationStyles.length) {
-        // Replace the original description with a distinctly different visual direction
         desc = `${variationStyles[c]} General theme: ${desc.substring(0, 80)}`;
       } else if (c >= variationStyles.length) {
         desc = `Cinematic environmental wide shot — cityscape, nature, or architecture. Unrelated to previous clips. Theme context: ${desc.substring(0, 60)}`;
       }
-
-      // Pass persona reference for the FIRST clip of each b-roll segment to maintain character consistency.
-      // Only the first clip gets the reference to avoid Veo generating inconsistent variations.
-      // Without persona reference, the prompt rules will tell Veo to show NO PEOPLE (environments only).
       const usePersona = personaImageUrl && c === 0;
-
-      clipPromises.push(
-        generateBroll({
-          description: desc,
-          brandName,
-          brandDescription,
-          personaDescription,
-          outputDir,
-          segmentType: seg.type || '',
-          segmentChannel: seg.channel || '',
-          personaImageUrl: usePersona ? personaImageUrl : null,
-        }).then(mediaPath => {
-          completed++;
-          if (mediaPath.endsWith('.mp4')) {
-            videoCount++;
-          } else {
-            imageCount++;
-          }
-          console.log(`[B-Roll] ${completed}/${totalClips} done: ${mediaPath.endsWith('.mp4') ? 'VIDEO' : 'IMAGE'} → ${path.basename(mediaPath)}`);
-          if (onProgress) onProgress(Math.min(completed, totalClips), totalClips);
-          return mediaPath;
-        })
-      );
+      allClipTasks.push({
+        segOrder: seg.order,
+        segType: seg.type || '',
+        segChannel: seg.channel || '',
+        description: desc,
+        personaImageUrl: usePersona ? personaImageUrl : null,
+      });
     }
+    console.log(`[B-Roll] Segment order=${seg.order} (${seg.type || 'broll'}): ${clipsNeeded} clip(s) — "${seg.brollDescription?.substring(0, 50)}..."`);
+  }
 
-    return Promise.all(clipPromises).then(mediaPaths => ({
-      order: seg.order,
-      mediaPaths,  // Array of all clip paths for this segment
-      imagePath: mediaPaths[0],  // Backward compat — primary clip
-    })).catch(err => {
-      console.error(`[B-Roll] Segment ${seg.order} (${seg.type || 'broll'}) failed entirely: ${err.message}`);
-      return null; // Return null so other segments still complete
-    });
-  });
+  // Run clips with controlled concurrency (max 5 at a time, 2s stagger between launches)
+  // to stay under the Veo rate limit.
+  const MAX_CONCURRENT = 5;
+  const STAGGER_MS = 2000;
+  const clipResults = new Array(allClipTasks.length);
+  let nextIdx = 0;
 
-  const allResults = await Promise.all(promises);
-  const results = allResults.filter(r => r !== null); // Remove failed segments
+  async function runNext() {
+    const idx = nextIdx++;
+    if (idx >= allClipTasks.length) return;
+    const task = allClipTasks[idx];
+    try {
+      const mediaPath = await generateBroll({
+        description: task.description,
+        brandName,
+        brandDescription,
+        personaDescription,
+        outputDir,
+        segmentType: task.segType,
+        segmentChannel: task.segChannel,
+        personaImageUrl: task.personaImageUrl,
+      });
+      clipResults[idx] = { segOrder: task.segOrder, mediaPath };
+      completed++;
+      if (mediaPath.endsWith('.mp4')) {
+        videoCount++;
+      } else {
+        imageCount++;
+      }
+      console.log(`[B-Roll] ${completed}/${totalClips} done: ${mediaPath.endsWith('.mp4') ? 'VIDEO' : 'IMAGE'} → ${path.basename(mediaPath)}`);
+      if (onProgress) onProgress(Math.min(completed, totalClips), totalClips);
+    } catch (err) {
+      console.error(`[B-Roll] Clip ${idx} (seg ${task.segOrder}) failed: ${err.message}`);
+      clipResults[idx] = null;
+    }
+    // Continue with next task
+    await runNext();
+  }
+
+  // Launch initial batch of workers with staggered starts
+  const workers = [];
+  for (let w = 0; w < Math.min(MAX_CONCURRENT, allClipTasks.length); w++) {
+    if (w > 0) await new Promise(r => setTimeout(r, STAGGER_MS));
+    workers.push(runNext());
+  }
+  await Promise.all(workers);
+
+  // Group results back by segment order
+  const segmentMediaMap = {};
+  for (const result of clipResults) {
+    if (!result) continue;
+    if (!segmentMediaMap[result.segOrder]) segmentMediaMap[result.segOrder] = [];
+    segmentMediaMap[result.segOrder].push(result.mediaPath);
+  }
+
+  const results = segmentClipCounts
+    .map(({ seg }) => {
+      const mediaPaths = segmentMediaMap[seg.order] || [];
+      if (mediaPaths.length === 0) return null;
+      return {
+        order: seg.order,
+        mediaPaths,
+        imagePath: mediaPaths[0],  // Backward compat — primary clip
+      };
+    })
+    .filter(r => r !== null);
 
   console.log(`[B-Roll] Complete: ${videoCount} video clips, ${imageCount} still images out of ${totalClips} total clips for ${segments.length} segments`);
   return results;

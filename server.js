@@ -16,7 +16,7 @@ const { parseEditInstruction } = require('./src/pipeline/smartEditParser');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const BUILD_VERSION = 'v176-broll-retry-diag';
+const BUILD_VERSION = 'v177-broll-rate-limit-fix';
 
 // Health/version endpoint — verify which code is deployed
 app.get('/api/version', (req, res) => {

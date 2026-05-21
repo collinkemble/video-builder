@@ -16,7 +16,7 @@ const { parseEditInstruction } = require('./src/pipeline/smartEditParser');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const BUILD_VERSION = 'v174-no-talking-in-broll';
+const BUILD_VERSION = 'v175-fix-stale-recovery';
 
 // Health/version endpoint — verify which code is deployed
 app.get('/api/version', (req, res) => {
@@ -2019,7 +2019,7 @@ async function checkVeoCapability() {
 async function recoverStaleJobs() {
   try {
     const stale = await query(
-      "SELECT id, name FROM videos WHERE status = 'processing'"
+      "SELECT id, name, status FROM videos WHERE status IN ('scripting', 'voiceover', 'capturing', 'compositing', 'uploading')"
     );
     if (stale.length > 0) {
       console.log(`[Recovery] Found ${stale.length} stuck video(s) — marking as failed so they can be retried.`);
@@ -2032,7 +2032,7 @@ async function recoverStaleJobs() {
           "UPDATE video_jobs SET status = 'failed', error = 'Server restarted', completed_at = NOW() WHERE video_id = ? AND status IN ('pending', 'running')",
           [v.id]
         );
-        console.log(`[Recovery] Video ${v.id} ("${v.name}") marked as failed.`);
+        console.log(`[Recovery] Video ${v.id} ("${v.name}") was ${v.status} — marked as failed.`);
       }
     }
   } catch (err) {

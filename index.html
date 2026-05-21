@@ -185,6 +185,7 @@
           <button id="nav-videos" onclick="showPage('videos')" class="cursor-pointer" style="padding: 6px 16px; border-radius: 6px; background: rgba(255,255,255,0.12); border: none; color: #FFFFFF; font-size: 13px; font-weight: 700; transition: background 0.15s ease;">Videos</button>
           <!-- Connections page removed — app uses server-side API keys -->
           <button id="nav-api-keys" onclick="showPage('api-keys')" class="cursor-pointer" style="padding: 6px 16px; border-radius: 6px; background: transparent; border: none; color: rgba(255,255,255,0.7); font-size: 13px; font-weight: 500; transition: background 0.15s ease;" onmouseenter="if(!this.dataset.active)this.style.background='rgba(255,255,255,0.07)'" onmouseleave="if(!this.dataset.active)this.style.background='transparent'">API Keys</button>
+          <button id="nav-how-to" onclick="showPage('how-to')" class="cursor-pointer" style="padding: 6px 16px; border-radius: 6px; background: transparent; border: none; color: rgba(255,255,255,0.7); font-size: 13px; font-weight: 500; transition: background 0.15s ease;" onmouseenter="if(!this.dataset.active)this.style.background='rgba(255,255,255,0.07)'" onmouseleave="if(!this.dataset.active)this.style.background='transparent'">How to Use</button>
           <button id="nav-feedback" onclick="showPage('feedback')" class="hidden cursor-pointer" style="padding: 6px 16px; border-radius: 6px; background: transparent; border: none; color: rgba(255,255,255,0.7); font-size: 13px; font-weight: 500; transition: background 0.15s ease;" onmouseenter="if(!this.dataset.active)this.style.background='rgba(255,255,255,0.07)'" onmouseleave="if(!this.dataset.active)this.style.background='transparent'">Feedback</button>
           <button id="nav-users" onclick="showPage('users')" class="hidden cursor-pointer" style="padding: 6px 16px; border-radius: 6px; background: transparent; border: none; color: rgba(255,255,255,0.7); font-size: 13px; font-weight: 500; transition: background 0.15s ease;" onmouseenter="if(!this.dataset.active)this.style.background='rgba(255,255,255,0.07)'" onmouseleave="if(!this.dataset.active)this.style.background='transparent'">Users</button>
         </div>
@@ -205,6 +206,7 @@
         <button id="mob-nav-videos" onclick="showPage('videos'); closeMobileMenu();">🎬 Videos</button>
         <!-- Connections removed — server-side keys -->
         <button id="mob-nav-api-keys" onclick="showPage('api-keys'); closeMobileMenu();">🔑 API Keys</button>
+        <button id="mob-nav-how-to" onclick="showPage('how-to'); closeMobileMenu();">📖 How to Use</button>
         <button id="mob-nav-feedback" onclick="showPage('feedback'); closeMobileMenu();" style="display:none;">📋 Feedback</button>
         <button id="mob-nav-users" onclick="showPage('users'); closeMobileMenu();" style="display:none;">👤 Users</button>
         <div class="mobile-divider"></div>
@@ -219,6 +221,16 @@
     <!-- VIDEOS HOME                                    -->
     <!-- ═══════════════════════════════════════════════ -->
     <div id="videos-home" style="max-width: 912px; margin: 0 auto; padding: 32px 16px 0;">
+      <!-- Hero / Intro Banner -->
+      <div style="background: linear-gradient(135deg, #032D60 0%, #0176D3 100%); border-radius: 16px; padding: 32px; margin-bottom: 28px; position: relative; overflow: hidden;">
+        <div style="position: absolute; top: -40px; right: -40px; width: 200px; height: 200px; border-radius: 50%; background: rgba(255,255,255,0.05);"></div>
+        <div style="position: absolute; bottom: -60px; left: -30px; width: 160px; height: 160px; border-radius: 50%; background: rgba(255,255,255,0.04);"></div>
+        <div style="position: relative; z-index: 1;">
+          <h2 style="font-size: 24px; font-weight: 700; color: #fff; margin: 0 0 8px 0; letter-spacing: -0.02em;">🎬 AI-Powered CX Story Videos, Built Automatically</h2>
+          <p style="font-size: 14px; line-height: 22px; color: rgba(255,255,255,0.8); margin: 0; max-width: 680px;">Video Builder, from Aubrey Demo AI, turns your PocketSIC demo scripts into fully produced narrated videos — complete with screen captures, b-roll footage, voiceover, background music, and branded intros. Just pick a script, choose a voice, and hit generate. The AI writes the narration, captures every scene, and composites it all into a share-ready MP4. Edit segments inline, regenerate individual scenes, or swap out b-roll — all without leaving the app.</p>
+        </div>
+      </div>
+
       <div class="flex items-center justify-between" style="margin-bottom: 24px;">
         <div>
           <h2 style="font-size: 35px; line-height: 40px; letter-spacing: -0.025em; font-weight: 700; color: #032D60; margin: 0 0 4px 0;">Videos</h2>
@@ -674,6 +686,106 @@
       </div>
     </div>
 
+    <!-- ===== How to Use Page ===== -->
+    <div id="how-to-section" class="hidden" style="max-width: 1024px; margin: 0 auto; padding: 32px 16px 0;">
+      <div style="margin-bottom: 20px;">
+        <h2 style="font-size: 28px; line-height: 36px; letter-spacing: -0.56px; font-weight: 700; color: #032D60; margin: 0;">How to Use Video Builder</h2>
+        <p style="font-size: 14px; color: #6b7280; margin-top: 6px;">Everything you need to know to create, edit, and share AI-generated demo videos.</p>
+      </div>
+
+      <div style="display: flex; flex-direction: column; gap: 16px;">
+
+        <!-- Step 1 -->
+        <div style="background: white; border-radius: 12px; padding: 24px; border: 1px solid #e5e7eb; box-shadow: 0 1px 3px rgba(0,0,0,0.06);">
+          <div style="display: flex; align-items: flex-start; gap: 16px;">
+            <div style="width: 36px; height: 36px; border-radius: 50%; background: linear-gradient(135deg, #0176D3, #032D60); color: white; font-weight: 700; font-size: 16px; display: flex; align-items: center; justify-content: center; flex-shrink: 0;">1</div>
+            <div>
+              <h3 style="font-size: 16px; font-weight: 700; color: #032D60; margin: 0 0 6px;">Create a New Video</h3>
+              <p style="font-size: 14px; color: #4b5563; line-height: 1.6; margin: 0;">Click <strong>"+ New Video"</strong> on the Videos page. Give your video a name, pick a brand, and paste in a PocketSIC project URL. Choose your narration voice and target duration, then hit <strong>"Create Video"</strong>. The AI will generate a narration script from your demo script and begin producing the video.</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- Step 2 -->
+        <div style="background: white; border-radius: 12px; padding: 24px; border: 1px solid #e5e7eb; box-shadow: 0 1px 3px rgba(0,0,0,0.06);">
+          <div style="display: flex; align-items: flex-start; gap: 16px;">
+            <div style="width: 36px; height: 36px; border-radius: 50%; background: linear-gradient(135deg, #0176D3, #032D60); color: white; font-weight: 700; font-size: 16px; display: flex; align-items: center; justify-content: center; flex-shrink: 0;">2</div>
+            <div>
+              <h3 style="font-size: 16px; font-weight: 700; color: #032D60; margin: 0 0 6px;">Watch the Pipeline Work</h3>
+              <p style="font-size: 14px; color: #4b5563; line-height: 1.6; margin: 0;">Once you kick off generation, the pipeline status card shows each step in real time — scripting, voiceover, scene capture, compositing, and upload. Each step lights up as it completes so you always know where things stand. The full process typically takes a few minutes depending on video length.</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- Step 3 -->
+        <div style="background: white; border-radius: 12px; padding: 24px; border: 1px solid #e5e7eb; box-shadow: 0 1px 3px rgba(0,0,0,0.06);">
+          <div style="display: flex; align-items: flex-start; gap: 16px;">
+            <div style="width: 36px; height: 36px; border-radius: 50%; background: linear-gradient(135deg, #0176D3, #032D60); color: white; font-weight: 700; font-size: 16px; display: flex; align-items: center; justify-content: center; flex-shrink: 0;">3</div>
+            <div>
+              <h3 style="font-size: 16px; font-weight: 700; color: #032D60; margin: 0 0 6px;">Review Your Video</h3>
+              <p style="font-size: 14px; color: #4b5563; line-height: 1.6; margin: 0;">When the video is ready, it appears in the built-in player at the top of the detail page. Below that you'll find the full narration script broken down by segment — each row shows the segment type (intro, scene capture, b-roll, transition, outro), narration text, and timing. You can download the MP4 directly from the player controls.</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- Step 4 -->
+        <div style="background: white; border-radius: 12px; padding: 24px; border: 1px solid #e5e7eb; box-shadow: 0 1px 3px rgba(0,0,0,0.06);">
+          <div style="display: flex; align-items: flex-start; gap: 16px;">
+            <div style="width: 36px; height: 36px; border-radius: 50%; background: linear-gradient(135deg, #0176D3, #032D60); color: white; font-weight: 700; font-size: 16px; display: flex; align-items: center; justify-content: center; flex-shrink: 0;">4</div>
+            <div>
+              <h3 style="font-size: 16px; font-weight: 700; color: #032D60; margin: 0 0 6px;">Edit Segments Inline</h3>
+              <p style="font-size: 14px; color: #4b5563; line-height: 1.6; margin: 0;">Click the <strong>pencil icon</strong> on any segment row to edit its narration text directly. You can adjust the wording, fix phrasing, or completely rewrite the narration for any individual segment. Changes are saved instantly so you can fine-tune the script without regenerating the entire video.</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- Step 5 -->
+        <div style="background: white; border-radius: 12px; padding: 24px; border: 1px solid #e5e7eb; box-shadow: 0 1px 3px rgba(0,0,0,0.06);">
+          <div style="display: flex; align-items: flex-start; gap: 16px;">
+            <div style="width: 36px; height: 36px; border-radius: 50%; background: linear-gradient(135deg, #0176D3, #032D60); color: white; font-weight: 700; font-size: 16px; display: flex; align-items: center; justify-content: center; flex-shrink: 0;">5</div>
+            <div>
+              <h3 style="font-size: 16px; font-weight: 700; color: #032D60; margin: 0 0 6px;">Regenerate Individual Scenes</h3>
+              <p style="font-size: 14px; color: #4b5563; line-height: 1.6; margin: 0;">Not happy with a specific b-roll clip or scene capture? Use the <strong>regenerate button</strong> on any segment to re-generate just that piece — new b-roll footage, a fresh screen capture, or updated voiceover. You can also regenerate the entire video with updated settings if you want a complete refresh.</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- Step 6 -->
+        <div style="background: white; border-radius: 12px; padding: 24px; border: 1px solid #e5e7eb; box-shadow: 0 1px 3px rgba(0,0,0,0.06);">
+          <div style="display: flex; align-items: flex-start; gap: 16px;">
+            <div style="width: 36px; height: 36px; border-radius: 50%; background: linear-gradient(135deg, #0176D3, #032D60); color: white; font-weight: 700; font-size: 16px; display: flex; align-items: center; justify-content: center; flex-shrink: 0;">6</div>
+            <div>
+              <h3 style="font-size: 16px; font-weight: 700; color: #032D60; margin: 0 0 6px;">Update Video Settings</h3>
+              <p style="font-size: 14px; color: #4b5563; line-height: 1.6; margin: 0;">On the detail page, expand the <strong>Video Settings</strong> panel to change the name, brand, narration voice, target duration, background music track, or add custom instructions. A yellow <strong>"You have unsaved changes"</strong> banner will appear with a Save button so you never lose track of what's changed.</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- Step 7 -->
+        <div style="background: white; border-radius: 12px; padding: 24px; border: 1px solid #e5e7eb; box-shadow: 0 1px 3px rgba(0,0,0,0.06);">
+          <div style="display: flex; align-items: flex-start; gap: 16px;">
+            <div style="width: 36px; height: 36px; border-radius: 50%; background: linear-gradient(135deg, #0176D3, #032D60); color: white; font-weight: 700; font-size: 16px; display: flex; align-items: center; justify-content: center; flex-shrink: 0;">7</div>
+            <div>
+              <h3 style="font-size: 16px; font-weight: 700; color: #032D60; margin: 0 0 6px;">Share with a Public Link</h3>
+              <p style="font-size: 14px; color: #4b5563; line-height: 1.6; margin: 0;">Toggle the <strong>Public Player Page</strong> switch in the settings to generate a shareable link and QR code. Anyone with the link can watch the video in a clean, branded player page. You can optionally add password protection so only people with the password can view it — perfect for sharing with customers or partners.</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- Step 8 -->
+        <div style="background: white; border-radius: 12px; padding: 24px; border: 1px solid #e5e7eb; box-shadow: 0 1px 3px rgba(0,0,0,0.06);">
+          <div style="display: flex; align-items: flex-start; gap: 16px;">
+            <div style="width: 36px; height: 36px; border-radius: 50%; background: linear-gradient(135deg, #0176D3, #032D60); color: white; font-weight: 700; font-size: 16px; display: flex; align-items: center; justify-content: center; flex-shrink: 0;">8</div>
+            <div>
+              <h3 style="font-size: 16px; font-weight: 700; color: #032D60; margin: 0 0 6px;">Download &amp; Present</h3>
+              <p style="font-size: 14px; color: #4b5563; line-height: 1.6; margin: 0;">Click the <strong>Download</strong> button to grab the finished MP4 with branded intro, narrated scenes, b-roll, and background music — ready to present at customer meetings, embed in presentations, or share on Slack. Each video is a self-contained story that showcases the Agentic Enterprise powered by Salesforce.</p>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
     </div><!-- end flex:1 content wrapper -->
 
     <!-- Footer -->
@@ -994,7 +1106,7 @@ async function showApp(email) {
   document.getElementById('user-email').textContent = email;
 
   const viewMatch = window.location.pathname.match(/^\/views\/(\d+)$/);
-  const pageMap = { '/api-keys': 'api-keys', '/feedback': 'feedback', '/users': 'users' };
+  const pageMap = { '/api-keys': 'api-keys', '/how-to': 'how-to', '/feedback': 'feedback', '/users': 'users' };
   const urlPage = pageMap[window.location.pathname];
 
   if (viewMatch) {
@@ -1091,11 +1203,12 @@ function showPage(page, skipPush) {
   document.getElementById('video-detail').classList.toggle('hidden', page !== 'video-detail');
   document.getElementById('connections-section').classList.toggle('hidden', page !== 'connections');
   document.getElementById('api-keys-section').classList.toggle('hidden', page !== 'api-keys');
+  document.getElementById('how-to-section').classList.toggle('hidden', page !== 'how-to');
   document.getElementById('admin-feedback-section').classList.toggle('hidden', page !== 'feedback');
   document.getElementById('admin-users-section').classList.toggle('hidden', page !== 'users');
 
   const navPage = page === 'video-detail' ? 'videos' : page;
-  ['videos', 'api-keys', 'users', 'feedback'].forEach(p => {
+  ['videos', 'api-keys', 'how-to', 'users', 'feedback'].forEach(p => {
     const btn = document.getElementById('nav-' + p);
     if (!btn) return;
     const isActive = p === navPage;
@@ -1105,13 +1218,13 @@ function showPage(page, skipPush) {
     btn.style.fontWeight = isActive ? '700' : '500';
   });
 
-  ['videos', 'api-keys', 'feedback', 'users'].forEach(p => {
+  ['videos', 'api-keys', 'how-to', 'feedback', 'users'].forEach(p => {
     const mobBtn = document.getElementById('mob-nav-' + p);
     if (mobBtn) mobBtn.classList.toggle('mobile-nav-active', p === navPage);
   });
 
   if (!skipPush && page !== 'video-detail') {
-    const urlMap = { 'videos': '/', 'api-keys': '/api-keys', 'feedback': '/feedback', 'users': '/users' };
+    const urlMap = { 'videos': '/', 'api-keys': '/api-keys', 'how-to': '/how-to', 'feedback': '/feedback', 'users': '/users' };
     history.pushState({ page }, '', urlMap[page] || '/');
   }
 

@@ -1399,7 +1399,7 @@ async function viewVideo(id, skipPush) {
       playerWrap.classList.remove('hidden');
       // Show download bar
       downloadLink.setAttribute('data-video-url', video.video_url);
-      downloadLink.setAttribute('data-filename', `${(video.name || 'video').replace(/[^a-zA-Z0-9_-]/g, '_')}.mp4`);
+      downloadLink.setAttribute('data-filename', `${(video.name || 'video').replace(/[^a-zA-Z0-9_-]/g, '_')}_salesforce_cx.mp4`);
       if (video.duration_actual) {
         const mins = Math.floor(video.duration_actual / 60);
         const secs = Math.round(video.duration_actual % 60);

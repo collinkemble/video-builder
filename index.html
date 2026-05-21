@@ -1860,6 +1860,12 @@ async function generateScriptOnly() {
     // Render the new script
     renderScript(data.script);
     document.getElementById('save-script-btn').classList.add('hidden');
+
+    // Auto-start full video generation now that script is ready
+    btn.disabled = false;
+    btn.textContent = '🔄 Regenerate Script';
+    startGeneration(true); // force=true since user just regenerated script
+    return;
   } catch (err) {
     alert(err.message);
   } finally {
@@ -1891,6 +1897,12 @@ async function autoGenerateScript(videoId) {
 
     renderScript(data.script);
     document.getElementById('save-script-btn').classList.add('hidden');
+
+    // Auto-start full video generation now that script is ready
+    btn.disabled = false;
+    btn.textContent = '🔄 Regenerate Script';
+    startGeneration(false); // first generation, no existing video to confirm
+    return;
   } catch (err) {
     empty.innerHTML = `<p style="color: #C23934; font-size: 14px;">Failed to generate script: ${esc(err.message)}</p>`;
     empty.classList.remove('hidden');

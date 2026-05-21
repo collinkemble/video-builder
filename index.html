@@ -3245,10 +3245,16 @@ async function downloadVideo() {
 // New Video Dialog
 // ═══════════════════════════════════════════════
 async function openNewVideoDialog() {
-  document.getElementById('new-video-name').value = '';
+  const nameInput = document.getElementById('new-video-name');
+  nameInput.value = '';
+  nameInput.style.borderColor = '';
   document.getElementById('new-video-brand').value = '';
   document.getElementById('new-video-error').classList.add('hidden');
   document.getElementById('new-video-dialog').classList.remove('hidden');
+
+  // Clear red highlight on input
+  nameInput.addEventListener('input', function() { this.style.borderColor = ''; }, { once: false });
+  document.getElementById('new-video-project').addEventListener('change', function() { this.style.borderColor = ''; }, { once: false });
 
   const email = document.getElementById('user-email').textContent;
 
@@ -3257,7 +3263,8 @@ async function openNewVideoDialog() {
   const loading = document.getElementById('project-picker-loading');
   const error = document.getElementById('project-picker-error');
 
-  select.innerHTML = '<option value="">— Select a project (optional) —</option>';
+  select.innerHTML = '<option value="">— Select a project —</option>';
+  select.style.borderColor = '';
   loading.classList.remove('hidden');
   error.classList.add('hidden');
 
@@ -3327,14 +3334,20 @@ async function createNewVideo() {
   const scriptBrand = scriptSelect.selectedOptions[0]?.dataset?.brand || '';
   const errorEl = document.getElementById('new-video-error');
 
-  if (!name) {
-    errorEl.textContent = 'Video name is required.';
+  // Clear previous red highlights
+  const nameInput = document.getElementById('new-video-name');
+  nameInput.style.borderColor = '';
+  projectSelect.style.borderColor = '';
+
+  // Validate all required fields at once
+  const missing = [];
+  if (!name) missing.push(nameInput);
+  if (!projectId) missing.push(projectSelect);
+
+  if (missing.length > 0) {
+    errorEl.textContent = 'Complete all required fields.';
     errorEl.classList.remove('hidden');
-    return;
-  }
-  if (!projectId) {
-    errorEl.textContent = 'Please select a PocketSIC project.';
-    errorEl.classList.remove('hidden');
+    missing.forEach(el => { el.style.borderColor = '#EF4444'; });
     return;
   }
 

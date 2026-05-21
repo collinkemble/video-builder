@@ -418,7 +418,7 @@ async function normalizeVideoClip(inputPath, outputPath, targetDuration, freezeI
       '-stream_loop', '-1',
       '-i', inputPath,
       '-vf', `scale=${WIDTH}:${HEIGHT}:force_original_aspect_ratio=decrease,pad=${WIDTH}:${HEIGHT}:(ow-iw)/2:(oh-ih)/2:black,format=yuv420p`,
-      '-c:v', 'libx264', '-preset', 'fast', '-crf', '26',
+      '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '26',
       '-t', String(targetDuration),
       '-r', String(FPS),
       '-pix_fmt', 'yuv420p',
@@ -438,7 +438,7 @@ async function normalizeVideoClip(inputPath, outputPath, targetDuration, freezeI
       '-y',
       '-i', inputPath,
       '-vf', `setpts=${ptsFactor.toFixed(4)}*PTS,scale=${WIDTH}:${HEIGHT}:force_original_aspect_ratio=decrease,pad=${WIDTH}:${HEIGHT}:(ow-iw)/2:(oh-ih)/2:black,format=yuv420p`,
-      '-c:v', 'libx264', '-preset', 'fast', '-crf', '26',
+      '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '26',
       '-t', String(targetDuration),
       '-r', String(FPS),
       '-pix_fmt', 'yuv420p',
@@ -469,7 +469,7 @@ async function normalizeVideoClip(inputPath, outputPath, targetDuration, freezeI
       await runFfmpeg([
         '-y', '-i', inputPath,
         '-vf', `scale=${WIDTH}:${HEIGHT}:force_original_aspect_ratio=decrease,pad=${WIDTH}:${HEIGHT}:(ow-iw)/2:(oh-ih)/2:black,format=yuv420p`,
-        '-c:v', 'libx264', '-preset', 'fast', '-crf', '26',
+        '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '26',
         '-r', String(FPS), '-pix_fmt', 'yuv420p', '-an',
         '-movflags', '+faststart',
         normalizedOrigPath,
@@ -489,7 +489,7 @@ async function normalizeVideoClip(inputPath, outputPath, targetDuration, freezeI
         '-y', '-loop', '1',
         '-i', lastFramePath,
         '-vf', `scale=${WIDTH}:${HEIGHT},format=yuv420p`,
-        '-c:v', 'libx264', '-preset', 'fast', '-crf', '26',
+        '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '26',
         '-t', String(Math.ceil(padDuration) + 1), // slight extra, trimmed at concat
         '-r', String(FPS), '-pix_fmt', 'yuv420p',
         '-movflags', '+faststart',
@@ -522,7 +522,7 @@ async function normalizeVideoClip(inputPath, outputPath, targetDuration, freezeI
         '-stream_loop', '-1',  // Loop input indefinitely
         '-i', inputPath,
         '-vf', `scale=${WIDTH}:${HEIGHT}:force_original_aspect_ratio=decrease,pad=${WIDTH}:${HEIGHT}:(ow-iw)/2:(oh-ih)/2:black,format=yuv420p`,
-        '-c:v', 'libx264', '-preset', 'fast', '-crf', '26',
+        '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '26',
         '-t', String(targetDuration),
         '-r', String(FPS),
         '-pix_fmt', 'yuv420p',
@@ -538,7 +538,7 @@ async function normalizeVideoClip(inputPath, outputPath, targetDuration, freezeI
     '-y',
     '-i', inputPath,
     '-vf', `scale=${WIDTH}:${HEIGHT}:force_original_aspect_ratio=decrease,pad=${WIDTH}:${HEIGHT}:(ow-iw)/2:(oh-ih)/2:black,format=yuv420p`,
-    '-c:v', 'libx264', '-preset', 'fast', '-crf', '26',
+    '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '26',
     '-t', String(targetDuration),
     '-r', String(FPS),
     '-pix_fmt', 'yuv420p',
@@ -561,7 +561,7 @@ async function concatBrollClips(sourcePaths, outputPath, targetDuration, workDir
       '-y',
       '-i', sourcePaths[j],
       '-vf', `scale=${WIDTH}:${HEIGHT}:force_original_aspect_ratio=decrease,pad=${WIDTH}:${HEIGHT}:(ow-iw)/2:(oh-ih)/2:black,format=yuv420p`,
-      '-c:v', 'libx264', '-preset', 'fast', '-crf', '26',
+      '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '26',
       '-r', String(FPS),
       '-pix_fmt', 'yuv420p',
       '-an',
@@ -581,7 +581,7 @@ async function concatBrollClips(sourcePaths, outputPath, targetDuration, workDir
   await runFfmpeg([
     '-y',
     '-f', 'concat', '-safe', '0', '-i', concatFile,
-    '-c:v', 'libx264', '-preset', 'fast', '-crf', '26',
+    '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '26',
     '-t', String(targetDuration),
     '-r', String(FPS),
     '-pix_fmt', 'yuv420p',
@@ -799,7 +799,7 @@ async function applyIntroLogoOverlay(inputPath, outputPath, brandLogoUrl, workDi
     '-filter_complex', filterComplex,
     '-map', '[out]',
     '-map', '0:a?',   // preserve audio if present
-    '-c:v', 'libx264', '-preset', 'fast', '-crf', '26',
+    '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '26',
     '-r', String(FPS),
     '-pix_fmt', 'yuv420p',
     '-movflags', '+faststart',
@@ -847,7 +847,7 @@ function imageToVideo(imagePath, outputPath, duration) {
     '-loop', '1',
     '-i', imagePath,
     '-vf', `${scaleUp},${cropFilter},${scaleBack},format=yuv420p`,
-    '-c:v', 'libx264', '-preset', 'fast', '-crf', '26',
+    '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '26',
     '-t', String(duration),
     '-r', String(FPS),
     '-pix_fmt', 'yuv420p',
@@ -951,10 +951,18 @@ function overlayMusicOnly(videoPath, musicPath, outputPath, onProgress) {
 
 /**
  * Run an FFmpeg command via spawn with timeout.
+ * Automatically injects -threads 1 to limit memory usage on constrained environments.
  */
 function runFfmpeg(args, label) {
+  // Inject memory-limiting flags: single thread to reduce peak RAM usage
+  const finalArgs = ['-threads', '1', ...args];
+
+  // Log memory before starting
+  const memBefore = process.memoryUsage();
+  console.log(`[FFmpeg] Starting: ${label} (RSS: ${(memBefore.rss / 1024 / 1024).toFixed(0)}MB, Heap: ${(memBefore.heapUsed / 1024 / 1024).toFixed(0)}MB)`);
+
   return new Promise((resolve, reject) => {
-    const proc = spawn(FFMPEG_PATH, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    const proc = spawn(FFMPEG_PATH, finalArgs, { stdio: ['ignore', 'pipe', 'pipe'] });
 
     const timeout = setTimeout(() => {
       console.error(`[FFmpeg] Timeout (5 min) for ${label}. Killing.`);
@@ -966,6 +974,8 @@ function runFfmpeg(args, label) {
 
     proc.on('close', (code) => {
       clearTimeout(timeout);
+      const memAfter = process.memoryUsage();
+      console.log(`[FFmpeg] Done: ${label} (RSS: ${(memAfter.rss / 1024 / 1024).toFixed(0)}MB, exit: ${code})`);
       if (code === 0) {
         resolve();
       } else {

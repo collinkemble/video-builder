@@ -382,8 +382,8 @@ async function generateBroll({ description, brandName, brandDescription = '', pe
   const videoPath = await generateBrollVideo({ description, brandName, brandDescription, personaDescription, outputDir, segmentType, segmentChannel, personaImageUrl });
   if (videoPath) return videoPath;
 
-  // Retry Veo once with a simplified prompt before falling back to still images
-  console.log(`[B-Roll] Retrying Veo with simplified prompt...`);
+  // Retry Veo once with a simplified prompt and no persona reference
+  console.log(`[B-Roll] Retrying Veo with simplified prompt (no persona)...`);
   const retryPath = await generateBrollVideo({
     description: `Cinematic lifestyle footage: ${description.substring(0, 100)}`,
     brandName, brandDescription, personaDescription, outputDir, segmentType, segmentChannel,
@@ -391,7 +391,22 @@ async function generateBroll({ description, brandName, brandDescription = '', pe
   });
   if (retryPath) return retryPath;
 
+  // Third attempt: ultra-minimal prompt — just the core visual concept
+  console.log(`[B-Roll] Retrying Veo with minimal prompt (attempt 3)...`);
+  const minimalDesc = segmentType === 'intro'
+    ? `Beautiful cinematic opening shot. Slow camera movement across a stunning ${brandName || 'modern'} environment. Warm golden lighting. No text. No screens.`
+    : segmentType === 'outro'
+    ? `Warm cinematic closing shot. Slow pull-back camera movement. Beautiful sunset or golden hour lighting. No text. No screens.`
+    : `Smooth cinematic b-roll footage. Slow camera movement. Beautiful lighting. ${description.substring(0, 60)}. No text. No screens.`;
+  const retry3Path = await generateBrollVideo({
+    description: minimalDesc,
+    brandName, outputDir, segmentType, segmentChannel,
+    personaImageUrl: null,
+  });
+  if (retry3Path) return retry3Path;
+
   // Fallback to image generation (Gemini Imagen)
+  console.warn(`[B-Roll] All 3 Veo attempts failed for ${segmentType || 'broll'} segment. Falling back to static image.`);
   return await generateBrollImage({ description, brandName, outputDir });
 }
 

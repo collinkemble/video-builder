@@ -16,7 +16,7 @@ const { parseEditInstruction } = require('./src/pipeline/smartEditParser');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const BUILD_VERSION = 'v175-fix-stale-recovery';
+const BUILD_VERSION = 'v176-broll-retry-diag';
 
 // Health/version endpoint — verify which code is deployed
 app.get('/api/version', (req, res) => {
@@ -34,7 +34,7 @@ const origConsoleWarn = console.warn;
 console.log = function(...args) {
   origConsoleLog.apply(console, args);
   const msg = args.map(a => typeof a === 'string' ? a : JSON.stringify(a)).join(' ');
-  if (msg.includes('[Compositor]') || msg.includes('[SceneCapture]') || msg.includes('[Regen]')) {
+  if (msg.includes('[Compositor]') || msg.includes('[SceneCapture]') || msg.includes('[Regen]') || msg.includes('[B-Roll') || msg.includes('[Pipeline]') || msg.includes('[FFmpeg]')) {
     diagLogs.push({ t: Date.now(), msg });
     if (diagLogs.length > DIAG_LOG_MAX) diagLogs.shift();
   }
@@ -42,7 +42,7 @@ console.log = function(...args) {
 console.warn = function(...args) {
   origConsoleWarn.apply(console, args);
   const msg = args.map(a => typeof a === 'string' ? a : JSON.stringify(a)).join(' ');
-  if (msg.includes('[Compositor]') || msg.includes('[SceneCapture]') || msg.includes('[Regen]')) {
+  if (msg.includes('[Compositor]') || msg.includes('[SceneCapture]') || msg.includes('[Regen]') || msg.includes('[B-Roll') || msg.includes('[Pipeline]') || msg.includes('[FFmpeg]')) {
     diagLogs.push({ t: Date.now(), msg: `WARN: ${msg}` });
     if (diagLogs.length > DIAG_LOG_MAX) diagLogs.shift();
   }

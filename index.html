@@ -286,6 +286,15 @@
         </div>
       </div>
 
+      <!-- Inline editing instruction (visible when video is completed) -->
+      <div id="video-edit-instructions" class="hidden mb-6" style="background: #F0F7FF; border: 1px solid #B8D4E8; border-radius: 12px; padding: 16px 20px; display: flex; align-items: flex-start; gap: 12px;">
+        <span style="font-size: 20px; flex-shrink: 0; margin-top: 1px;">✏️</span>
+        <div>
+          <p style="font-size: 14px; font-weight: 600; color: #032D60; margin: 0 0 4px 0;">Need to change part of the video?</p>
+          <p style="font-size: 13px; color: #4b5563; line-height: 1.6; margin: 0;">Edit and regenerate individual sections inline below. Update the narration text, swap out b-roll descriptions, or regenerate specific scenes — all without rebuilding the entire video.</p>
+        </div>
+      </div>
+
       <!-- Pipeline Progress (shown during generation) -->
       <div id="pipeline-progress" class="hidden mb-6" style="background: white; border-radius: 12px; padding: 24px; box-shadow: 0 1px 3px rgba(0,0,0,0.08);">
         <p class="font-bold mb-3" style="font-size: 15px; color: #032D60;">Pipeline Progress</p>
@@ -468,6 +477,9 @@
             <button id="save-script-btn" onclick="saveNarrationScript()" class="hidden cursor-pointer" style="background: #16A34A; color: white; font-size: 12px; font-weight: 700; padding: 5px 12px; border-radius: 8px; border: none;">💾 Save Script</button>
             <button id="gen-script-btn" onclick="generateScriptOnly()" class="cursor-pointer" style="background: #7C3AED; color: white; font-size: 12px; font-weight: 700; padding: 5px 12px; border-radius: 8px; border: none;">📝 Generate Script</button>
           </div>
+        </div>
+        <div id="script-instructions" class="hidden" style="margin-bottom: 12px; padding: 12px 16px; background: #F9FAFB; border: 1px solid #E5E7EB; border-radius: 10px;">
+          <p style="font-size: 13px; color: #4b5563; line-height: 1.6; margin: 0;">Each row below is one segment of your video — intro, scene captures, b-roll transitions, and outro. The narration text is what the voiceover reads. B-roll descriptions control the AI-generated footage. Click the <strong style="background: #EDE9FE; padding: 1px 5px; border-radius: 4px; font-size: 11px; color: #7C3AED;">✎</strong> button on any segment to edit it, then regenerate just that section.</p>
         </div>
         <div id="script-empty" style="text-align: center; padding: 20px;">
           <p style="color: #999; font-size: 14px;">No narration script yet. Import scenes from a PocketSIC project to auto-generate one.</p>
@@ -1396,8 +1408,10 @@ async function viewVideo(id, skipPush) {
         durationLabel.textContent = 'Video ready';
       }
       downloadBar.classList.remove('hidden');
+      document.getElementById('video-edit-instructions').classList.remove('hidden');
     } else {
       playerWrap.classList.add('hidden');
+      document.getElementById('video-edit-instructions').classList.add('hidden');
       downloadBar.classList.add('hidden');
       player.src = '';
     }
@@ -1525,17 +1539,20 @@ function renderScript(script) {
   const addBtn = document.getElementById('add-segment-btn');
 
   const data = typeof script === 'string' ? JSON.parse(script || 'null') : script;
+  const scriptInstr = document.getElementById('script-instructions');
   if (!data || !data.segments || data.segments.length === 0) {
     container.classList.add('hidden');
     empty.classList.remove('hidden');
     addBtn.classList.add('hidden');
     document.getElementById('save-script-btn').classList.add('hidden');
+    if (scriptInstr) scriptInstr.classList.add('hidden');
     return;
   }
 
   empty.classList.add('hidden');
   container.classList.remove('hidden');
   addBtn.classList.remove('hidden');
+  if (scriptInstr) scriptInstr.classList.remove('hidden');
 
   // Update button text since script exists
   document.getElementById('gen-script-btn').textContent = '🔄 Regenerate Script';
@@ -1594,6 +1611,19 @@ function renderScript(script) {
     const typeColor = typeColors[seg.type] || '#888';
     const typeLabel = seg.type === 'scene' ? `scene${seg.channel ? ' — ' + esc(seg.channel) : ''}` : seg.type;
     const hasBroll = seg.visualType === 'broll' && seg.brollDescription;
+    const isSceneCapture = seg.visualType === 'scene_capture';
+    // Visible visual summary line (always shown)
+    const visualSummary = hasBroll
+      ? `<div style="margin-top: 6px; padding: 6px 10px; background: #F9FAFB; border: 1px solid #E5E7EB; border-radius: 8px; display: flex; align-items: flex-start; gap: 6px;">
+          <span style="font-size: 11px; color: #9CA3AF; flex-shrink: 0; margin-top: 1px;">🎬</span>
+          <span style="font-size: 12px; color: #6B7280; line-height: 1.4;"><strong style="color: #555;">B-Roll:</strong> ${esc(seg.brollDescription)}</span>
+        </div>`
+      : isSceneCapture
+        ? `<div style="margin-top: 6px; padding: 6px 10px; background: #F0F7FF; border: 1px solid #B8D4E8; border-radius: 8px; display: flex; align-items: center; gap: 6px;">
+          <span style="font-size: 11px; flex-shrink: 0;">🖥️</span>
+          <span style="font-size: 12px; color: #0176D3; line-height: 1.4;"><strong>Visual:</strong> Scene capture${seg.sceneId ? ' (Scene ' + seg.sceneId + ')' : ''}${seg.channel ? ' — ' + esc(seg.channel) : ''}</span>
+        </div>`
+        : '';
 
     // Expand panel for editing b-roll and per-section regeneration
     const expandPanel = canEdit ? `
@@ -1634,6 +1664,7 @@ function renderScript(script) {
         </span>
       </div>
       <textarea data-seg-index="${i}" oninput="onScriptSegmentEdit(${i})" rows="3" ${canEdit ? 'readonly' : ''} style="width: 100%; font-size: 14px; color: #333; line-height: 1.5; border: 1px solid #e5e7eb; border-radius: 8px; padding: 8px 10px; resize: vertical; font-family: inherit; ${canEdit ? 'background: #FAFAFA; cursor: default;' : ''}" ${canEdit ? `onfocus="this.blur()" onclick="promptEditSegment(${i})"` : ''}>${esc(seg.narration || '')}</textarea>
+      ${visualSummary}
       ${expandPanel}
     </div>`;
   }).join('');
@@ -2380,6 +2411,7 @@ async function startGeneration(force = false) {
   player.removeAttribute('src');
   player.load(); // Force release of old video resource
   document.getElementById('video-download-bar').classList.add('hidden');
+  document.getElementById('video-edit-instructions').classList.add('hidden');
 
   try {
     const resp = await fetch(`/api/videos/${currentVideoId}/generate`, {

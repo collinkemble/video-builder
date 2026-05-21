@@ -16,7 +16,7 @@ const { parseEditInstruction } = require('./src/pipeline/smartEditParser');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const BUILD_VERSION = 'v179-pipeline-queue-ui';
+const BUILD_VERSION = 'v180-multi-language';
 
 // Health/version endpoint — verify which code is deployed
 app.get('/api/version', (req, res) => {
@@ -487,7 +487,7 @@ app.get('/api/videos', async (req, res) => {
     const user = await getOrCreateUser(email);
     const videos = await query(
       `SELECT id, name, brand_name, pocketsic_project_name, status,
-              video_url, thumbnail_url, duration_actual, error,
+              video_url, thumbnail_url, duration_actual, error, language,
               public_enabled, shared_by, shared_at, created_at, updated_at
        FROM videos WHERE user_id = ? ORDER BY updated_at DESC`,
       [user.id]
@@ -605,7 +605,7 @@ app.get('/api/videos/:id', async (req, res) => {
 // POST /api/videos — create a new video
 app.post('/api/videos', async (req, res) => {
   try {
-    const { email, name, brandName, pocketsicProjectId, pocketsicProjectName, sceneData, voiceId, durationTarget, scriptWriterScriptId, scriptWriterScriptName, scriptWriterData } = req.body;
+    const { email, name, brandName, pocketsicProjectId, pocketsicProjectName, sceneData, voiceId, language, durationTarget, scriptWriterScriptId, scriptWriterScriptName, scriptWriterData } = req.body;
     if (!email || !name) {
       return res.status(400).json({ error: 'Missing required fields: email, name' });
     }
@@ -616,10 +616,11 @@ app.post('/api/videos', async (req, res) => {
     const parsedSceneData = sceneData ? (typeof sceneData === 'string' ? JSON.parse(sceneData) : sceneData) : null;
     const brandLogoUrl = parsedSceneData?.brand_logo_url || null;
 
+    const lang = (language || '').trim() || 'English';
     const result = await query(
       `INSERT INTO videos (user_id, name, brand_name, brand_logo_url, pocketsic_project_id, pocketsic_project_name,
-        scene_data, voice_id, duration_target, music_track_id, scriptwriter_script_id, scriptwriter_script_name, scriptwriter_data, status)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft')`,
+        scene_data, voice_id, language, duration_target, music_track_id, scriptwriter_script_id, scriptwriter_script_name, scriptwriter_data, status)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft')`,
       [
         user.id,
         name.trim(),
@@ -629,6 +630,7 @@ app.post('/api/videos', async (req, res) => {
         pocketsicProjectName || null,
         sceneData ? JSON.stringify(sceneData) : null,
         voiceId || 'default',
+        lang,
         durationTarget || 180,
         'corporate-technology',
         scriptWriterScriptId || null,
@@ -655,7 +657,7 @@ app.post('/api/videos', async (req, res) => {
 // PUT /api/videos/:id — update video settings
 app.put('/api/videos/:id', async (req, res) => {
   try {
-    const { email, name, brandName, voiceId, durationTarget, sceneData, narrationScript, musicTrackId, customInstructions } = req.body;
+    const { email, name, brandName, voiceId, language, durationTarget, sceneData, narrationScript, musicTrackId, customInstructions } = req.body;
     if (!email) return res.status(400).json({ error: 'Email required' });
 
     const user = await getOrCreateUser(email);
@@ -682,6 +684,10 @@ app.put('/api/videos/:id', async (req, res) => {
     if (voiceId !== undefined && voiceId !== null) {
       sets.push('voice_id = ?');
       params.push(voiceId === '' ? 'default' : voiceId);
+    }
+    if (language !== undefined) {
+      sets.push('language = ?');
+      params.push((language || '').trim() || 'English');
     }
     if (durationTarget !== undefined && durationTarget !== null) {
       sets.push('duration_target = ?');
@@ -833,6 +839,7 @@ app.post('/api/videos/:id/generate-script', async (req, res) => {
         content_summary: s.content_summary || s.description || s.name || '',
       })),
       durationTarget: video.duration_target || 180,
+      language: video.language || 'English',
       scriptWriterData,
     });
 
@@ -1012,7 +1019,8 @@ app.get('/api/videos/:id/status', async (req, res) => {
 // GET /api/voices — list available voices (with preview URLs)
 app.get('/api/voices', async (req, res) => {
   try {
-    const voices = await getAvailableVoices();
+    const language = req.query.language || 'English';
+    const voices = await getAvailableVoices(language);
     res.json({ voices });
   } catch (err) {
     console.error('Failed to get voices:', err);
@@ -1487,9 +1495,9 @@ async function createSharedVideoCopy(sourceVideo, senderEmail, recipientEmail) {
   const result = await query(
     `INSERT INTO videos (user_id, name, brand_name, brand_logo_url, pocketsic_project_id, pocketsic_project_name,
       scene_data, narration_script, voiceover_timestamps, video_url, thumbnail_url, voiceover_url,
-      voice_id, duration_target, duration_actual, music_track_id, scriptwriter_script_id, scriptwriter_script_name, scriptwriter_data,
+      voice_id, language, duration_target, duration_actual, music_track_id, scriptwriter_script_id, scriptwriter_script_name, scriptwriter_data,
       persona_image_url, status, shared_by, shared_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
     [
       recipientUser.id,
       sourceVideo.name,
@@ -1504,6 +1512,7 @@ async function createSharedVideoCopy(sourceVideo, senderEmail, recipientEmail) {
       sourceVideo.thumbnail_url,
       sourceVideo.voiceover_url,
       sourceVideo.voice_id,
+      sourceVideo.language || 'English',
       sourceVideo.duration_target,
       sourceVideo.duration_actual,
       sourceVideo.music_track_id || 'corporate-technology',
@@ -1605,7 +1614,7 @@ app.post('/api/videos/:id/share/confirm', async (req, res) => {
         await query(
           `UPDATE videos SET name = ?, brand_name = ?, brand_logo_url = ?, scene_data = ?, narration_script = ?,
             voiceover_timestamps = ?, video_url = ?, thumbnail_url = ?, voiceover_url = ?,
-            duration_actual = ?, status = ?, shared_by = ?, shared_at = NOW(), updated_at = NOW()
+            duration_actual = ?, language = ?, status = ?, shared_by = ?, shared_at = NOW(), updated_at = NOW()
            WHERE id = ?`,
           [
             sourceVideo.name,
@@ -1618,6 +1627,7 @@ app.post('/api/videos/:id/share/confirm', async (req, res) => {
             sourceVideo.thumbnail_url,
             sourceVideo.voiceover_url,
             sourceVideo.duration_actual,
+            sourceVideo.language || 'English',
             sourceVideo.status === 'completed' ? 'completed' : 'draft',
             email.toLowerCase(),
             copiedId,
@@ -2051,6 +2061,15 @@ async function start() {
   try {
     await migrate();
     console.log('✓ Database ready');
+
+    // Auto-add language column if missing (for existing databases)
+    try {
+      await query("SELECT language FROM videos LIMIT 1");
+    } catch (e) {
+      await query("ALTER TABLE videos ADD COLUMN language VARCHAR(50) DEFAULT 'English' AFTER voice_id");
+      console.log('✓ Added language column to videos table');
+    }
+
     await recoverStaleJobs();
   } catch (err) {
     console.error('⚠️  Database migration failed:', err.message);

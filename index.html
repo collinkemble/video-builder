@@ -387,6 +387,40 @@
             </div>
           </div>
           <div>
+            <label class="block text-xs font-bold mb-1" style="color: #032D60;">Output Language</label>
+            <select id="edit-language" class="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm" style="background: white;" onchange="onLanguageChange(); checkSettingsChanged();">
+              <option value="Arabic">Arabic</option>
+              <option value="Bulgarian">Bulgarian</option>
+              <option value="Chinese">Chinese</option>
+              <option value="Croatian">Croatian</option>
+              <option value="Czech">Czech</option>
+              <option value="Danish">Danish</option>
+              <option value="Dutch">Dutch</option>
+              <option value="English" selected>English</option>
+              <option value="Filipino">Filipino</option>
+              <option value="Finnish">Finnish</option>
+              <option value="French">French</option>
+              <option value="German">German</option>
+              <option value="Greek">Greek</option>
+              <option value="Hindi">Hindi</option>
+              <option value="Indonesian">Indonesian</option>
+              <option value="Italian">Italian</option>
+              <option value="Japanese">Japanese</option>
+              <option value="Korean">Korean</option>
+              <option value="Malay">Malay</option>
+              <option value="Polish">Polish</option>
+              <option value="Portuguese">Portuguese</option>
+              <option value="Romanian">Romanian</option>
+              <option value="Russian">Russian</option>
+              <option value="Slovak">Slovak</option>
+              <option value="Spanish">Spanish</option>
+              <option value="Swedish">Swedish</option>
+              <option value="Tamil">Tamil</option>
+              <option value="Turkish">Turkish</option>
+              <option value="Ukrainian">Ukrainian</option>
+            </select>
+          </div>
+          <div>
             <label class="block text-xs font-bold mb-1" style="color: #032D60;">Target Duration</label>
             <select id="edit-duration" class="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm">
               <option value="120">~2 minutes</option>
@@ -1416,6 +1450,9 @@ async function viewVideo(id, skipPush) {
     // Settings
     document.getElementById('edit-name').value = video.name || '';
     document.getElementById('edit-brand').value = video.brand_name || '';
+    document.getElementById('edit-language').value = video.language || 'English';
+    // Load voices for the selected language, then set the voice
+    await loadVoices(video.language || 'English');
     document.getElementById('edit-voice').value = video.voice_id || 'default';
     document.getElementById('edit-duration').value = String(video.duration_target || 180);
     document.getElementById('edit-music').value = video.music_track_id || 'corporate-technology';
@@ -1444,6 +1481,7 @@ async function viewVideo(id, skipPush) {
     window._origSettings = {
       name: video.name || '',
       brand: video.brand_name || '',
+      language: video.language || 'English',
       voice: video.voice_id || 'default',
       duration: String(video.duration_target || 180),
       music: video.music_track_id || 'corporate-technology',
@@ -2562,7 +2600,7 @@ async function startGeneration(force = false) {
 function checkSettingsChanged() {
   const orig = window._origSettings;
   if (!orig) return;
-  let changed = ['name', 'brand', 'voice', 'duration', 'music', 'custom-instructions', 'description'].some(f => {
+  let changed = ['name', 'brand', 'language', 'voice', 'duration', 'music', 'custom-instructions', 'description'].some(f => {
     const el = document.getElementById('edit-' + f);
     return el && el.value !== orig[f];
   });
@@ -2596,6 +2634,7 @@ async function saveVideoSettings() {
   try {
     const name = document.getElementById('edit-name').value.trim();
     const brandName = document.getElementById('edit-brand').value.trim();
+    const language = document.getElementById('edit-language').value;
     const voiceId = document.getElementById('edit-voice').value;
     const durationTarget = parseInt(document.getElementById('edit-duration').value);
     const musicTrackId = document.getElementById('edit-music').value;
@@ -2610,7 +2649,7 @@ async function saveVideoSettings() {
     if (!name) { alert('Name is required.'); btn.textContent = '💾 Save Settings'; btn.disabled = false; return; }
 
     const email = document.getElementById('user-email').textContent;
-    const body = { email, name, brandName, voiceId, durationTarget, musicTrackId, customInstructions, description, publicEnabled };
+    const body = { email, name, brandName, language, voiceId, durationTarget, musicTrackId, customInstructions, description, publicEnabled };
     // Only send password fields if password protection is enabled
     if (passwordEnabled) {
       body.publicPassword = publicPassword;
@@ -2625,7 +2664,7 @@ async function saveVideoSettings() {
     });
     if (!resp.ok) throw new Error('Save failed');
 
-    window._origSettings = { name, brand: brandName, voice: voiceId, duration: String(durationTarget), music: musicTrackId, 'custom-instructions': customInstructions, description };
+    window._origSettings = { name, brand: brandName, language, voice: voiceId, duration: String(durationTarget), music: musicTrackId, 'custom-instructions': customInstructions, description };
     document.getElementById('detail-breadcrumb').textContent = name;
     hideSaveSettingsBar();
     btn.textContent = '✓ Saved!';
@@ -2637,7 +2676,7 @@ async function saveVideoSettings() {
   }
 }
 
-['edit-name', 'edit-brand', 'edit-voice', 'edit-duration', 'edit-music', 'edit-custom-instructions', 'edit-description'].forEach(id => {
+['edit-name', 'edit-brand', 'edit-language', 'edit-voice', 'edit-duration', 'edit-music', 'edit-custom-instructions', 'edit-description'].forEach(id => {
   const el = document.getElementById(id);
   if (el) {
     el.addEventListener('input', checkSettingsChanged);
@@ -3159,20 +3198,39 @@ let voicePreviewUrls = {};  // voiceId → preview_url
 let voicePreviewAudio = null;  // current Audio instance
 let voicePreviewPlaying = false;
 
-async function loadVoices() {
+async function loadVoices(language) {
   try {
-    const resp = await fetch('/api/voices');
+    const lang = language || document.getElementById('edit-language')?.value || 'English';
+    const resp = await fetch(`/api/voices?language=${encodeURIComponent(lang)}`);
     const data = await resp.json();
     const select = document.getElementById('edit-voice');
-    select.innerHTML = '<option value="default">Default (Matilda)</option>';
+    const currentVoice = select.value; // preserve selection if possible
+    select.innerHTML = '';
     voicePreviewUrls = {};
-    (data.voices || []).forEach(v => {
-      select.innerHTML += `<option value="${esc(v.id)}">${esc(v.name)} — ${esc(v.description)}</option>`;
+
+    const voices = data.voices || [];
+    // First voice with recommended flag becomes the default
+    const recommended = voices.find(v => v.recommended);
+    const defaultVoice = recommended || voices.find(v => v.id === 'XrExE9yKIg1WjnnlVkGX') || voices[0];
+    const defaultId = defaultVoice ? defaultVoice.id : 'XrExE9yKIg1WjnnlVkGX';
+    const defaultName = defaultVoice ? defaultVoice.name : 'Matilda';
+
+    select.innerHTML = `<option value="default">Default (${esc(defaultName)})</option>`;
+    voices.forEach(v => {
+      const label = v.recommended ? `⭐ ${esc(v.name)} — ${esc(v.description)}` : `${esc(v.name)} — ${esc(v.description)}`;
+      select.innerHTML += `<option value="${esc(v.id)}">${label}</option>`;
       if (v.preview_url) voicePreviewUrls[v.id] = v.preview_url;
     });
-    // Map "default" to Matilda's preview
-    if (voicePreviewUrls['XrExE9yKIg1WjnnlVkGX']) {
-      voicePreviewUrls['default'] = voicePreviewUrls['XrExE9yKIg1WjnnlVkGX'];
+    // Map "default" to the recommended/first voice's preview
+    if (defaultId && voicePreviewUrls[defaultId]) {
+      voicePreviewUrls['default'] = voicePreviewUrls[defaultId];
+    }
+
+    // Try to restore previous selection, fall back to default
+    if (currentVoice && [...select.options].some(o => o.value === currentVoice)) {
+      select.value = currentVoice;
+    } else {
+      select.value = 'default';
     }
     updatePreviewButton();
   } catch (err) { console.log('Failed to load voices:', err.message); }
@@ -3235,6 +3293,12 @@ document.getElementById('edit-voice')?.addEventListener('change', () => {
   stopVoicePreview();
   updatePreviewButton();
 });
+
+// When language changes, reload the voice list for that language
+function onLanguageChange() {
+  const language = document.getElementById('edit-language').value;
+  loadVoices(language);
+}
 
 // ═══════════════════════════════════════════════
 // Background Music & Music Preview

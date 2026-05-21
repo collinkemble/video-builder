@@ -123,10 +123,13 @@ async function generateVoiceover({ segments, voiceId = 'XrExE9yKIg1WjnnlVkGX', o
 /**
  * Curated voice list — IDs and metadata.
  * preview_url is fetched on-demand from ElevenLabs.
+ *
+ * All voices support all 29 Multilingual v2 languages — the language is determined
+ * by the text, not the voice. However, some voices have accents that pair better
+ * with specific languages, so we add bonus voices per language.
  */
-// Curated from ElevenLabs premade voices (verified April 2026).
-// These are all available on the public /v1/voices endpoint with preview_url.
-const CURATED_VOICES = [
+// Core voices — available for every language (verified April 2026).
+const CORE_VOICES = [
   { id: 'pNInz6obpgDQGcFmaJgB', name: 'Adam', description: 'Dominant, firm male narrator', style: 'deep' },
   { id: 'EXAVITQu4vr4xnSDxMaL', name: 'Sarah', description: 'Mature, reassuring, confident', style: 'warm' },
   { id: 'onwK4e9ZLuTAKqWW03F9', name: 'Daniel', description: 'Steady broadcaster', style: 'conversational' },
@@ -136,29 +139,61 @@ const CURATED_VOICES = [
   { id: 'pFZP5JQG7iQjIQuC4Bku', name: 'Lily', description: 'Velvety actress', style: 'warm' },
 ];
 
+// Bonus voices for specific languages — these have accents that pair well
+// with the target language, producing more natural-sounding results.
+// They are PREPENDED to the voice list so they appear first as recommended options.
+const LANGUAGE_BONUS_VOICES = {
+  Italian:  [{ id: 'zcAOhNBS3c14rBihAFp1', name: 'Giovanni', description: 'Italian-accented, young male', style: 'warm', recommended: true }],
+  Swedish:  [{ id: 'XB0fDUnXU5powFXDhCwa', name: 'Charlotte', description: 'Swedish-accented, sophisticated female', style: 'warm', recommended: true }],
+  French:   [{ id: 'JBFqnCBsd6RMkjVDRZzb', name: 'George', description: 'Raspy British, strong in French', style: 'deep', recommended: true }],
+  German:   [{ id: 'pMsXgVXv3BLzUgSXRplE', name: 'Serena', description: 'Pleasant, clear female — great for German', style: 'warm', recommended: true }],
+  Spanish:  [{ id: 'ThT5KcBeYPX3keUQqHPh', name: 'Dorothy', description: 'Pleasant British female — strong in Spanish', style: 'warm', recommended: true }],
+  Portuguese: [{ id: 'ThT5KcBeYPX3keUQqHPh', name: 'Dorothy', description: 'Pleasant British female — strong in Portuguese', style: 'warm', recommended: true }],
+  Japanese: [{ id: 'JBFqnCBsd6RMkjVDRZzb', name: 'George', description: 'Versatile multilingual male', style: 'deep', recommended: true }],
+  Chinese:  [{ id: 'JBFqnCBsd6RMkjVDRZzb', name: 'George', description: 'Versatile multilingual male', style: 'deep', recommended: true }],
+  Korean:   [{ id: 'JBFqnCBsd6RMkjVDRZzb', name: 'George', description: 'Versatile multilingual male', style: 'deep', recommended: true }],
+  Hindi:    [{ id: 'JBFqnCBsd6RMkjVDRZzb', name: 'George', description: 'Versatile multilingual male', style: 'deep', recommended: true }],
+  Arabic:   [{ id: 'JBFqnCBsd6RMkjVDRZzb', name: 'George', description: 'Versatile multilingual male', style: 'deep', recommended: true }],
+  Dutch:    [{ id: 'XB0fDUnXU5powFXDhCwa', name: 'Charlotte', description: 'Swedish-accented, close to Dutch', style: 'warm', recommended: true }],
+  Polish:   [{ id: 'IKne3meq5aSn9XLyUdCD', name: 'Charlie', description: 'Casual Australian — strong in Polish', style: 'conversational', recommended: true }],
+  Russian:  [{ id: 'JBFqnCBsd6RMkjVDRZzb', name: 'George', description: 'Versatile multilingual male', style: 'deep', recommended: true }],
+  Turkish:  [{ id: 'JBFqnCBsd6RMkjVDRZzb', name: 'George', description: 'Versatile multilingual male', style: 'deep', recommended: true }],
+};
+
+/**
+ * Get the curated voice list for a given language.
+ * Returns bonus voices (if any) prepended to the core list.
+ */
+function getVoicesForLanguage(language = 'English') {
+  const bonus = LANGUAGE_BONUS_VOICES[language] || [];
+  // Deduplicate: if a bonus voice ID is already in CORE_VOICES, skip it
+  const coreIds = new Set(CORE_VOICES.map(v => v.id));
+  const uniqueBonus = bonus.filter(v => !coreIds.has(v.id));
+  return [...uniqueBonus, ...CORE_VOICES];
+}
+
 // Cache for preview URLs (populated on first request, lives for process lifetime)
-let cachedVoicesWithPreviews = null;
+// We cache the full ElevenLabs voice map (all voices) and build per-language lists on demand.
+let cachedElevenLabsVoiceMap = null;
 let cacheTimestamp = 0;
 const CACHE_TTL = 60 * 60 * 1000; // 1 hour
 
 /**
- * Get list of available voices, enriched with preview_url from ElevenLabs.
- * Falls back to voices without preview URLs if the API call fails.
+ * Fetch the full ElevenLabs voice map (id → voice object) with preview URLs.
+ * Cached for 1 hour.
  */
-async function getAvailableVoices() {
-  // Return cached if fresh
-  if (cachedVoicesWithPreviews && (Date.now() - cacheTimestamp < CACHE_TTL)) {
-    return cachedVoicesWithPreviews;
+async function fetchVoiceMap() {
+  if (cachedElevenLabsVoiceMap && (Date.now() - cacheTimestamp < CACHE_TTL)) {
+    return cachedElevenLabsVoiceMap;
   }
 
   const apiKey = process.env.ELEVENLABS_API_KEY;
   if (!apiKey) {
     console.warn('[Voices] No ELEVENLABS_API_KEY — returning voices without previews');
-    return CURATED_VOICES;
+    return {};
   }
 
   try {
-    // Fetch all voices from ElevenLabs (includes premade voices)
     const response = await fetch('https://api.elevenlabs.io/v1/voices', {
       headers: { 'xi-api-key': apiKey },
     });
@@ -173,22 +208,35 @@ async function getAvailableVoices() {
       voiceMap[v.voice_id] = v;
     }
 
-    // Enrich curated voices with preview URLs
-    cachedVoicesWithPreviews = CURATED_VOICES.map(cv => {
-      const elVoice = voiceMap[cv.id];
-      return {
-        ...cv,
-        preview_url: elVoice?.preview_url || null,
-      };
-    });
-
+    cachedElevenLabsVoiceMap = voiceMap;
     cacheTimestamp = Date.now();
-    console.log(`[Voices] Fetched preview URLs for ${cachedVoicesWithPreviews.filter(v => v.preview_url).length}/${CURATED_VOICES.length} voices`);
-    return cachedVoicesWithPreviews;
+    console.log(`[Voices] Cached ${Object.keys(voiceMap).length} voices from ElevenLabs`);
+    return voiceMap;
   } catch (err) {
-    console.warn(`[Voices] Failed to fetch preview URLs: ${err.message}. Using voices without previews.`);
-    return CURATED_VOICES;
+    console.warn(`[Voices] Failed to fetch voice map: ${err.message}`);
+    return cachedElevenLabsVoiceMap || {};
   }
+}
+
+/**
+ * Get list of available voices for a language, enriched with preview_url from ElevenLabs.
+ * Falls back to voices without preview URLs if the API call fails.
+ * @param {string} [language='English'] - Language to get voices for
+ */
+async function getAvailableVoices(language = 'English') {
+  const voiceMap = await fetchVoiceMap();
+  const voices = getVoicesForLanguage(language);
+
+  // Enrich with preview URLs
+  const enriched = voices.map(cv => {
+    const elVoice = voiceMap[cv.id];
+    return {
+      ...cv,
+      preview_url: elVoice?.preview_url || null,
+    };
+  });
+
+  return enriched;
 }
 
 module.exports = { generateVoiceover, getAvailableVoices };

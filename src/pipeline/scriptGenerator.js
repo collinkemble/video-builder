@@ -22,7 +22,7 @@ function getGenAI() {
  * @param {number} params.durationTarget - Target duration in seconds (default 180)
  * @returns {Promise<object>} Structured narration timeline
  */
-async function generateScript({ brandName, brandDescription, personaName, personaDescription, synopsis, scenes, durationTarget = 180, scriptWriterData = null, customInstructions = '' }) {
+async function generateScript({ brandName, brandDescription, personaName, personaDescription, synopsis, scenes, durationTarget = 180, language = 'English', scriptWriterData = null, customInstructions = '' }) {
   const ai = getGenAI();
   const model = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
 
@@ -173,9 +173,16 @@ IMPORTANT: Every PocketSIC scene MUST appear exactly once as a "scene" type segm
 
 CRITICAL ORDERING RULE: Scene segments MUST appear in the EXACT same order as the SCENES list above. Do NOT reorder scenes. The scenes are already in the correct customer journey sequence — scene 1 happens first, scene 2 happens second, etc. You may insert b-roll transitions BETWEEN scenes, but never swap or rearrange the scenes themselves.`;
 
+  // Inject language instruction for non-English videos
+  const langSuffix = language && language !== 'English'
+    ? `\n\nCRITICAL OUTPUT LANGUAGE REQUIREMENT: You MUST write the ENTIRE output in ${language}. ALL narration text, brollDescription values, and the title MUST be written in ${language}. The JSON keys must remain in English, but ALL STRING VALUES must be in ${language}. This is non-negotiable.`
+    : '';
+
+  const fullPrompt = prompt + langSuffix;
+
   const response = await ai.models.generateContent({
     model,
-    contents: prompt,
+    contents: fullPrompt,
     config: {
       responseMimeType: 'application/json',
       temperature: 0.7,

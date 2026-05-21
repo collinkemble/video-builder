@@ -828,11 +828,11 @@
       </div>
 
       <div class="mb-4">
-        <label class="block text-xs font-bold mb-1" style="color: #032D60;">PocketSIC Project</label>
+        <label class="block text-xs font-bold mb-1" style="color: #032D60;">PocketSIC Project <span style="color: #ea001e;">*</span></label>
         <div id="project-picker-loading" class="hidden text-sm text-gray-400 py-2">Loading projects...</div>
         <div id="project-picker-error" class="hidden text-sm py-2" style="color: #C23934;"></div>
         <select id="new-video-project" class="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm">
-          <option value="">— Select a project (optional) —</option>
+          <option value="">— Select a project —</option>
         </select>
         <p class="mt-1 text-xs text-gray-400">Import scenes from PocketSIC to capture in the video.</p>
       </div>
@@ -3329,6 +3329,11 @@ async function createNewVideo() {
 
   if (!name) {
     errorEl.textContent = 'Video name is required.';
+    errorEl.classList.remove('hidden');
+    return;
+  }
+  if (!projectId) {
+    errorEl.textContent = 'Please select a PocketSIC project.';
     errorEl.classList.remove('hidden');
     return;
   }

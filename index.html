@@ -125,6 +125,7 @@
     .status-scripting, .status-voiceover, .status-capturing, .status-compositing, .status-uploading {
       background: #FEF3C7; color: #92400E;
     }
+    .status-queued { background: #EDE9FE; color: #5B21B6; }
     .status-completed { background: #D1FAE5; color: #065F46; }
     .status-failed { background: #FEE2E2; color: #991B1B; }
     .pipeline-step { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-bottom: 1px solid #f0f0f0; }
@@ -1228,7 +1229,7 @@ function showToast(msg, duration = 3000) {
 function fmtDate(d) { return d ? new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—'; }
 
 function statusText(s) {
-  const map = { draft: 'Draft', scripting: 'Scripting', voiceover: 'Voiceover', capturing: 'Capturing', compositing: 'Compositing', uploading: 'Uploading', completed: 'Completed', failed: 'Failed' };
+  const map = { draft: 'Draft', queued: 'Queued', scripting: 'Scripting', voiceover: 'Voiceover', capturing: 'Capturing', compositing: 'Compositing', uploading: 'Uploading', completed: 'Completed', failed: 'Failed' };
   return map[s] || s;
 }
 
@@ -1326,7 +1327,7 @@ async function loadVideos() {
 
     grid.innerHTML = videos.map((v) => {
       const safeName = esc(v.name).replace(/'/g, "\\'");
-      const isProcessing = ['scripting','voiceover','capturing','compositing','uploading'].includes(v.status);
+      const isProcessing = ['queued','scripting','voiceover','capturing','compositing','uploading'].includes(v.status);
       const thumbStyle = v.thumbnail_url
         ? `background-image: url('${v.thumbnail_url}'); background-size: cover; background-position: center;`
         : 'background: linear-gradient(135deg, #032D60, #0176D3);';
@@ -1480,9 +1481,9 @@ async function viewVideo(id, skipPush) {
 
     // Generate button state — always clickable so user can force-restart stuck pipelines
     const genBtn = document.getElementById('generate-btn');
-    const isProcessing = ['scripting','voiceover','capturing','compositing','uploading'].includes(video.status);
+    const isProcessing = ['queued','scripting','voiceover','capturing','compositing','uploading'].includes(video.status);
     genBtn.disabled = false;
-    genBtn.textContent = isProcessing ? '⚠️ Pipeline Running (click to restart)' : (video.status === 'completed' ? '🔄 Regenerate All Sections' : '🎬 Generate Video');
+    genBtn.textContent = video.status === 'queued' ? '⏳ Queued (click to restart)' : (isProcessing ? '⚠️ Pipeline Running (click to restart)' : (video.status === 'completed' ? '🔄 Regenerate All Sections' : '🎬 Generate Video'));
 
     // Scenes
     renderScenes(video.scene_data);
@@ -2403,7 +2404,16 @@ async function pollStatus(videoId) {
     if (video) {
       const badge = document.getElementById('detail-status-badge');
       badge.className = 'status-badge status-' + video.status;
-      badge.textContent = statusText(video.status);
+
+      // Show queue position if queued
+      if (video.status === 'queued' && data.queuePosition !== undefined && data.queuePosition !== null) {
+        const ahead = data.queuePosition; // 1-based position, so position 1 = 1 ahead
+        badge.textContent = `Queued — #${ahead} in line`;
+        renderQueueBanner(ahead, data.queueLength || 0);
+      } else {
+        badge.textContent = statusText(video.status);
+        hideQueueBanner();
+      }
 
       if (video.status === 'completed' || video.status === 'failed') {
         stopStatusPolling();
@@ -2411,6 +2421,29 @@ async function pollStatus(videoId) {
       }
     }
   } catch (err) { console.log('Poll failed:', err.message); }
+}
+
+function renderQueueBanner(position, queueLength) {
+  const progressEl = document.getElementById('pipeline-progress');
+  const stepsEl = document.getElementById('pipeline-steps');
+  progressEl.classList.remove('hidden');
+  const ahead = position; // position 1 = 1 video ahead
+  const plural = ahead === 1 ? '' : 's';
+  stepsEl.innerHTML = `
+    <div style="text-align: center; padding: 20px 0;">
+      <div style="font-size: 40px; margin-bottom: 12px;">⏳</div>
+      <div style="font-size: 18px; font-weight: 700; color: #5B21B6; margin-bottom: 6px;">
+        You're #${position} in line
+      </div>
+      <div style="font-size: 14px; color: #6B7280;">
+        ${ahead} video${plural} ahead of you — your video will start generating automatically.
+      </div>
+    </div>`;
+}
+
+function hideQueueBanner() {
+  // Queue banner is just rendered inside pipeline-steps, so normal
+  // renderPipelineSteps will overwrite it when jobs arrive.
 }
 
 function renderPipelineSteps(jobs) {

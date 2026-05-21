@@ -10,6 +10,76 @@ const { generateAllBroll } = require('./brollGenerator');
 const { composeVideo, applyIntroLogoOverlay } = require('./videoCompositor');
 const { uploadVideoAssets, uploadSegmentClips } = require('../utils/r2');
 
+// ── Pipeline Queue ──
+// Only one video pipeline runs at a time to prevent memory exhaustion.
+// Additional requests queue up and run sequentially.
+let pipelineRunning = false;
+let _currentVideoId = null;
+const pipelineQueue = [];
+
+function enqueuePipeline(videoId, userId, options) {
+  return new Promise((resolve, reject) => {
+    const task = { videoId, userId, options, resolve, reject };
+
+    if (!pipelineRunning) {
+      // No pipeline running — start immediately
+      pipelineRunning = true;
+      console.log(`[Pipeline Queue] Starting pipeline for video ${videoId} (no queue)`);
+      _runPipelineNow(task);
+    } else {
+      // Queue it
+      pipelineQueue.push(task);
+      console.log(`[Pipeline Queue] Video ${videoId} queued (position ${pipelineQueue.length}). Waiting for current pipeline to finish.`);
+      // Update video status to indicate it's queued
+      query("UPDATE videos SET status = 'queued' WHERE id = ?", [videoId]).catch(() => {});
+    }
+  });
+}
+
+async function _runPipelineNow(task) {
+  _currentVideoId = task.videoId;
+  try {
+    const result = await _runPipelineImpl(task.videoId, task.userId, task.options);
+    task.resolve(result);
+  } catch (err) {
+    task.reject(err);
+  } finally {
+    _currentVideoId = null;
+    // Process next in queue
+    if (pipelineQueue.length > 0) {
+      const next = pipelineQueue.shift();
+      console.log(`[Pipeline Queue] Starting next pipeline: video ${next.videoId} (${pipelineQueue.length} remaining in queue)`);
+      _runPipelineNow(next);
+    } else {
+      pipelineRunning = false;
+      console.log('[Pipeline Queue] Queue empty — pipeline idle.');
+    }
+  }
+}
+
+/**
+ * Get queue info for a specific video (or general queue status).
+ * @param {number} [videoId] — If provided, returns position for this video
+ * @returns {{ running: number|null, queueLength: number, position: number|null }}
+ */
+function getQueueInfo(videoId) {
+  const queueLength = pipelineQueue.length;
+
+  let position = null;
+  if (videoId) {
+    if (pipelineRunning && _currentVideoId === videoId) {
+      position = 0; // Currently running
+    } else {
+      const idx = pipelineQueue.findIndex(t => t.videoId === videoId);
+      if (idx >= 0) {
+        position = idx + 1; // 1-based queue position
+      }
+    }
+  }
+
+  return { running: _currentVideoId, queueLength, position };
+}
+
 /**
  * Run the full video generation pipeline for a video record.
  *
@@ -29,6 +99,10 @@ const { uploadVideoAssets, uploadSegmentClips } = require('../utils/r2');
  * @returns {Promise<object>} Final video record
  */
 async function runPipeline(videoId, userId, options = {}) {
+  return enqueuePipeline(videoId, userId, options);
+}
+
+async function _runPipelineImpl(videoId, userId, options = {}) {
   const workDir = path.join(os.tmpdir(), `vb_${videoId}_${Date.now()}`);
   fs.mkdirSync(workDir, { recursive: true });
 
@@ -1102,4 +1176,4 @@ async function regenerateSegments(videoId, userId, changes) {
   }
 }
 
-module.exports = { runPipeline, getPipelineStatus, regenerateSegments };
+module.exports = { runPipeline, getPipelineStatus, regenerateSegments, getQueueInfo };

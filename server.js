@@ -8,7 +8,7 @@ const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const { query } = require('./src/db/connection');
 const { migrate } = require('./src/db/migrate');
-const { runPipeline, getPipelineStatus, regenerateSegments } = require('./src/pipeline/orchestrator');
+const { runPipeline, getPipelineStatus, regenerateSegments, getQueueInfo } = require('./src/pipeline/orchestrator');
 const { generateScript } = require('./src/pipeline/scriptGenerator');
 const { getAvailableVoices } = require('./src/pipeline/voiceoverGenerator');
 const { deleteVideoAssets } = require('./src/utils/r2');
@@ -16,7 +16,7 @@ const { parseEditInstruction } = require('./src/pipeline/smartEditParser');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const BUILD_VERSION = 'v178-ffmpeg-memory-fix';
+const BUILD_VERSION = 'v179-pipeline-queue-ui';
 
 // Health/version endpoint — verify which code is deployed
 app.get('/api/version', (req, res) => {
@@ -993,6 +993,13 @@ app.get('/api/videos/:id/status', async (req, res) => {
 
     if (!status) {
       return res.status(404).json({ error: 'Video not found' });
+    }
+
+    // Include queue position if video is queued
+    const queueInfo = getQueueInfo(parseInt(req.params.id));
+    if (queueInfo.position !== null) {
+      status.queuePosition = queueInfo.position;
+      status.queueLength = queueInfo.queueLength;
     }
 
     res.json(status);
@@ -2019,7 +2026,7 @@ async function checkVeoCapability() {
 async function recoverStaleJobs() {
   try {
     const stale = await query(
-      "SELECT id, name, status FROM videos WHERE status IN ('scripting', 'voiceover', 'capturing', 'compositing', 'uploading')"
+      "SELECT id, name, status FROM videos WHERE status IN ('queued', 'scripting', 'voiceover', 'capturing', 'compositing', 'uploading')"
     );
     if (stale.length > 0) {
       console.log(`[Recovery] Found ${stale.length} stuck video(s) — marking as failed so they can be retried.`);

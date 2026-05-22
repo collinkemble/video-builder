@@ -14,9 +14,21 @@ const { getAvailableVoices } = require('./src/pipeline/voiceoverGenerator');
 const { deleteVideoAssets } = require('./src/utils/r2');
 const { parseEditInstruction } = require('./src/pipeline/smartEditParser');
 
+const fs = require('fs');
+
 const app = express();
 const PORT = process.env.PORT || 3000;
 const BUILD_VERSION = 'v180-multi-language';
+
+// ─── Staging Banner ───
+const STAGING_BANNER_HTML = '<div style="background:#f59e0b;color:#000;text-align:center;padding:4px;font-size:12px;font-weight:700;position:fixed;top:0;left:0;right:0;z-index:99999;">⚠️ STAGING ENVIRONMENT</div><div style="height:28px;"></div>';
+let spaHtml = '';
+try {
+  spaHtml = fs.readFileSync(path.join(__dirname, 'index.html'), 'utf-8');
+  if (process.env.STAGING_BANNER === 'true') {
+    spaHtml = spaHtml.replace(/<body([^>]*)>/, '<body$1>' + STAGING_BANNER_HTML);
+  }
+} catch (e) { /* index.html loaded later via sendFile fallback */ }
 
 // Health/version endpoint — verify which code is deployed
 app.get('/api/version', (req, res) => {
@@ -2073,7 +2085,12 @@ app.get('/{*splat}', (req, res) => {
   res.setHeader('Surrogate-Control', 'no-store');
   res.setHeader('CDN-Cache-Control', 'no-store');
   res.setHeader('Cloudflare-CDN-Cache-Control', 'no-store');
-  res.sendFile(path.join(__dirname, 'index.html'));
+  if (spaHtml) {
+    res.set('Content-Type', 'text/html');
+    res.send(spaHtml);
+  } else {
+    res.sendFile(path.join(__dirname, 'index.html'));
+  }
 });
 
 // ═══════════════════════════════════════════════

@@ -3277,19 +3277,90 @@ function updatePreviewButton() {
   const btn = document.getElementById('voice-preview-btn');
   if (!select || !btn) return;
   const voiceId = select.value;
-  const hasPreview = !!voicePreviewUrls[voiceId];
+  const language = document.getElementById('edit-language')?.value || 'English';
+  // For non-English, we can always generate a preview on demand
+  const hasPreview = language !== 'English' || !!voicePreviewUrls[voiceId];
   btn.style.opacity = hasPreview ? '1' : '0.35';
   btn.style.pointerEvents = hasPreview ? 'auto' : 'none';
   btn.title = hasPreview ? 'Preview voice' : 'No preview available';
 }
 
-function toggleVoicePreview() {
+let voicePreviewLoading = false;
+
+async function toggleVoicePreview() {
   if (voicePreviewPlaying) {
     stopVoicePreview();
     return;
   }
+  if (voicePreviewLoading) return;
+
   const select = document.getElementById('edit-voice');
   const voiceId = select.value;
+  const language = document.getElementById('edit-language')?.value || 'English';
+
+  // For non-English, generate a TTS preview in the selected language
+  if (language !== 'English') {
+    voicePreviewLoading = true;
+    const btn = document.getElementById('voice-preview-btn');
+    btn.style.opacity = '0.5';
+    btn.title = 'Generating preview...';
+
+    try {
+      // Resolve "default" to the actual voice ID
+      let actualVoiceId = voiceId;
+      if (voiceId === 'default') {
+        const opts = [...select.options];
+        const firstReal = opts.find(o => o.value !== 'default');
+        actualVoiceId = firstReal ? firstReal.value : voiceId;
+      }
+
+      const resp = await fetch(`/api/voices/${encodeURIComponent(actualVoiceId)}/preview`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ language }),
+      });
+
+      if (!resp.ok) throw new Error('Preview generation failed');
+
+      const contentType = resp.headers.get('content-type') || '';
+      if (contentType.includes('audio')) {
+        // Direct audio stream
+        const blob = await resp.blob();
+        const blobUrl = URL.createObjectURL(blob);
+        voicePreviewAudio = new Audio(blobUrl);
+        voicePreviewAudio.volume = 0.8;
+        voicePreviewPlaying = true;
+        setPreviewIcon(true);
+        voicePreviewAudio.play().catch(err => {
+          console.warn('Voice preview playback failed:', err.message);
+          stopVoicePreview();
+        });
+        voicePreviewAudio.addEventListener('ended', () => { stopVoicePreview(); URL.revokeObjectURL(blobUrl); });
+        voicePreviewAudio.addEventListener('error', () => { stopVoicePreview(); URL.revokeObjectURL(blobUrl); });
+      } else {
+        // JSON with redirect URL (for English fallback)
+        const data = await resp.json();
+        if (data.redirect) {
+          voicePreviewAudio = new Audio(data.redirect);
+          voicePreviewAudio.volume = 0.8;
+          voicePreviewPlaying = true;
+          setPreviewIcon(true);
+          voicePreviewAudio.play().catch(() => stopVoicePreview());
+          voicePreviewAudio.addEventListener('ended', () => stopVoicePreview());
+          voicePreviewAudio.addEventListener('error', () => stopVoicePreview());
+        }
+      }
+    } catch (err) {
+      console.warn('Voice preview generation failed:', err.message);
+    } finally {
+      voicePreviewLoading = false;
+      btn.style.opacity = '1';
+      btn.title = 'Preview voice';
+    }
+    return;
+  }
+
+  // English — use static preview URL
   const url = voicePreviewUrls[voiceId];
   if (!url) return;
 
@@ -3333,6 +3404,7 @@ document.getElementById('edit-voice')?.addEventListener('change', () => {
 // When language changes, reload the voice list for that language
 function onLanguageChange() {
   const language = document.getElementById('edit-language').value;
+  stopVoicePreview();
   loadVoices(language);
 }
 

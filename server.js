@@ -1028,6 +1028,122 @@ app.get('/api/voices', async (req, res) => {
   }
 });
 
+// POST /api/voices/:voiceId/preview — generate a short TTS sample in a given language
+// Returns audio/mpeg stream. Cached in-memory for 1 hour to avoid repeated API calls.
+const voicePreviewCache = new Map(); // key: `${voiceId}:${language}` → { buffer, timestamp }
+const PREVIEW_CACHE_TTL = 60 * 60 * 1000; // 1 hour
+
+const PREVIEW_PHRASES = {
+  Arabic: 'مرحبًا، هذا عرض توضيحي لصوتي. أتمنى أن يعجبكم.',
+  Bulgarian: 'Здравейте, това е демонстрация на моя глас. Надявам се да ви хареса.',
+  Chinese: '你好，这是我的语音演示。希望你喜欢。',
+  Croatian: 'Pozdrav, ovo je demonstracija mog glasa. Nadam se da će vam se svidjeti.',
+  Czech: 'Dobrý den, toto je ukázka mého hlasu. Doufám, že se vám bude líbit.',
+  Danish: 'Hej, dette er en demonstration af min stemme. Jeg håber, I kan lide den.',
+  Dutch: 'Hallo, dit is een demonstratie van mijn stem. Ik hoop dat het u bevalt.',
+  Filipino: 'Kumusta, ito ay isang demonstrasyon ng aking boses. Sana ay magustuhan ninyo.',
+  Finnish: 'Hei, tämä on ääneni esittely. Toivottavasti pidätte siitä.',
+  French: 'Bonjour, ceci est une démonstration de ma voix. J\'espère qu\'elle vous plaira.',
+  German: 'Hallo, dies ist eine Demonstration meiner Stimme. Ich hoffe, sie gefällt Ihnen.',
+  Greek: 'Γεια σας, αυτή είναι μια επίδειξη της φωνής μου. Ελπίζω να σας αρέσει.',
+  Hindi: 'नमस्ते, यह मेरी आवाज़ का एक प्रदर्शन है। मुझे उम्मीद है कि आपको पसंद आएगी।',
+  Indonesian: 'Halo, ini adalah demonstrasi suara saya. Semoga Anda menyukainya.',
+  Italian: 'Ciao, questa è una dimostrazione della mia voce. Spero che vi piaccia.',
+  Japanese: 'こんにちは、これは私の声のデモンストレーションです。気に入っていただければ幸いです。',
+  Korean: '안녕하세요, 이것은 제 목소리의 시연입니다. 마음에 드시길 바랍니다.',
+  Malay: 'Hai, ini adalah demonstrasi suara saya. Saya harap anda menyukainya.',
+  Polish: 'Cześć, to jest demonstracja mojego głosu. Mam nadzieję, że Wam się spodoba.',
+  Portuguese: 'Olá, esta é uma demonstração da minha voz. Espero que gostem.',
+  Romanian: 'Bună ziua, aceasta este o demonstrație a vocii mele. Sper să vă placă.',
+  Russian: 'Здравствуйте, это демонстрация моего голоса. Надеюсь, вам понравится.',
+  Slovak: 'Dobrý deň, toto je ukážka môjho hlasu. Dúfam, že sa vám bude páčiť.',
+  Spanish: 'Hola, esta es una demostración de mi voz. Espero que les guste.',
+  Swedish: 'Hej, det här är en demonstration av min röst. Jag hoppas att ni gillar den.',
+  Tamil: 'வணக்கம், இது என் குரலின் ஒரு ஆர்ப்பாட்டம். இது உங்களுக்குப் பிடிக்கும் என நம்புகிறேன்.',
+  Turkish: 'Merhaba, bu benim sesimin bir gösterisi. Beğeneceğinizi umuyorum.',
+  Ukrainian: 'Привіт, це демонстрація мого голосу. Сподіваюся, вам сподобається.',
+};
+
+app.post('/api/voices/:voiceId/preview', async (req, res) => {
+  try {
+    const { voiceId } = req.params;
+    const language = (req.body.language || '').trim() || 'English';
+
+    // For English, redirect to the static ElevenLabs preview
+    if (language === 'English') {
+      const voices = await getAvailableVoices('English');
+      const voice = voices.find(v => v.id === voiceId);
+      if (voice?.preview_url) {
+        return res.json({ redirect: voice.preview_url });
+      }
+      return res.status(404).json({ error: 'No preview available for this voice' });
+    }
+
+    // Check cache
+    const cacheKey = `${voiceId}:${language}`;
+    const cached = voicePreviewCache.get(cacheKey);
+    if (cached && (Date.now() - cached.timestamp < PREVIEW_CACHE_TTL)) {
+      res.set('Content-Type', 'audio/mpeg');
+      res.set('Content-Length', cached.buffer.length);
+      return res.send(cached.buffer);
+    }
+
+    const apiKey = process.env.ELEVENLABS_API_KEY;
+    if (!apiKey) return res.status(500).json({ error: 'ElevenLabs not configured' });
+
+    const phrase = PREVIEW_PHRASES[language];
+    if (!phrase) return res.status(400).json({ error: `Unsupported language: ${language}` });
+
+    // Generate short TTS sample
+    const ttsResp = await fetch(
+      `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'xi-api-key': apiKey,
+        },
+        body: JSON.stringify({
+          text: phrase,
+          model_id: 'eleven_multilingual_v2',
+          voice_settings: {
+            stability: 0.5,
+            similarity_boost: 0.75,
+            style: 0.0,
+            use_speaker_boost: true,
+          },
+        }),
+      }
+    );
+
+    if (!ttsResp.ok) {
+      const errText = await ttsResp.text();
+      console.error(`Voice preview TTS error (${ttsResp.status}):`, errText);
+      return res.status(502).json({ error: 'Failed to generate voice preview' });
+    }
+
+    const audioBuffer = Buffer.from(await ttsResp.arrayBuffer());
+
+    // Cache it
+    voicePreviewCache.set(cacheKey, { buffer: audioBuffer, timestamp: Date.now() });
+
+    // Evict old cache entries periodically (keep cache bounded)
+    if (voicePreviewCache.size > 200) {
+      const now = Date.now();
+      for (const [k, v] of voicePreviewCache) {
+        if (now - v.timestamp > PREVIEW_CACHE_TTL) voicePreviewCache.delete(k);
+      }
+    }
+
+    res.set('Content-Type', 'audio/mpeg');
+    res.set('Content-Length', audioBuffer.length);
+    res.send(audioBuffer);
+  } catch (err) {
+    console.error('Voice preview error:', err);
+    res.status(500).json({ error: 'Failed to generate preview' });
+  }
+});
+
 // ═══════════════════════════════════════════════
 // MUSIC TRACKS — Curated royalty-free background music
 // ═══════════════════════════════════════════════

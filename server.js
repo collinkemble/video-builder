@@ -2148,43 +2148,26 @@ async function checkVeoCapability() {
 /**
  * On startup, recover videos that were interrupted by a dyno restart.
  *
- * - Queued videos: silently reset to 'draft' (they were just waiting, not processing)
- * - Actively processing videos: mark as 'failed' so the user can retry
+ * All interrupted videos (queued or processing) are silently reset to 'draft'
+ * so users can just click Generate again — no scary error messages.
  */
 async function recoverStaleJobs() {
   try {
-    // 1. Queued videos — just reset to draft (no error, no scary message)
-    const queued = await query(
-      "SELECT id, name FROM videos WHERE status = 'queued'"
+    const stale = await query(
+      "SELECT id, name, status FROM videos WHERE status IN ('queued', 'scripting', 'voiceover', 'capturing', 'compositing', 'uploading')"
     );
-    if (queued.length > 0) {
-      console.log(`[Recovery] Found ${queued.length} queued video(s) — resetting to draft.`);
-      for (const v of queued) {
-        await query("UPDATE videos SET status = 'draft' WHERE id = ?", [v.id]);
+    if (stale.length > 0) {
+      console.log(`[Recovery] Found ${stale.length} interrupted video(s) — resetting to draft.`);
+      for (const v of stale) {
         await query(
-          "UPDATE video_jobs SET status = 'failed', error = 'Cancelled — server restarted', completed_at = NOW() WHERE video_id = ? AND status IN ('pending', 'running')",
-          [v.id]
-        );
-        console.log(`[Recovery] Video ${v.id} ("${v.name}") was queued — reset to draft.`);
-      }
-    }
-
-    // 2. Actively processing videos — mark as failed so user can retry
-    const processing = await query(
-      "SELECT id, name, status FROM videos WHERE status IN ('scripting', 'voiceover', 'capturing', 'compositing', 'uploading')"
-    );
-    if (processing.length > 0) {
-      console.log(`[Recovery] Found ${processing.length} in-progress video(s) — marking as failed.`);
-      for (const v of processing) {
-        await query(
-          "UPDATE videos SET status = 'failed', error = 'Generation was interrupted. Click Generate to try again.' WHERE id = ?",
+          "UPDATE videos SET status = 'draft', error = NULL WHERE id = ?",
           [v.id]
         );
         await query(
           "UPDATE video_jobs SET status = 'failed', error = 'Interrupted by restart', completed_at = NOW() WHERE video_id = ? AND status IN ('pending', 'running')",
           [v.id]
         );
-        console.log(`[Recovery] Video ${v.id} ("${v.name}") was ${v.status} — marked as failed.`);
+        console.log(`[Recovery] Video ${v.id} ("${v.name}") was ${v.status} — reset to draft.`);
       }
     }
   } catch (err) {

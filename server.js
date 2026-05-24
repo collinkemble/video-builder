@@ -120,6 +120,7 @@ app.use(express.json({ limit: '5mb' }));
 
 // Serve static files — no cache on HTML so deploys are picked up immediately
 app.use(express.static(path.join(__dirname), {
+  index: false, // Don't auto-serve index.html — let the SPA catch-all send the injected spaHtml
   setHeaders: (res, filePath) => {
     if (filePath.endsWith('.html')) {
       res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');

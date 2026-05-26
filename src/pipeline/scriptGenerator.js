@@ -210,7 +210,8 @@ CRITICAL ORDERING RULE: Scene segments MUST appear in the EXACT same order as th
   // ── Validate: persona name must NOT appear in intro ──
   // The LLM sometimes ignores the instruction and introduces the persona in the intro.
   // Detect this and warn — we can't easily rewrite the narration, but at least flag it.
-  if (personaName) {
+  // IMPORTANT: Skip this if persona name matches the brand name (some projects set brand as persona)
+  if (personaName && personaName.toLowerCase() !== brandName.toLowerCase()) {
     const introSeg = script.segments.find(s => s.type === 'intro');
     if (introSeg && introSeg.narration) {
       const namePattern = new RegExp(personaName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');

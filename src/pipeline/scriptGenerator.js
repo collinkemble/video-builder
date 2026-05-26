@@ -175,7 +175,7 @@ CRITICAL ORDERING RULE: Scene segments MUST appear in the EXACT same order as th
 
   // Inject language instruction for non-English videos
   const langSuffix = language && language !== 'English'
-    ? `\n\nCRITICAL OUTPUT LANGUAGE REQUIREMENT: You MUST write the ENTIRE output in ${language}. ALL narration text, brollDescription values, and the title MUST be written in ${language}. The JSON keys must remain in English, but ALL STRING VALUES must be in ${language}. This is non-negotiable.`
+    ? `\n\nCRITICAL OUTPUT LANGUAGE REQUIREMENT: You MUST write the ENTIRE output in ${language}. ALL narration text, brollDescription values, and the title MUST be written in ${language}. The JSON keys must remain in English, but ALL STRING VALUES must be in ${language}. This is non-negotiable.\n\nCRITICAL BRAND NAME RULE: The brand name "${brandName}" is a proper noun. You MUST use "${brandName}" exactly as written throughout the narration — do NOT translate it, do NOT replace it with generic terms like "the company", "the brand", "a customer", "la empresa", "el cliente", or any equivalent. Every place where the brand is mentioned MUST say "${brandName}" verbatim. The Salesforce name must also remain "Salesforce" — never translate it.`
     : '';
 
   const fullPrompt = prompt + langSuffix;

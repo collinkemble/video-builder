@@ -399,6 +399,24 @@ app.get('/api/users', async (req, res) => {
   }
 });
 
+// GET /api/users/:userId/items — list items for a specific user (admin only)
+app.get('/api/users/:userId/items', async (req, res) => {
+  try {
+    const email = req.query.email;
+    if (!email || !isAdmin(email)) {
+      return res.status(403).json({ error: 'Admin access required' });
+    }
+    const rows = await query(
+      'SELECT id, name, status, created_at, updated_at FROM videos WHERE user_id = ? ORDER BY created_at DESC',
+      [req.params.userId]
+    );
+    res.json(rows);
+  } catch (err) {
+    console.error('Error listing user items:', err);
+    res.status(500).json({ error: 'Failed to list user items' });
+  }
+});
+
 // ═══════════════════════════════════════════════
 // SHARED ROUTES — Gemini Streaming Proxy
 // ═══════════════════════════════════════════════
@@ -537,7 +555,15 @@ app.get('/api/videos/:id', async (req, res) => {
     if (!email) return res.status(400).json({ error: 'Email required' });
 
     const user = await getOrCreateUser(email);
-    const rows = await query('SELECT * FROM videos WHERE id = ? AND user_id = ?', [req.params.id, user.id]);
+    let rows;
+    if (isAdmin(email)) {
+      rows = await query(
+        'SELECT v.*, u.email AS owner_email, u.name AS owner_name FROM videos v JOIN users u ON u.id = v.user_id WHERE v.id = ?',
+        [req.params.id]
+      );
+    } else {
+      rows = await query('SELECT * FROM videos WHERE id = ? AND user_id = ?', [req.params.id, user.id]);
+    }
 
     if (rows.length === 0) {
       return res.status(404).json({ error: 'Video not found' });

@@ -361,6 +361,11 @@
     <!-- VIDEO DETAIL                                   -->
     <!-- ═══════════════════════════════════════════════ -->
     <div id="video-detail" class="hidden" style="max-width: 960px; margin: 0 auto; padding: 32px 16px 0;">
+      <!-- Admin cross-user view banner -->
+      <div id="admin-view-banner" class="hidden" style="background: #FFFBEB; border: 1px solid #F59E0B; border-radius: 8px; padding: 10px 16px; margin-bottom: 16px; display: flex; align-items: center; gap: 10px;">
+        <span style="font-size: 18px;">&#x1f6e1;&#xfe0f;</span>
+        <span style="font-size: 13px; color: #92400E;">Admin view — you are viewing <strong id="admin-view-owner"></strong>'s video</span>
+      </div>
       <!-- Header -->
       <div class="flex items-center justify-between" style="margin-bottom: 24px;">
         <div class="flex items-center gap-3">
@@ -825,6 +830,7 @@
         <button onclick="sortUsers('items')" id="sort-items" class="cursor-pointer" style="height: 24px; padding: 0 8px; border-radius: 3px; font-size: 12px; font-weight: 700; border: 1px solid rgba(0,109,203,0.5); background: transparent; color: rgba(0,109,203,0.95);">Videos Created</button>
       </div>
       <div style="display: flex; align-items: center; padding: 8px 20px; border-bottom: 2px solid #d8dde6;">
+        <span style="width: 32px;"></span>
         <span style="flex: 2; font-size: 12px; font-weight: 700; color: rgba(0,7,20,0.624); text-transform: uppercase; letter-spacing: 0.5px;">Email</span>
         <span style="flex: 1; font-size: 12px; font-weight: 700; color: rgba(0,7,20,0.624); text-transform: uppercase; letter-spacing: 0.5px;">Name</span>
         <span style="width: 120px; font-size: 12px; font-weight: 700; color: rgba(0,7,20,0.624); text-transform: uppercase; letter-spacing: 0.5px; text-align: center;">First Login</span>
@@ -1517,6 +1523,17 @@ async function viewVideo(id, skipPush) {
     currentVideoId = video.id;
     currentVideoData = video;
     window._currentVideoFull = video;
+
+    // Admin cross-user banner
+    const adminBanner = document.getElementById('admin-view-banner');
+    if (video.owner_email && video.owner_email !== email) {
+      document.getElementById('admin-view-owner').textContent = video.owner_email;
+      adminBanner.classList.remove('hidden');
+      adminBanner.style.display = 'flex';
+    } else {
+      adminBanner.classList.add('hidden');
+      adminBanner.style.display = 'none';
+    }
 
     // Header
     document.getElementById('detail-breadcrumb').textContent = video.name;
@@ -4155,17 +4172,56 @@ function renderUsersRows() {
   });
   container.innerHTML = sorted.map(u => {
     const badge = u.item_count > 0 ? 'background: #E8F5E9; color: #2E7D32;' : 'background: #eee; color: #888;';
+    const hasItems = u.item_count > 0;
     return `
-    <div style="padding: 12px 20px; background: white; border: 1px solid #d8dde6; border-radius: 8px;">
-      <div style="display: flex; align-items: center;">
-        <span style="flex: 2; font-size: 14px; color: #1C2024; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${esc(u.email)}</span>
-        <span style="flex: 1; font-size: 14px; color: rgba(0,7,20,0.624);">${esc(u.name || '—')}</span>
-        <span style="width: 120px; font-size: 14px; color: rgba(0,7,20,0.624); text-align: center;">${fmtDate(u.created_at)}</span>
-        <span style="width: 120px; font-size: 14px; color: rgba(0,7,20,0.624); text-align: center;">${u.last_login_at ? fmtDate(u.last_login_at) : '—'}</span>
-        <div style="width: 80px; text-align: center;"><span style="display: inline-block; ${badge} padding: 2px 12px; border-radius: 999px; font-size: 12px; font-weight: 700;">${u.item_count}</span></div>
+    <div style="background: white; border: 1px solid #d8dde6; border-radius: 8px; overflow: hidden;">
+      <div style="padding: 12px 20px; cursor: ${hasItems ? 'pointer' : 'default'};" onclick="${hasItems ? `toggleUserExpand(${u.id}, this.parentElement)` : ''}">
+        <div style="display: flex; align-items: center;">
+          <span style="width: 32px; text-align: center; font-size: 14px; color: #9ca3af; transition: transform 0.2s;" class="user-chevron">${hasItems ? '&#9654;' : ''}</span>
+          <span style="flex: 2; font-size: 14px; color: #1C2024; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${esc(u.email)}</span>
+          <span style="flex: 1; font-size: 14px; color: rgba(0,7,20,0.624);">${esc(u.name || '—')}</span>
+          <span style="width: 120px; font-size: 14px; color: rgba(0,7,20,0.624); text-align: center;">${fmtDate(u.created_at)}</span>
+          <span style="width: 120px; font-size: 14px; color: rgba(0,7,20,0.624); text-align: center;">${u.last_login_at ? fmtDate(u.last_login_at) : '—'}</span>
+          <div style="width: 80px; text-align: center;"><span style="display: inline-block; ${badge} padding: 2px 12px; border-radius: 999px; font-size: 12px; font-weight: 700;">${u.item_count}</span></div>
+        </div>
       </div>
+      <div class="user-items-panel" style="display: none; border-top: 1px solid #e5e7eb; background: #f9fafb; padding: 0 20px;"></div>
     </div>`;
   }).join('');
+}
+
+async function toggleUserExpand(userId, rowEl) {
+  const panel = rowEl.querySelector('.user-items-panel');
+  const chevron = rowEl.querySelector('.user-chevron');
+  const isOpen = panel.style.display !== 'none';
+  if (isOpen) {
+    panel.style.display = 'none';
+    chevron.style.transform = 'rotate(0deg)';
+    return;
+  }
+  chevron.style.transform = 'rotate(90deg)';
+  panel.style.display = 'block';
+  panel.innerHTML = '<div style="padding: 12px 0; color: #9ca3af; font-size: 13px;">Loading...</div>';
+  try {
+    const email = document.getElementById('user-email').textContent;
+    const resp = await fetch(`/api/users/${userId}/items?email=${encodeURIComponent(email)}`);
+    if (!resp.ok) throw new Error('Failed to load items');
+    const items = await resp.json();
+    if (items.length === 0) {
+      panel.innerHTML = '<div style="padding: 12px 0; color: #9ca3af; font-size: 13px;">No videos found.</div>';
+      return;
+    }
+    panel.innerHTML = items.map(item => {
+      const sBadge = item.status === 'completed' ? 'background:#E8F5E9;color:#2E7D32;' : item.status === 'draft' ? 'background:#eee;color:#888;' : 'background:#FFF3E0;color:#E65100;';
+      return `<div style="display: flex; align-items: center; padding: 8px 0; border-bottom: 1px solid #f0f0f0; gap: 12px;">
+        <a href="#" onclick="event.preventDefault(); viewVideo(${item.id})" style="flex: 2; font-size: 13px; color: #0176D3; text-decoration: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600;">${esc(item.name || 'Untitled')}</a>
+        <span style="display: inline-block; ${sBadge} padding: 1px 10px; border-radius: 999px; font-size: 11px; font-weight: 700; text-transform: capitalize;">${esc(item.status)}</span>
+        <span style="width: 100px; font-size: 12px; color: rgba(0,7,20,0.624); text-align: right;">${fmtDate(item.created_at)}</span>
+      </div>`;
+    }).join('');
+  } catch (err) {
+    panel.innerHTML = '<div style="padding: 12px 0; color: #ef4444; font-size: 13px;">' + esc(err.message) + '</div>';
+  }
 }
 
 async function loadUsers() {

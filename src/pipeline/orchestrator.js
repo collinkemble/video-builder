@@ -292,6 +292,8 @@ async function _runPipelineImpl(videoId, userId, options = {}) {
     }
 
     // ── Step 4: B-Roll Generation ──
+    await updateVideoStatus(videoId, 'broll');
+
     // Safeguard: ensure intro and outro segments have brollDescription and visualType set.
     // The LLM sometimes omits brollDescription on the outro, causing it to be excluded
     // from b-roll generation and rendered as a still frame instead.

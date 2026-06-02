@@ -18,7 +18,7 @@ const fs = require('fs');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const BUILD_VERSION = 'v180-multi-language';
+const BUILD_VERSION = 'v181-pipeline-fixes';
 
 // ─── Staging Banner ───
 const STAGING_BANNER_HTML = '<div style="background:#f59e0b;color:#000;text-align:center;padding:4px;font-size:12px;font-weight:700;position:fixed;top:0;left:0;right:0;z-index:99999;">⚠️ STAGING ENVIRONMENT</div><div style="height:28px;"></div>';
@@ -872,14 +872,32 @@ app.delete('/api/videos/:id', async (req, res) => {
 // ═══════════════════════════════════════════════
 
 // POST /api/videos/:id/generate-script — run ONLY the script generation step (Gemini)
+// Uses chunked transfer encoding with keepalive pings to prevent Heroku H12 (30s idle timeout).
+// The Gemini API can take 60-90 seconds for complex scripts.
 app.post('/api/videos/:id/generate-script', async (req, res) => {
+  // Start chunked JSON response to prevent Heroku H12 timeout.
+  // We send whitespace keepalive bytes every 10s while waiting for Gemini.
+  res.setHeader('Content-Type', 'application/json');
+  res.setHeader('Transfer-Encoding', 'chunked');
+  res.flushHeaders();
+
+  const keepalive = setInterval(() => {
+    try { res.write(' '); } catch {}
+  }, 10000);
+
   try {
     const { email } = req.body;
-    if (!email) return res.status(400).json({ error: 'Email required' });
+    if (!email) {
+      clearInterval(keepalive);
+      return res.end(JSON.stringify({ error: 'Email required' }));
+    }
 
     const user = await getOrCreateUser(email);
     const rows = await query('SELECT * FROM videos WHERE id = ? AND user_id = ?', [req.params.id, user.id]);
-    if (rows.length === 0) return res.status(404).json({ error: 'Video not found' });
+    if (rows.length === 0) {
+      clearInterval(keepalive);
+      return res.end(JSON.stringify({ error: 'Video not found' }));
+    }
 
     const video = rows[0];
     const sceneData = typeof video.scene_data === 'string' ? JSON.parse(video.scene_data || '{}') : (video.scene_data || {});
@@ -891,7 +909,8 @@ app.post('/api/videos/:id/generate-script', async (req, res) => {
     });
 
     if (scenes.length === 0) {
-      return res.status(400).json({ error: 'No scenes found. Import a PocketSIC project first.' });
+      clearInterval(keepalive);
+      return res.end(JSON.stringify({ error: 'No scenes found. Import a PocketSIC project first.' }));
     }
 
     const scriptWriterData = video.scriptwriter_data
@@ -917,10 +936,12 @@ app.post('/api/videos/:id/generate-script', async (req, res) => {
     // Save script to video record
     await query('UPDATE videos SET narration_script = ?, updated_at = NOW() WHERE id = ?', [JSON.stringify(script), req.params.id]);
 
-    res.json({ success: true, script });
+    clearInterval(keepalive);
+    res.end(JSON.stringify({ success: true, script }));
   } catch (err) {
     console.error('Script generation failed:', err);
-    res.status(500).json({ error: 'Script generation failed: ' + err.message });
+    clearInterval(keepalive);
+    res.end(JSON.stringify({ error: 'Script generation failed: ' + err.message }));
   }
 });
 
@@ -2226,11 +2247,13 @@ async function checkVeoCapability() {
  *
  * All interrupted videos (queued or processing) are silently reset to 'draft'
  * so users can just click Generate again — no scary error messages.
+ *
+ * Also recovers videos with empty/invalid status (e.g., '' from DemoForge race conditions).
  */
 async function recoverStaleJobs() {
   try {
     const stale = await query(
-      "SELECT id, name, status FROM videos WHERE status IN ('queued', 'scripting', 'voiceover', 'capturing', 'compositing', 'uploading')"
+      "SELECT id, name, status FROM videos WHERE status IN ('queued', 'scripting', 'voiceover', 'capturing', 'compositing', 'uploading', 'broll') OR (status = '' AND error IS NULL)"
     );
     if (stale.length > 0) {
       console.log(`[Recovery] Found ${stale.length} interrupted video(s) — resetting to draft.`);
@@ -2243,7 +2266,7 @@ async function recoverStaleJobs() {
           "UPDATE video_jobs SET status = 'failed', error = 'Interrupted by restart', completed_at = NOW() WHERE video_id = ? AND status IN ('pending', 'running')",
           [v.id]
         );
-        console.log(`[Recovery] Video ${v.id} ("${v.name}") was ${v.status} — reset to draft.`);
+        console.log(`[Recovery] Video ${v.id} ("${v.name}") was '${v.status}' — reset to draft.`);
       }
     }
   } catch (err) {

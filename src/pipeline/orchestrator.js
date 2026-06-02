@@ -15,11 +15,36 @@ const { uploadVideoAssets, uploadSegmentClips } = require('../utils/r2');
 // Additional requests queue up and run sequentially.
 let pipelineRunning = false;
 let _currentVideoId = null;
+let _pipelineStartedAt = null;
 const pipelineQueue = [];
+
+// Max time a single pipeline can run before being considered stuck (10 minutes)
+const PIPELINE_TIMEOUT_MS = 10 * 60 * 1000;
+
+/**
+ * Helper: wrap a promise with a timeout. Rejects with a timeout error if not resolved in time.
+ */
+function withTimeout(promise, ms, label) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`${label} timed out after ${Math.round(ms / 1000)}s`)), ms);
+    promise.then(
+      (val) => { clearTimeout(timer); resolve(val); },
+      (err) => { clearTimeout(timer); reject(err); }
+    );
+  });
+}
 
 function enqueuePipeline(videoId, userId, options) {
   return new Promise((resolve, reject) => {
     const task = { videoId, userId, options, resolve, reject };
+
+    // Watchdog: if a pipeline has been running longer than the timeout, force-release it
+    if (pipelineRunning && _pipelineStartedAt && (Date.now() - _pipelineStartedAt > PIPELINE_TIMEOUT_MS)) {
+      console.error(`[Pipeline Queue] ⚠️ Watchdog: current pipeline (video ${_currentVideoId}) has been running for ${Math.round((Date.now() - _pipelineStartedAt) / 1000)}s — force-releasing queue.`);
+      pipelineRunning = false;
+      _currentVideoId = null;
+      _pipelineStartedAt = null;
+    }
 
     if (!pipelineRunning) {
       // No pipeline running — start immediately
@@ -29,7 +54,7 @@ function enqueuePipeline(videoId, userId, options) {
     } else {
       // Queue it
       pipelineQueue.push(task);
-      console.log(`[Pipeline Queue] Video ${videoId} queued (position ${pipelineQueue.length}). Waiting for current pipeline to finish.`);
+      console.log(`[Pipeline Queue] Video ${videoId} queued (position ${pipelineQueue.length}). Current pipeline: video ${_currentVideoId}, running for ${_pipelineStartedAt ? Math.round((Date.now() - _pipelineStartedAt) / 1000) + 's' : 'unknown'}.`);
       // Update video status to indicate it's queued
       query("UPDATE videos SET status = 'queued' WHERE id = ?", [videoId]).catch(() => {});
     }
@@ -38,6 +63,7 @@ function enqueuePipeline(videoId, userId, options) {
 
 async function _runPipelineNow(task) {
   _currentVideoId = task.videoId;
+  _pipelineStartedAt = Date.now();
   try {
     const result = await _runPipelineImpl(task.videoId, task.userId, task.options);
     task.resolve(result);
@@ -45,6 +71,7 @@ async function _runPipelineNow(task) {
     task.reject(err);
   } finally {
     _currentVideoId = null;
+    _pipelineStartedAt = null;
     // Process next in queue
     if (pipelineQueue.length > 0) {
       const next = pipelineQueue.shift();
@@ -431,11 +458,16 @@ async function _runPipelineImpl(videoId, userId, options = {}) {
     try {
       await updateJob(uploadJobId, 'running');
 
-      const urls = await uploadVideoAssets(userId, videoId, {
-        videoPath: compositeResult.videoPath,
-        thumbnailPath: compositeResult.thumbnailPath,
-        voiceoverPath: voiceoverResult.audioPath,
-      });
+      // Wrap upload in a 2-minute timeout — R2 uploads should never take this long
+      const urls = await withTimeout(
+        uploadVideoAssets(userId, videoId, {
+          videoPath: compositeResult.videoPath,
+          thumbnailPath: compositeResult.thumbnailPath,
+          voiceoverPath: voiceoverResult.audioPath,
+        }),
+        120000,
+        'R2 upload'
+      );
 
       // Update segment_assets with voiceover URL
       try {

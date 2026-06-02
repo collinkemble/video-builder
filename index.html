@@ -2056,8 +2056,9 @@ async function generateScriptOnly() {
       body: JSON.stringify({ email }),
     });
 
-    const data = await resp.json();
-    if (!resp.ok) throw new Error(data.error || 'Failed to generate script');
+    const text = await resp.text();
+    const data = JSON.parse(text.trim());
+    if (!resp.ok || data.error) throw new Error(data.error || 'Failed to generate script');
 
     // Render the new script
     renderScript(data.script);
@@ -2094,8 +2095,9 @@ async function autoGenerateScript(videoId) {
       body: JSON.stringify({ email }),
     });
 
-    const data = await resp.json();
-    if (!resp.ok) throw new Error(data.error || 'Failed to generate script');
+    const text = await resp.text();
+    const data = JSON.parse(text.trim());
+    if (!resp.ok || data.error) throw new Error(data.error || 'Failed to generate script');
 
     renderScript(data.script);
     document.getElementById('save-script-btn').classList.add('hidden');

@@ -21,6 +21,38 @@ const pipelineQueue = [];
 // Max time a single pipeline can run before being considered stuck (10 minutes)
 const PIPELINE_TIMEOUT_MS = 10 * 60 * 1000;
 
+// ── Periodic Watchdog ──
+// Runs every 60s independently of the pipeline queue to detect stuck pipelines.
+// If a pipeline has been running longer than PIPELINE_TIMEOUT_MS, force-release it
+// and mark the stuck video as failed.
+setInterval(async () => {
+  if (!pipelineRunning || !_pipelineStartedAt) return;
+  const elapsed = Date.now() - _pipelineStartedAt;
+  if (elapsed > PIPELINE_TIMEOUT_MS) {
+    console.error(`[Pipeline Watchdog] ⚠️ Video ${_currentVideoId} has been running for ${Math.round(elapsed / 1000)}s — force-failing.`);
+    const stuckVideoId = _currentVideoId;
+    // Force-release the queue
+    pipelineRunning = false;
+    _currentVideoId = null;
+    _pipelineStartedAt = null;
+    // Mark the stuck video as failed in DB
+    try {
+      await query("UPDATE videos SET status = 'failed', error = 'Pipeline timed out (watchdog)' WHERE id = ? AND status NOT IN ('completed', 'draft', 'failed')", [stuckVideoId]);
+      await query("UPDATE video_jobs SET status = 'failed', error = 'Pipeline timed out (watchdog)', completed_at = NOW() WHERE video_id = ? AND status IN ('pending', 'running')", [stuckVideoId]);
+      console.log(`[Pipeline Watchdog] Video ${stuckVideoId} marked as failed.`);
+    } catch (e) {
+      console.warn(`[Pipeline Watchdog] Failed to update DB: ${e.message}`);
+    }
+    // Process next in queue if any
+    if (pipelineQueue.length > 0) {
+      const next = pipelineQueue.shift();
+      pipelineRunning = true;
+      console.log(`[Pipeline Watchdog] Starting next pipeline: video ${next.videoId}`);
+      _runPipelineNow(next);
+    }
+  }
+}, 60000);
+
 /**
  * Helper: wrap a promise with a timeout. Rejects with a timeout error if not resolved in time.
  */
@@ -458,16 +490,41 @@ async function _runPipelineImpl(videoId, userId, options = {}) {
     try {
       await updateJob(uploadJobId, 'running');
 
+      // Log file sizes before upload
+      const filesToUpload = {
+        videoPath: compositeResult.videoPath,
+        thumbnailPath: compositeResult.thumbnailPath,
+        voiceoverPath: voiceoverResult.audioPath,
+      };
+      for (const [label, fpath] of Object.entries(filesToUpload)) {
+        if (fpath && fs.existsSync(fpath)) {
+          const stat = fs.statSync(fpath);
+          console.log(`[Pipeline] Upload file: ${label} = ${fpath} (${(stat.size / 1024 / 1024).toFixed(1)}MB)`);
+        } else if (fpath) {
+          console.warn(`[Pipeline] Upload file MISSING: ${label} = ${fpath}`);
+        }
+      }
+
+      // Log memory usage before upload
+      const memBefore = process.memoryUsage();
+      console.log(`[Pipeline] Memory before upload: rss=${(memBefore.rss / 1024 / 1024).toFixed(0)}MB, heap=${(memBefore.heapUsed / 1024 / 1024).toFixed(0)}MB/${(memBefore.heapTotal / 1024 / 1024).toFixed(0)}MB`);
+
+      console.log(`[Pipeline] Starting R2 upload for video ${videoId}...`);
+      const uploadStartTime = Date.now();
+
       // Wrap upload in a 2-minute timeout — R2 uploads should never take this long
       const urls = await withTimeout(
-        uploadVideoAssets(userId, videoId, {
-          videoPath: compositeResult.videoPath,
-          thumbnailPath: compositeResult.thumbnailPath,
-          voiceoverPath: voiceoverResult.audioPath,
-        }),
+        uploadVideoAssets(userId, videoId, filesToUpload),
         120000,
         'R2 upload'
       );
+
+      const uploadDuration = Date.now() - uploadStartTime;
+      console.log(`[Pipeline] ✅ R2 upload completed for video ${videoId} in ${uploadDuration}ms`);
+
+      // Log memory usage after upload
+      const memAfter = process.memoryUsage();
+      console.log(`[Pipeline] Memory after upload: rss=${(memAfter.rss / 1024 / 1024).toFixed(0)}MB, heap=${(memAfter.heapUsed / 1024 / 1024).toFixed(0)}MB/${(memAfter.heapTotal / 1024 / 1024).toFixed(0)}MB`);
 
       // Update segment_assets with voiceover URL
       try {
@@ -499,7 +556,9 @@ async function _runPipelineImpl(videoId, userId, options = {}) {
       );
 
       await completeJob(uploadJobId, urls);
+      console.log(`[Pipeline] ✅ Video ${videoId} marked as completed`);
     } catch (err) {
+      console.error(`[Pipeline] ❌ Upload failed for video ${videoId}: ${err.message}`);
       await failJob(uploadJobId, err.message);
       throw err;
     }

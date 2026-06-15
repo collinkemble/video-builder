@@ -2249,11 +2249,12 @@ async function checkVeoCapability() {
  */
 async function recoverStaleJobs() {
   try {
+    console.log('[Recovery] Checking for interrupted videos...');
     const stale = await query(
       "SELECT id, name, status FROM videos WHERE status IN ('queued', 'scripting', 'voiceover', 'capturing', 'compositing', 'uploading', 'broll') OR (status = '' AND error IS NULL)"
     );
+    console.log(`[Recovery] Found ${stale.length} video(s) with in-progress status.`);
     if (stale.length > 0) {
-      console.log(`[Recovery] Found ${stale.length} interrupted video(s) — resetting to draft.`);
       for (const v of stale) {
         await query(
           "UPDATE videos SET status = 'draft', error = NULL WHERE id = ?",
@@ -2265,6 +2266,8 @@ async function recoverStaleJobs() {
         );
         console.log(`[Recovery] Video ${v.id} ("${v.name}") was '${v.status}' — reset to draft.`);
       }
+    } else {
+      console.log('[Recovery] No interrupted videos found.');
     }
   } catch (err) {
     console.warn('[Recovery] Stale job recovery failed:', err.message);

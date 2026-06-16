@@ -18,7 +18,7 @@ const fs = require('fs');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const BUILD_VERSION = 'v181-pipeline-fixes';
+const BUILD_VERSION = 'v182-delete-recompose';
 
 // ─── Staging Banner ───
 const STAGING_BANNER_HTML = '<div style="background:#f59e0b;color:#000;text-align:center;padding:4px;font-size:12px;font-weight:700;position:fixed;top:0;left:0;right:0;z-index:99999;">⚠️ STAGING ENVIRONMENT</div><div style="height:28px;"></div>';
@@ -1032,6 +1032,108 @@ app.post('/api/videos/:id/regenerate-segments', async (req, res) => {
   } catch (err) {
     console.error('Failed to start segment regeneration:', err);
     res.status(500).json({ error: 'Failed to start segment regeneration' });
+  }
+});
+
+// POST /api/videos/:id/remove-section — delete a section and recompose without full regeneration
+app.post('/api/videos/:id/remove-section', async (req, res) => {
+  try {
+    const { email, order } = req.body;
+    if (!email) return res.status(400).json({ error: 'Email required' });
+    if (order === undefined || order === null) {
+      return res.status(400).json({ error: 'Segment order is required' });
+    }
+
+    const user = await getOrCreateUser(email);
+    const rows = await query('SELECT * FROM videos WHERE id = ? AND user_id = ?', [req.params.id, user.id]);
+    if (rows.length === 0) return res.status(404).json({ error: 'Video not found' });
+
+    const video = rows[0];
+    if (video.status !== 'completed') {
+      return res.status(409).json({ error: 'Video must be completed before removing sections' });
+    }
+
+    // Parse JSON fields
+    const script = video.narration_script
+      ? (typeof video.narration_script === 'string' ? JSON.parse(video.narration_script) : video.narration_script)
+      : null;
+    if (!script || !script.segments || script.segments.length === 0) {
+      return res.status(409).json({ error: 'No script segments found' });
+    }
+
+    const segmentAssets = video.segment_assets
+      ? (typeof video.segment_assets === 'string' ? JSON.parse(video.segment_assets) : video.segment_assets)
+      : null;
+    if (!segmentAssets || !segmentAssets.clips || Object.keys(segmentAssets.clips).length === 0) {
+      return res.status(409).json({ error: 'No segment assets available. Please regenerate the full video first.' });
+    }
+
+    // Validate: must have >1 segment remaining
+    if (script.segments.length <= 1) {
+      return res.status(400).json({ error: 'Cannot remove the last remaining section' });
+    }
+
+    // Find the segment to remove
+    const segIdx = script.segments.findIndex(s => s.order === order);
+    if (segIdx === -1) {
+      return res.status(404).json({ error: `Segment with order ${order} not found` });
+    }
+
+    console.log(`[RemoveSection] Removing segment order=${order} from video ${req.params.id} (${script.segments.length} segments → ${script.segments.length - 1})`);
+
+    // Remove segment from script
+    script.segments.splice(segIdx, 1);
+
+    // Remove clip from segment_assets
+    const oldClips = segmentAssets.clips;
+    delete oldClips[String(order)];
+
+    // Parse voiceover_timestamps
+    let timestamps = video.voiceover_timestamps
+      ? (typeof video.voiceover_timestamps === 'string' ? JSON.parse(video.voiceover_timestamps) : video.voiceover_timestamps)
+      : null;
+    if (timestamps && timestamps.segments) {
+      timestamps.segments = timestamps.segments.filter(t => t.order !== order);
+    }
+
+    // Renumber remaining segments sequentially (0, 1, 2, ...)
+    const newClips = {};
+    script.segments.forEach((seg, i) => {
+      const oldOrder = seg.order;
+      // Move clip URL from old order to new order
+      if (oldClips[String(oldOrder)]) {
+        newClips[String(i)] = oldClips[String(oldOrder)];
+      }
+      // Update timestamp order
+      if (timestamps && timestamps.segments) {
+        const ts = timestamps.segments.find(t => t.order === oldOrder);
+        if (ts) ts.order = i;
+      }
+      // Update segment order
+      seg.order = i;
+    });
+    segmentAssets.clips = newClips;
+
+    // Persist updated JSON fields to DB
+    await query(
+      'UPDATE videos SET narration_script = ?, segment_assets = ?, voiceover_timestamps = ? WHERE id = ?',
+      [JSON.stringify(script), JSON.stringify(segmentAssets), timestamps ? JSON.stringify(timestamps) : null, req.params.id]
+    );
+
+    // Respond immediately — recomposition happens in background
+    res.json({ success: true, message: 'Section removed. Recomposing video...' });
+
+    // Trigger recomposition via regenerateSegments with voiceover-only regen
+    // Pass the first remaining segment with regenerateVoiceover flag to trigger
+    // a full voiceover rebuild (narration changed since a segment was removed)
+    regenerateSegments(req.params.id, user.id, [
+      { order: script.segments[0].order, regenerateVoiceover: true }
+    ]).catch(err => {
+      console.error(`Remove-section recompose failed for video ${req.params.id}:`, err.message);
+    });
+  } catch (err) {
+    console.error('Failed to remove section:', err);
+    res.status(500).json({ error: 'Failed to remove section' });
   }
 });
 

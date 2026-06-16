@@ -459,10 +459,15 @@ async function _runPipelineImpl(videoId, userId, options = {}) {
     }
 
     // ── Step 5b: Upload individual segment clips for selective regeneration ──
+    // Wrap in a 90s timeout — these are optional and must not block the main upload
     try {
       if (compositeResult.segmentClips && compositeResult.segmentClips.length > 0) {
         console.log(`[Pipeline] Uploading ${compositeResult.segmentClips.length} segment clips to R2...`);
-        const segClipUrls = await uploadSegmentClips(userId, videoId, compositeResult.segmentClips);
+        const segClipUrls = await withTimeout(
+          uploadSegmentClips(userId, videoId, compositeResult.segmentClips),
+          90000,
+          'Segment clip upload'
+        );
 
         // Also store voiceover URL per-segment (timestamps are already in DB)
         const segmentAssets = {

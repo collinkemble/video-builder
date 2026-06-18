@@ -15,7 +15,10 @@ const { uploadVideoAssets, uploadSegmentClips } = require('../utils/r2');
 // Additional requests queue up and run sequentially.
 let pipelineRunning = false;
 let _currentVideoId = null;
+let _pipelineStartedAt = null;
 const pipelineQueue = [];
+
+const PIPELINE_TIMEOUT_MS = 20 * 60 * 1000; // 20 minutes
 
 function enqueuePipeline(videoId, userId, options) {
   return new Promise((resolve, reject) => {
@@ -38,6 +41,7 @@ function enqueuePipeline(videoId, userId, options) {
 
 async function _runPipelineNow(task) {
   _currentVideoId = task.videoId;
+  _pipelineStartedAt = Date.now();
   try {
     const result = await _runPipelineImpl(task.videoId, task.userId, task.options);
     task.resolve(result);
@@ -45,6 +49,7 @@ async function _runPipelineNow(task) {
     task.reject(err);
   } finally {
     _currentVideoId = null;
+    _pipelineStartedAt = null;
     // Process next in queue
     if (pipelineQueue.length > 0) {
       const next = pipelineQueue.shift();
@@ -1178,5 +1183,60 @@ async function regenerateSegments(videoId, userId, changes) {
     throw err;
   }
 }
+
+// ── Pipeline Watchdog ──
+// Checks every 60s if the current pipeline has exceeded the timeout.
+// Before force-failing, checks the DB to see if the video already completed
+// (which can happen if the pipeline finished but the queue lock wasn't released).
+setInterval(async () => {
+  if (!pipelineRunning || !_pipelineStartedAt) return;
+  const elapsed = Date.now() - _pipelineStartedAt;
+  if (elapsed > PIPELINE_TIMEOUT_MS) {
+    const stuckVideoId = _currentVideoId;
+    console.warn(`[Pipeline Watchdog] ⚠️ Video ${stuckVideoId} has been running for ${Math.round(elapsed / 1000)}s — checking DB status before acting.`);
+    try {
+      const [video] = await query('SELECT status, video_url FROM videos WHERE id = ?', [stuckVideoId]);
+      const dbStatus = video ? video.status : 'unknown';
+
+      if (['completed', 'failed', 'draft'].includes(dbStatus)) {
+        // Video already finished — just release the queue lock
+        console.log(`[Pipeline Watchdog] Video ${stuckVideoId} is already "${dbStatus}" in DB — releasing queue lock (no action needed).`);
+        pipelineRunning = false;
+        _currentVideoId = null;
+        _pipelineStartedAt = null;
+      } else if (dbStatus === 'uploading' && video.video_url) {
+        // Upload likely finishing — wait one more cycle
+        console.log(`[Pipeline Watchdog] Video ${stuckVideoId} is "${dbStatus}" with a video_url — likely finishing. Waiting one more cycle.`);
+        return;
+      } else {
+        // Genuinely stuck — force-fail
+        console.error(`[Pipeline Watchdog] Video ${stuckVideoId} is stuck at "${dbStatus}" — force-failing.`);
+        pipelineRunning = false;
+        _currentVideoId = null;
+        _pipelineStartedAt = null;
+        await query(
+          "UPDATE videos SET status = 'failed', error = 'Pipeline timed out (watchdog)' WHERE id = ? AND status NOT IN ('completed', 'draft', 'failed')",
+          [stuckVideoId]
+        );
+        await query(
+          "UPDATE video_jobs SET status = 'failed', error = 'Pipeline timed out (watchdog)', completed_at = NOW() WHERE video_id = ? AND status IN ('pending', 'running')",
+          [stuckVideoId]
+        );
+      }
+    } catch (e) {
+      console.warn(`[Pipeline Watchdog] DB check failed (${e.message}) — force-releasing queue.`);
+      pipelineRunning = false;
+      _currentVideoId = null;
+      _pipelineStartedAt = null;
+    }
+    // Start next queued video if any
+    if (!pipelineRunning && pipelineQueue.length > 0) {
+      const next = pipelineQueue.shift();
+      pipelineRunning = true;
+      _pipelineStartedAt = Date.now();
+      _runPipelineNow(next);
+    }
+  }
+}, 60000);
 
 module.exports = { runPipeline, getPipelineStatus, regenerateSegments, getQueueInfo };

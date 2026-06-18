@@ -18,7 +18,7 @@ const fs = require('fs');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const BUILD_VERSION = 'v180-multi-language';
+const BUILD_VERSION = 'v183-admin-bypass';
 
 // ─── Staging Banner ───
 const STAGING_BANNER_HTML = '<div style="background:#f59e0b;color:#000;text-align:center;padding:4px;font-size:12px;font-weight:700;position:fixed;top:0;left:0;right:0;z-index:99999;">⚠️ STAGING ENVIRONMENT</div><div style="height:28px;"></div>';
@@ -730,8 +730,10 @@ app.put('/api/videos/:id', async (req, res) => {
 
     const user = await getOrCreateUser(email);
 
-    // Verify ownership
-    const existing = await query('SELECT id FROM videos WHERE id = ? AND user_id = ?', [req.params.id, user.id]);
+    // Verify ownership (admins can operate on any video)
+    const existing = isAdmin(email)
+      ? await query('SELECT id FROM videos WHERE id = ?', [req.params.id])
+      : await query('SELECT id FROM videos WHERE id = ? AND user_id = ?', [req.params.id, user.id]);
     if (existing.length === 0) {
       return res.status(404).json({ error: 'Video not found' });
     }
@@ -840,8 +842,10 @@ app.delete('/api/videos/:id', async (req, res) => {
 
     const user = await getOrCreateUser(email);
 
-    // Verify ownership before deleting
-    const [video] = await query('SELECT id FROM videos WHERE id = ? AND user_id = ?', [req.params.id, user.id]);
+    // Verify ownership before deleting (admins can delete any video)
+    const [video] = isAdmin(email)
+      ? await query('SELECT id, user_id FROM videos WHERE id = ?', [req.params.id])
+      : await query('SELECT id, user_id FROM videos WHERE id = ? AND user_id = ?', [req.params.id, user.id]);
     if (!video) {
       return res.status(404).json({ error: 'Video not found' });
     }
@@ -850,10 +854,11 @@ app.delete('/api/videos/:id', async (req, res) => {
     await query('DELETE FROM video_jobs WHERE video_id = ?', [req.params.id]);
 
     // Delete the video record
-    await query('DELETE FROM videos WHERE id = ? AND user_id = ?', [req.params.id, user.id]);
+    const deleteUserId = video.user_id || user.id;
+    await query('DELETE FROM videos WHERE id = ?', [req.params.id]);
 
     // Clean up R2 assets in background (don't block the response)
-    deleteVideoAssets(user.id, req.params.id).catch(err => {
+    deleteVideoAssets(deleteUserId, req.params.id).catch(err => {
       console.error(`Failed to clean up R2 assets for video ${req.params.id}:`, err.message);
     });
 
@@ -875,7 +880,9 @@ app.post('/api/videos/:id/generate-script', async (req, res) => {
     if (!email) return res.status(400).json({ error: 'Email required' });
 
     const user = await getOrCreateUser(email);
-    const rows = await query('SELECT * FROM videos WHERE id = ? AND user_id = ?', [req.params.id, user.id]);
+    const rows = isAdmin(email)
+      ? await query('SELECT * FROM videos WHERE id = ?', [req.params.id])
+      : await query('SELECT * FROM videos WHERE id = ? AND user_id = ?', [req.params.id, user.id]);
     if (rows.length === 0) return res.status(404).json({ error: 'Video not found' });
 
     const video = rows[0];
@@ -928,14 +935,18 @@ app.post('/api/videos/:id/generate', async (req, res) => {
     if (!email) return res.status(400).json({ error: 'Email required' });
 
     const user = await getOrCreateUser(email);
+    const admin = isAdmin(email);
 
-    // Verify ownership and check status
-    const rows = await query('SELECT * FROM videos WHERE id = ? AND user_id = ?', [req.params.id, user.id]);
+    // Verify ownership and check status (admins can operate on any video)
+    const rows = admin
+      ? await query('SELECT * FROM videos WHERE id = ?', [req.params.id])
+      : await query('SELECT * FROM videos WHERE id = ? AND user_id = ?', [req.params.id, user.id]);
     if (rows.length === 0) {
       return res.status(404).json({ error: 'Video not found' });
     }
 
     const video = rows[0];
+    const ownerId = video.user_id;
     // Allow force-restart if stuck (client sends force=true)
     const isProcessing = ['scripting', 'voiceover', 'capturing', 'compositing', 'uploading'].includes(video.status);
     if (isProcessing && !req.body.force) {
@@ -947,15 +958,15 @@ app.post('/api/videos/:id/generate', async (req, res) => {
     await query('DELETE FROM video_jobs WHERE video_id = ?', [req.params.id]);
 
     // Clean up old R2 assets in background before regenerating
-    deleteVideoAssets(user.id, req.params.id).catch(err => {
+    deleteVideoAssets(ownerId, req.params.id).catch(err => {
       console.warn(`Failed to clean up old R2 assets for video ${req.params.id}:`, err.message);
     });
 
     // Start pipeline in background (don't await)
     res.json({ success: true, message: 'Pipeline started. Poll /api/videos/:id/status for progress.' });
 
-    // Run pipeline asynchronously
-    runPipeline(req.params.id, user.id).catch(err => {
+    // Run pipeline asynchronously (use video owner's ID, not admin's)
+    runPipeline(req.params.id, ownerId).catch(err => {
       console.error(`Pipeline failed for video ${req.params.id}:`, err.message);
     });
   } catch (err) {
@@ -985,8 +996,10 @@ app.post('/api/videos/:id/regenerate-segments', async (req, res) => {
 
     const user = await getOrCreateUser(email);
 
-    // Verify ownership and check status
-    const rows = await query('SELECT * FROM videos WHERE id = ? AND user_id = ?', [req.params.id, user.id]);
+    // Verify ownership and check status (admins can operate on any video)
+    const rows = isAdmin(email)
+      ? await query('SELECT * FROM videos WHERE id = ?', [req.params.id])
+      : await query('SELECT * FROM videos WHERE id = ? AND user_id = ?', [req.params.id, user.id]);
     if (rows.length === 0) return res.status(404).json({ error: 'Video not found' });
 
     const video = rows[0];
@@ -1002,10 +1015,10 @@ app.post('/api/videos/:id/regenerate-segments', async (req, res) => {
       return res.status(409).json({ error: 'No segment assets available. Please regenerate the full video first.' });
     }
 
-    // Start regeneration in background
+    // Start regeneration in background (use video owner's ID, not admin's)
     res.json({ success: true, message: 'Segment regeneration started. Poll /api/videos/:id/status for progress.' });
 
-    regenerateSegments(req.params.id, user.id, changes).catch(err => {
+    regenerateSegments(req.params.id, video.user_id, changes).catch(err => {
       console.error(`Segment regeneration failed for video ${req.params.id}:`, err.message);
     });
   } catch (err) {
@@ -1024,7 +1037,9 @@ app.post('/api/videos/:id/smart-edit', async (req, res) => {
     }
 
     const user = await getOrCreateUser(email);
-    const rows = await query('SELECT * FROM videos WHERE id = ? AND user_id = ?', [req.params.id, user.id]);
+    const rows = isAdmin(email)
+      ? await query('SELECT * FROM videos WHERE id = ?', [req.params.id])
+      : await query('SELECT * FROM videos WHERE id = ? AND user_id = ?', [req.params.id, user.id]);
     if (rows.length === 0) return res.status(404).json({ error: 'Video not found' });
 
     const video = rows[0];
@@ -1272,7 +1287,9 @@ app.post('/api/videos/:id/generate-persona-image', async (req, res) => {
     if (!apiKey) return res.status(500).json({ error: 'Image generation not configured' });
 
     const user = await getOrCreateUser(email);
-    const rows = await query('SELECT * FROM videos WHERE id = ? AND user_id = ?', [req.params.id, user.id]);
+    const rows = isAdmin(email)
+      ? await query('SELECT * FROM videos WHERE id = ?', [req.params.id])
+      : await query('SELECT * FROM videos WHERE id = ? AND user_id = ?', [req.params.id, user.id]);
     if (rows.length === 0) return res.status(404).json({ error: 'Video not found' });
 
     const video = rows[0];
@@ -1378,7 +1395,9 @@ app.post('/api/videos/:id/upload-persona-image', async (req, res) => {
     if (!imageData) return res.status(400).json({ error: 'Image data required (base64)' });
 
     const user = await getOrCreateUser(email);
-    const rows = await query('SELECT id FROM videos WHERE id = ? AND user_id = ?', [req.params.id, user.id]);
+    const rows = isAdmin(email)
+      ? await query('SELECT id FROM videos WHERE id = ?', [req.params.id])
+      : await query('SELECT id FROM videos WHERE id = ? AND user_id = ?', [req.params.id, user.id]);
     if (rows.length === 0) return res.status(404).json({ error: 'Video not found' });
 
     // Parse base64 data URI — supports data:image/png;base64,... or raw base64
@@ -1424,7 +1443,9 @@ app.delete('/api/videos/:id/persona-image', async (req, res) => {
     if (!email) return res.status(400).json({ error: 'Email required' });
 
     const user = await getOrCreateUser(email);
-    const rows = await query('SELECT id FROM videos WHERE id = ? AND user_id = ?', [req.params.id, user.id]);
+    const rows = isAdmin(email)
+      ? await query('SELECT id FROM videos WHERE id = ?', [req.params.id])
+      : await query('SELECT id FROM videos WHERE id = ? AND user_id = ?', [req.params.id, user.id]);
     if (rows.length === 0) return res.status(404).json({ error: 'Video not found' });
 
     await query('UPDATE videos SET persona_image_url = NULL, updated_at = NOW() WHERE id = ?', [req.params.id]);
@@ -1444,7 +1465,9 @@ app.post('/api/videos/:id/upload-brand-logo', async (req, res) => {
     if (!imageData) return res.status(400).json({ error: 'Image data required (base64)' });
 
     const user = await getOrCreateUser(email);
-    const rows = await query('SELECT id FROM videos WHERE id = ? AND user_id = ?', [req.params.id, user.id]);
+    const rows = isAdmin(email)
+      ? await query('SELECT id FROM videos WHERE id = ?', [req.params.id])
+      : await query('SELECT id FROM videos WHERE id = ? AND user_id = ?', [req.params.id, user.id]);
     if (rows.length === 0) return res.status(404).json({ error: 'Video not found' });
 
     // Parse base64 data URI

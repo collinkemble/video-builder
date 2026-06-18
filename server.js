@@ -18,7 +18,7 @@ const fs = require('fs');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const BUILD_VERSION = 'v182-delete-recompose';
+const BUILD_VERSION = 'v183-admin-bypass';
 
 // ─── Staging Banner ───
 const STAGING_BANNER_HTML = '<div style="background:#f59e0b;color:#000;text-align:center;padding:4px;font-size:12px;font-weight:700;position:fixed;top:0;left:0;right:0;z-index:99999;">⚠️ STAGING ENVIRONMENT</div><div style="height:28px;"></div>';
@@ -730,8 +730,10 @@ app.put('/api/videos/:id', async (req, res) => {
 
     const user = await getOrCreateUser(email);
 
-    // Verify ownership
-    const existing = await query('SELECT id FROM videos WHERE id = ? AND user_id = ?', [req.params.id, user.id]);
+    // Verify ownership (admins can operate on any video)
+    const existing = isAdmin(email)
+      ? await query('SELECT id FROM videos WHERE id = ?', [req.params.id])
+      : await query('SELECT id FROM videos WHERE id = ? AND user_id = ?', [req.params.id, user.id]);
     if (existing.length === 0) {
       return res.status(404).json({ error: 'Video not found' });
     }
@@ -840,8 +842,10 @@ app.delete('/api/videos/:id', async (req, res) => {
 
     const user = await getOrCreateUser(email);
 
-    // Verify ownership before deleting
-    const [video] = await query('SELECT id FROM videos WHERE id = ? AND user_id = ?', [req.params.id, user.id]);
+    // Verify ownership before deleting (admins can delete any video)
+    const [video] = isAdmin(email)
+      ? await query('SELECT id, user_id FROM videos WHERE id = ?', [req.params.id])
+      : await query('SELECT id, user_id FROM videos WHERE id = ? AND user_id = ?', [req.params.id, user.id]);
     if (!video) {
       return res.status(404).json({ error: 'Video not found' });
     }
@@ -890,7 +894,9 @@ app.post('/api/videos/:id/generate-script', async (req, res) => {
     }
 
     const user = await getOrCreateUser(email);
-    const rows = await query('SELECT * FROM videos WHERE id = ? AND user_id = ?', [req.params.id, user.id]);
+    const rows = isAdmin(email)
+      ? await query('SELECT * FROM videos WHERE id = ?', [req.params.id])
+      : await query('SELECT * FROM videos WHERE id = ? AND user_id = ?', [req.params.id, user.id]);
     if (rows.length === 0) {
       clearInterval(keepalive);
       return res.end(JSON.stringify({ error: 'Video not found' }));
@@ -949,14 +955,18 @@ app.post('/api/videos/:id/generate', async (req, res) => {
     if (!email) return res.status(400).json({ error: 'Email required' });
 
     const user = await getOrCreateUser(email);
+    const admin = isAdmin(email);
 
-    // Verify ownership and check status
-    const rows = await query('SELECT * FROM videos WHERE id = ? AND user_id = ?', [req.params.id, user.id]);
+    // Verify ownership and check status (admins can operate on any video)
+    const rows = admin
+      ? await query('SELECT * FROM videos WHERE id = ?', [req.params.id])
+      : await query('SELECT * FROM videos WHERE id = ? AND user_id = ?', [req.params.id, user.id]);
     if (rows.length === 0) {
       return res.status(404).json({ error: 'Video not found' });
     }
 
     const video = rows[0];
+    const ownerId = video.user_id;
     // Allow force-restart if stuck (client sends force=true)
     const isProcessing = ['scripting', 'voiceover', 'capturing', 'compositing', 'uploading'].includes(video.status);
     if (isProcessing && !req.body.force) {
@@ -968,15 +978,15 @@ app.post('/api/videos/:id/generate', async (req, res) => {
     await query('DELETE FROM video_jobs WHERE video_id = ?', [req.params.id]);
 
     // Clean up old R2 assets in background before regenerating
-    deleteVideoAssets(user.id, req.params.id).catch(err => {
+    deleteVideoAssets(ownerId, req.params.id).catch(err => {
       console.warn(`Failed to clean up old R2 assets for video ${req.params.id}:`, err.message);
     });
 
     // Start pipeline in background (don't await)
     res.json({ success: true, message: 'Pipeline started. Poll /api/videos/:id/status for progress.' });
 
-    // Run pipeline asynchronously
-    runPipeline(req.params.id, user.id).catch(err => {
+    // Run pipeline asynchronously (use video owner's ID, not admin's)
+    runPipeline(req.params.id, ownerId).catch(err => {
       console.error(`Pipeline failed for video ${req.params.id}:`, err.message);
     });
   } catch (err) {
@@ -1005,9 +1015,12 @@ app.post('/api/videos/:id/regenerate-segments', async (req, res) => {
     }
 
     const user = await getOrCreateUser(email);
+    const admin = isAdmin(email);
 
-    // Verify ownership and check status
-    const rows = await query('SELECT * FROM videos WHERE id = ? AND user_id = ?', [req.params.id, user.id]);
+    // Verify ownership and check status (admins can operate on any video)
+    const rows = admin
+      ? await query('SELECT * FROM videos WHERE id = ?', [req.params.id])
+      : await query('SELECT * FROM videos WHERE id = ? AND user_id = ?', [req.params.id, user.id]);
     if (rows.length === 0) return res.status(404).json({ error: 'Video not found' });
 
     const video = rows[0];
@@ -1023,10 +1036,10 @@ app.post('/api/videos/:id/regenerate-segments', async (req, res) => {
       return res.status(409).json({ error: 'No segment assets available. Please regenerate the full video first.' });
     }
 
-    // Start regeneration in background
+    // Start regeneration in background (use video owner's ID, not admin's)
     res.json({ success: true, message: 'Segment regeneration started. Poll /api/videos/:id/status for progress.' });
 
-    regenerateSegments(req.params.id, user.id, changes).catch(err => {
+    regenerateSegments(req.params.id, video.user_id, changes).catch(err => {
       console.error(`Segment regeneration failed for video ${req.params.id}:`, err.message);
     });
   } catch (err) {
@@ -1045,7 +1058,10 @@ app.post('/api/videos/:id/remove-section', async (req, res) => {
     }
 
     const user = await getOrCreateUser(email);
-    const rows = await query('SELECT * FROM videos WHERE id = ? AND user_id = ?', [req.params.id, user.id]);
+    const admin = isAdmin(email);
+    const rows = admin
+      ? await query('SELECT * FROM videos WHERE id = ?', [req.params.id])
+      : await query('SELECT * FROM videos WHERE id = ? AND user_id = ?', [req.params.id, user.id]);
     if (rows.length === 0) return res.status(404).json({ error: 'Video not found' });
 
     const video = rows[0];
@@ -1126,7 +1142,7 @@ app.post('/api/videos/:id/remove-section', async (req, res) => {
     // Trigger recomposition via regenerateSegments with voiceover-only regen
     // Pass the first remaining segment with regenerateVoiceover flag to trigger
     // a full voiceover rebuild (narration changed since a segment was removed)
-    regenerateSegments(req.params.id, user.id, [
+    regenerateSegments(req.params.id, video.user_id, [
       { order: script.segments[0].order, regenerateVoiceover: true }
     ]).catch(err => {
       console.error(`Remove-section recompose failed for video ${req.params.id}:`, err.message);
@@ -1147,7 +1163,9 @@ app.post('/api/videos/:id/smart-edit', async (req, res) => {
     }
 
     const user = await getOrCreateUser(email);
-    const rows = await query('SELECT * FROM videos WHERE id = ? AND user_id = ?', [req.params.id, user.id]);
+    const rows = isAdmin(email)
+      ? await query('SELECT * FROM videos WHERE id = ?', [req.params.id])
+      : await query('SELECT * FROM videos WHERE id = ? AND user_id = ?', [req.params.id, user.id]);
     if (rows.length === 0) return res.status(404).json({ error: 'Video not found' });
 
     const video = rows[0];
@@ -1395,7 +1413,9 @@ app.post('/api/videos/:id/generate-persona-image', async (req, res) => {
     if (!apiKey) return res.status(500).json({ error: 'Image generation not configured' });
 
     const user = await getOrCreateUser(email);
-    const rows = await query('SELECT * FROM videos WHERE id = ? AND user_id = ?', [req.params.id, user.id]);
+    const rows = isAdmin(email)
+      ? await query('SELECT * FROM videos WHERE id = ?', [req.params.id])
+      : await query('SELECT * FROM videos WHERE id = ? AND user_id = ?', [req.params.id, user.id]);
     if (rows.length === 0) return res.status(404).json({ error: 'Video not found' });
 
     const video = rows[0];

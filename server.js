@@ -18,7 +18,7 @@ const fs = require('fs');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const BUILD_VERSION = 'v184-watchdog-fix';
+const BUILD_VERSION = 'v185-status-admin-bypass';
 
 // ─── Staging Banner ───
 const STAGING_BANNER_HTML = '<div style="background:#f59e0b;color:#000;text-align:center;padding:4px;font-size:12px;font-weight:700;position:fixed;top:0;left:0;right:0;z-index:99999;">⚠️ STAGING ENVIRONMENT</div><div style="height:28px;"></div>';
@@ -1079,7 +1079,26 @@ app.get('/api/videos/:id/status', async (req, res) => {
     if (!email) return res.status(400).json({ error: 'Email required' });
 
     const user = await getOrCreateUser(email);
-    const status = await getPipelineStatus(req.params.id, user.id);
+    const admin = isAdmin(email);
+
+    // Admin bypass: query without user_id filter
+    let status;
+    if (admin) {
+      const [video] = await query(
+        'SELECT id, name, status, error, duration_actual, video_url, thumbnail_url, created_at, updated_at FROM videos WHERE id = ?',
+        [req.params.id]
+      );
+      if (!video) {
+        return res.status(404).json({ error: 'Video not found' });
+      }
+      const jobs = await query(
+        'SELECT id, step, status, progress, total, error, started_at, completed_at FROM video_jobs WHERE video_id = ? ORDER BY created_at ASC',
+        [req.params.id]
+      );
+      status = { video, jobs };
+    } else {
+      status = await getPipelineStatus(req.params.id, user.id);
+    }
 
     if (!status) {
       return res.status(404).json({ error: 'Video not found' });

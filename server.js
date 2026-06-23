@@ -825,6 +825,13 @@ app.put('/api/videos/:id', async (req, res) => {
       params.push(description === '' ? null : description.trim());
     }
 
+    // Segment assets (used to remap clip keys when sections are reordered)
+    const { segmentAssets } = req.body;
+    if (segmentAssets !== undefined && segmentAssets !== null) {
+      sets.push('segment_assets = ?');
+      params.push(segmentAssets === '' ? null : (typeof segmentAssets === 'string' ? segmentAssets : JSON.stringify(segmentAssets)));
+    }
+
     // Public player page fields
     const { publicEnabled, publicPassword } = req.body;
     if (publicEnabled !== undefined && publicEnabled !== null) {

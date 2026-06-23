@@ -861,9 +861,89 @@ async function regenerateSegments(videoId, userId, changes) {
           continue;
         }
 
-        // Custom asset segments have a fixed visual — skip b-roll regeneration
+        // Custom asset segments — download the asset and create a normalized clip
         if (seg.visualType === 'custom_asset') {
-          console.log(`[Regen] Segment ${c.order} is a custom asset — keeping existing visual`);
+          if (!seg.customAssetUrl) {
+            console.log(`[Regen] Segment ${c.order} is a custom asset but has no URL — skipping`);
+            continue;
+          }
+          // If this segment already has a clip in existingClips, skip processing
+          if (existingClips[c.order]) {
+            console.log(`[Regen] Segment ${c.order} is a custom asset with existing clip — keeping`);
+            continue;
+          }
+          try {
+            // Calculate target duration
+            const tsMap = {};
+            if (timestamps && timestamps.segments) {
+              timestamps.segments.forEach(ts => { tsMap[ts.order] = ts; });
+            }
+            const orderedTs = timestamps && timestamps.segments
+              ? timestamps.segments.slice().sort((a, b) => a.order - b.order)
+              : [];
+            const ts = tsMap[seg.order];
+            let duration = seg.estimatedDuration || 10;
+            if (ts) {
+              const tsIdx = orderedTs.findIndex(t => t.order === seg.order);
+              const nextTs = (tsIdx >= 0 && tsIdx < orderedTs.length - 1) ? orderedTs[tsIdx + 1] : null;
+              duration = nextTs ? (nextTs.startTime - ts.startTime) : (ts.endTime - ts.startTime);
+            }
+            if (duration < 1) duration = 1;
+
+            console.log(`[Regen] Downloading custom asset for segment ${c.order} (${seg.customAssetType}, ${duration.toFixed(1)}s)...`);
+            const isVideo = seg.customAssetType === 'video';
+            const assetExt = isVideo ? 'mp4' : 'png';
+            const assetLocalPath = path.join(workDir, `custom_download_${c.order}.${assetExt}`);
+
+            const assetResp = await fetch(seg.customAssetUrl);
+            if (!assetResp.ok) throw new Error(`Failed to download custom asset: ${assetResp.status}`);
+            fs.writeFileSync(assetLocalPath, Buffer.from(await assetResp.arrayBuffer()));
+
+            const normalizedPath = path.join(workDir, `regen_clip_${c.order}.mp4`);
+            const ffmpegPath = process.env.FFMPEG_PATH || 'ffmpeg';
+            const { spawn } = require('child_process');
+
+            if (isVideo) {
+              // Normalize video to 1920x1080 and target duration — preserve audio if useUploadedAudio
+              const preserveAudio = seg.useUploadedAudio === true;
+              const audioArgs = preserveAudio ? [] : ['-an'];
+              await new Promise((resolve, reject) => {
+                const proc = spawn(ffmpegPath, [
+                  '-y', '-stream_loop', '-1', '-i', assetLocalPath,
+                  '-vf', 'scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,format=yuv420p',
+                  '-c:v', 'libx264', '-preset', 'fast', '-crf', '26',
+                  '-t', String(duration), '-r', '30', '-pix_fmt', 'yuv420p',
+                  ...audioArgs,
+                  '-movflags', '+faststart', normalizedPath,
+                ], { stdio: ['ignore', 'pipe', 'pipe'] });
+                let stderr = '';
+                proc.stderr.on('data', d => stderr += d);
+                proc.on('close', code => code === 0 ? resolve() : reject(new Error(`FFmpeg failed: ${stderr.slice(-200)}`)));
+                proc.on('error', reject);
+              });
+            } else {
+              // Image → video with Ken Burns zoom
+              const totalFrames = Math.ceil(duration * 30);
+              await new Promise((resolve, reject) => {
+                const proc = spawn(ffmpegPath, [
+                  '-y', '-loop', '1', '-i', assetLocalPath,
+                  '-vf', `scale=2208:1242,crop='1920-((1920-1651)*n/${totalFrames})':'1080-((1080-929)*n/${totalFrames})',scale=1920:1080,format=yuv420p`,
+                  '-c:v', 'libx264', '-preset', 'fast', '-crf', '26',
+                  '-t', String(duration), '-r', '30', '-pix_fmt', 'yuv420p',
+                  '-movflags', '+faststart', normalizedPath,
+                ], { stdio: ['ignore', 'pipe', 'pipe'] });
+                let stderr = '';
+                proc.stderr.on('data', d => stderr += d);
+                proc.on('close', code => code === 0 ? resolve() : reject(new Error(`FFmpeg failed: ${stderr.slice(-200)}`)));
+                proc.on('error', reject);
+              });
+            }
+
+            newBrollClips[c.order] = normalizedPath;
+            console.log(`[Regen] ✓ Custom asset processed for segment ${c.order} (${duration.toFixed(1)}s)`);
+          } catch (err) {
+            console.warn(`[Regen] Custom asset processing failed for segment ${c.order}: ${err.message}`);
+          }
           continue;
         }
 

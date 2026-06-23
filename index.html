@@ -2122,6 +2122,16 @@ function renderScript(script) {
         <div style="background: #F9FAFB; border: 1px solid #E5E7EB; border-radius: 8px; padding: 10px 12px; margin-bottom: 8px;">
           <span style="font-size: 11px; color: #888;">Visual: ${seg.visualType === 'scene_capture' ? 'Scene capture (not editable)' : seg.visualType === 'custom_asset' ? 'Custom ' + (seg.customAssetType || 'asset') + ' (uploaded)' : seg.visualType || 'none'}</span>
         </div>`}
+        ${isCustomAsset ? `
+        <div style="background: #FEF3C7; border: 1px solid #FDE68A; border-radius: 8px; padding: 10px 12px; margin-bottom: 8px;">
+          <label style="font-size: 11px; font-weight: 600; color: #92400E; display: block; margin-bottom: 4px;">Minimum Duration (seconds)</label>
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <input type="number" id="seg-duration-${i}" data-duration-index="${i}" value="${seg.estimatedDuration || 10}" min="4" max="120" step="1"
+              oninput="onSegmentDurationEdit(${i})"
+              style="width: 80px; font-size: 14px; font-weight: 600; color: #92400E; padding: 6px 10px; border: 1px solid #FDE68A; border-radius: 6px; background: white; font-family: inherit;">
+            <span style="font-size: 12px; color: #92400E; line-height: 1.4;">If narration is longer than this, the scene extends to fit. If shorter, the scene holds for this duration.</span>
+          </div>
+        </div>` : ''}
         <div style="display: flex; gap: 14px; margin-bottom: 8px; padding: 0 2px;">
           <label style="display: flex; align-items: center; gap: 5px; font-size: 12px; color: #555; cursor: pointer;">
             <input type="checkbox" id="seg-only-narration-${i}" data-seg-index="${i}" style="accent-color: #7C3AED; cursor: pointer;">
@@ -2697,6 +2707,7 @@ function storeOriginalSegments() {
     window._originalSegments[i] = {
       narration: seg.narration || '',
       brollDescription: seg.brollDescription || '',
+      estimatedDuration: seg.estimatedDuration || 10,
     };
   });
 }
@@ -2709,7 +2720,8 @@ function markSegmentEdited(index, field) {
 
   const narrationChanged = (seg.narration || '') !== orig.narration;
   const brollChanged = (seg.brollDescription || '') !== orig.brollDescription;
-  const isEdited = narrationChanged || brollChanged;
+  const durationChanged = (seg.estimatedDuration || 10) !== (orig.estimatedDuration || 10);
+  const isEdited = narrationChanged || brollChanged || durationChanged;
 
   const badge = document.getElementById(`seg-changed-badge-${index}`);
   const row = document.querySelector(`.script-seg-row[data-seg-index="${index}"]`);
@@ -2799,6 +2811,25 @@ function onSegmentBrollEdit(index) {
   markSegmentEdited(index, 'broll');
 }
 
+function onSegmentDurationEdit(index) {
+  const input = document.getElementById(`seg-duration-${index}`);
+  if (!input || !window._currentScript) return;
+  const seg = window._currentScript.segments[index];
+  if (!seg) return;
+  const val = parseInt(input.value, 10);
+  if (val && val >= 4) {
+    seg.estimatedDuration = val;
+    // Update the duration display in the header row
+    const row = document.querySelector(`.script-seg-row[data-seg-index="${index}"]`);
+    if (row) {
+      const durSpan = row.querySelector('span[style*="color: #ccc"]');
+      if (durSpan) durSpan.textContent = `~${val}s`;
+    }
+  }
+  document.getElementById('save-script-btn').classList.remove('hidden');
+  markSegmentEdited(index, 'duration');
+}
+
 function updateBatchRegenBar() {
   const edited = window._editedSegments ? window._editedSegments.size : 0;
   const bar = document.getElementById('batch-regen-bar');
@@ -2856,13 +2887,15 @@ function buildChangeForSegment(index) {
 
   const narrationChanged = (seg.narration || '') !== orig.narration;
   const brollChanged = (seg.brollDescription || '') !== orig.brollDescription;
+  const durationChanged = (seg.estimatedDuration || 10) !== (orig.estimatedDuration || 10);
 
-  if (!narrationChanged && !brollChanged) return null;
+  if (!narrationChanged && !brollChanged && !durationChanged) return null;
 
   const change = {
     order: seg.order,
-    regenerateVoiceover: narrationChanged,
-    regenerateBroll: brollChanged && (seg.visualType === 'broll' || seg.visualType === 'scene_capture'),
+    // Duration change needs voiceover regen (timeline shifts) and visual regen (clip length changes)
+    regenerateVoiceover: narrationChanged || durationChanged,
+    regenerateBroll: (brollChanged || durationChanged) && (seg.visualType === 'broll' || seg.visualType === 'scene_capture' || seg.visualType === 'custom_asset'),
   };
 
   if (narrationChanged) change.narration = seg.narration;

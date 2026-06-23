@@ -873,7 +873,7 @@ async function regenerateSegments(videoId, userId, changes) {
             continue;
           }
           try {
-            // Calculate target duration
+            // Calculate target duration — use estimatedDuration as minimum floor
             const tsMap = {};
             if (timestamps && timestamps.segments) {
               timestamps.segments.forEach(ts => { tsMap[ts.order] = ts; });
@@ -886,7 +886,9 @@ async function regenerateSegments(videoId, userId, changes) {
             if (ts) {
               const tsIdx = orderedTs.findIndex(t => t.order === seg.order);
               const nextTs = (tsIdx >= 0 && tsIdx < orderedTs.length - 1) ? orderedTs[tsIdx + 1] : null;
-              duration = nextTs ? (nextTs.startTime - ts.startTime) : (ts.endTime - ts.startTime);
+              const audioDuration = nextTs ? (nextTs.startTime - ts.startTime) : (ts.endTime - ts.startTime);
+              // Custom assets: estimatedDuration is the minimum floor
+              duration = Math.max(audioDuration, seg.estimatedDuration || 0);
             }
             if (duration < 1) duration = 1;
 
@@ -1211,6 +1213,50 @@ async function regenerateSegments(videoId, userId, changes) {
       proc.on('close', code => code === 0 ? resolve() : reject(new Error(`Concat failed: ${stderr.slice(-200)}`)));
       proc.on('error', reject);
     });
+
+    // ── Pad voiceover for custom_asset segments with extended durations ──
+    // Same logic as compositor: if custom_asset estimatedDuration > voiceover duration,
+    // insert silence to keep subsequent narration in sync with visuals.
+    if (voiceoverPath && fs.existsSync(voiceoverPath) && timestamps && timestamps.segments) {
+      const tsMapPad = {};
+      timestamps.segments.forEach(ts => { tsMapPad[ts.order] = ts; });
+      const orderedTsPad = timestamps.segments.slice().sort((a, b) => a.order - b.order);
+
+      const paddingPoints = [];
+      let cumulativePadding = 0;
+
+      for (const seg of script.segments) {
+        if (seg.visualType !== 'custom_asset' || !seg.estimatedDuration) continue;
+        const ts = tsMapPad[seg.order];
+        if (!ts) continue;
+
+        const tsIdx = orderedTsPad.findIndex(t => t.order === seg.order);
+        const nextTs = (tsIdx >= 0 && tsIdx < orderedTsPad.length - 1) ? orderedTsPad[tsIdx + 1] : null;
+        const audioDuration = nextTs ? (nextTs.startTime - ts.startTime) : (ts.endTime - ts.startTime);
+
+        if (seg.estimatedDuration > audioDuration) {
+          const padding = seg.estimatedDuration - audioDuration;
+          paddingPoints.push({
+            insertAt: ts.endTime + cumulativePadding,
+            silenceDuration: padding,
+          });
+          cumulativePadding += padding;
+          console.log(`[Regen] Custom asset segment ${seg.order}: padding voiceover by ${padding.toFixed(1)}s`);
+        }
+      }
+
+      if (paddingPoints.length > 0) {
+        try {
+          const { padVoiceoverWithSilence } = require('./videoCompositor');
+          const paddedPath = path.join(workDir, 'voiceover_padded.mp3');
+          await padVoiceoverWithSilence(voiceoverPath, paddedPath, paddingPoints, workDir);
+          voiceoverPath = paddedPath;
+          console.log(`[Regen] ✓ Voiceover padded at ${paddingPoints.length} point(s)`);
+        } catch (err) {
+          console.warn(`[Regen] Voiceover padding failed (non-fatal): ${err.message}`);
+        }
+      }
+    }
 
     // ── Overlay voiceover audio ──
     const finalPath = path.join(workDir, `video_regen_${Date.now()}.mp4`);

@@ -2124,6 +2124,7 @@ function renderScript(script) {
         <span style="font-size: 10px; color: #ccc;">~${seg.estimatedDuration || '?'}s</span>
         ${canEdit ? `<span id="seg-changed-badge-${i}" class="seg-changed-badge" style="display: none; font-size: 9px; font-weight: 700; color: #F59E0B; background: #FFFBEB; border: 1px solid #FDE68A; padding: 1px 6px; border-radius: 4px; text-transform: uppercase; letter-spacing: 0.03em;">edited</span>` : ''}
         ${canEdit ? `<button onclick="toggleSegExpand(${i})" class="cursor-pointer seg-expand-toggle" data-seg-index="${i}" title="Edit this section" style="background: none; border: 1px solid #E5E7EB; border-radius: 6px; width: 26px; height: 26px; display: flex; align-items: center; justify-content: center; font-size: 11px; color: #7C3AED; margin-left: 4px;">✎</button>` : ''}
+        ${canEdit ? `<button onclick="regenerateSingleSegment(${i})" class="cursor-pointer seg-header-regen" data-seg-index="${i}" title="Regenerate this section" style="display: none; background: #7C3AED; border: none; border-radius: 6px; height: 26px; padding: 0 10px; font-size: 11px; font-weight: 700; color: white; align-items: center; justify-content: center; gap: 3px; margin-left: 2px; white-space: nowrap;">🔄 Regenerate</button>` : ''}
         <span style="margin-left: auto; display: flex; gap: 2px;">
           ${i > 0 ? `<button onclick="moveSegment(${i}, -1)" title="Move up" class="cursor-pointer" style="background: none; border: 1px solid #e5e7eb; border-radius: 6px; width: 26px; height: 26px; display: flex; align-items: center; justify-content: center; font-size: 12px; color: #666;">↑</button>` : ''}
           ${i < total - 1 ? `<button onclick="moveSegment(${i}, 1)" title="Move down" class="cursor-pointer" style="background: none; border: 1px solid #e5e7eb; border-radius: 6px; width: 26px; height: 26px; display: flex; align-items: center; justify-content: center; font-size: 12px; color: #666;">↓</button>` : ''}
@@ -2485,11 +2486,16 @@ function toggleSegExpand(index) {
   document.querySelectorAll('.seg-expand-toggle').forEach(b => {
     b.style.background = 'none'; b.style.color = '#7C3AED'; b.style.borderColor = '#E5E7EB';
   });
+  // Hide all header regen buttons
+  document.querySelectorAll('.seg-header-regen').forEach(b => b.style.display = 'none');
 
   if (!isVisible) {
     panel.style.display = 'block';
     const toggle = document.querySelector(`.seg-expand-toggle[data-seg-index="${index}"]`);
     if (toggle) { toggle.style.background = '#7C3AED'; toggle.style.color = 'white'; toggle.style.borderColor = '#7C3AED'; }
+    // Show the header regen button for this segment
+    const headerRegen = document.querySelector(`.seg-header-regen[data-seg-index="${index}"]`);
+    if (headerRegen) headerRegen.style.display = 'inline-flex';
 
     // Make narration textarea editable when panel is open
     const narrationTa = document.querySelector(`textarea[data-seg-index="${index}"]`);

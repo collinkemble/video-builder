@@ -598,20 +598,11 @@
         </div>
       </div>
 
+      <!-- PocketSIC Project Source Card -->
+      <div id="pocketsic-card" class="mb-6"></div>
+
       <!-- Demo Script Source Card (from Script Writer) -->
-      <div id="scriptwriter-card" class="hidden mb-6" style="background: white; border-radius: 12px; padding: 24px; box-shadow: 0 1px 3px rgba(0,0,0,0.08);">
-        <div class="flex items-center justify-between mb-2">
-          <p class="font-bold" style="font-size: 15px; color: #032D60;">Demo Script</p>
-          <span style="font-size: 11px; color: #888; background: #F3F4F6; padding: 2px 8px; border-radius: 6px;">Script Writer</span>
-        </div>
-        <div style="display: flex; align-items: center; gap: 12px; padding: 10px 0;">
-          <div style="width: 36px; height: 36px; border-radius: 10px; background: linear-gradient(135deg, #7C3AED, #A78BFA); display: flex; align-items: center; justify-content: center; font-size: 16px; color: white; flex-shrink: 0;">📝</div>
-          <div style="flex: 1; min-width: 0;">
-            <div id="scriptwriter-name" style="font-weight: 600; font-size: 14px; color: #111; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"></div>
-            <div id="scriptwriter-synopsis" style="font-size: 12px; color: #888; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"></div>
-          </div>
-        </div>
-      </div>
+      <div id="scriptwriter-card" class="mb-6"></div>
 
       <!-- Narration Script Card (editable) -->
       <div id="script-card" class="mb-6" style="background: white; border-radius: 12px; padding: 24px; box-shadow: 0 1px 3px rgba(0,0,0,0.08);">
@@ -1654,7 +1645,8 @@ async function viewVideo(id, skipPush) {
       console.error('[viewVideo] renderPersonaImage error:', err);
     }
 
-    // Script Writer source card
+    // Source cards
+    renderPocketsicCard(video);
     renderScriptWriterCard(video);
 
     // Narration Script — auto-generate if scenes exist but no script yet
@@ -1724,19 +1716,288 @@ function renderScenes(sceneData) {
   `).join('');
 }
 
-function renderScriptWriterCard(video) {
-  const card = document.getElementById('scriptwriter-card');
-  if (!video.scriptwriter_script_name && !video.scriptwriter_script_id) {
-    card.classList.add('hidden');
-    return;
-  }
-  card.classList.remove('hidden');
-  document.getElementById('scriptwriter-name').textContent = video.scriptwriter_script_name || `Script #${video.scriptwriter_script_id}`;
+function renderPocketsicCard(video) {
+  const mount = document.getElementById('pocketsic-card');
+  const hasProject = !!(video.pocketsic_project_id || video.pocketsic_project_name);
+  const sceneData = video.scene_data || {};
+  const sceneCount = (sceneData.scenes || []).length;
 
-  // Try to show synopsis from scriptwriter_data
+  if (hasProject) {
+    mount.innerHTML = `
+      <div style="background: white; border-radius: 12px; padding: 24px; box-shadow: 0 1px 3px rgba(0,0,0,0.08);">
+        <div class="flex items-center justify-between mb-2">
+          <p class="font-bold" style="font-size: 15px; color: #032D60;">PocketSIC Project</p>
+          <div class="flex items-center gap-2">
+            <button onclick="showPocketsicPicker()" class="cursor-pointer" style="background: none; border: none; color: #0176D3; font-size: 12px; font-weight: 600; padding: 0;">Change</button>
+            <span style="color: #ddd;">|</span>
+            <button onclick="unlinkPocketsicProject()" class="cursor-pointer" style="background: none; border: none; color: #EF4444; font-size: 12px; font-weight: 600; padding: 0;">Remove</button>
+          </div>
+        </div>
+        <div style="display: flex; align-items: center; gap: 12px; padding: 10px 0;">
+          <div style="width: 36px; height: 36px; border-radius: 10px; background: linear-gradient(135deg, #032D60, #0176D3); display: flex; align-items: center; justify-content: center; font-size: 16px; color: white; flex-shrink: 0;">📱</div>
+          <div style="flex: 1; min-width: 0;">
+            <div style="font-weight: 600; font-size: 14px; color: #111; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${esc(video.pocketsic_project_name || 'Project #' + video.pocketsic_project_id)}</div>
+            <div style="font-size: 12px; color: #888;">${sceneCount} scene${sceneCount !== 1 ? 's' : ''} imported</div>
+          </div>
+          <span style="font-size: 11px; color: #888; background: #F3F4F6; padding: 2px 8px; border-radius: 6px;">PocketSIC</span>
+        </div>
+        <div id="pocketsic-picker" style="display: none; margin-top: 12px; padding-top: 12px; border-top: 1px solid #f0f0f0;">
+          <label style="font-size: 12px; font-weight: 600; color: #555; display: block; margin-bottom: 4px;">Select a different project</label>
+          <div id="pocketsic-picker-loading" class="text-sm text-gray-400 py-1">Loading projects...</div>
+          <select id="pocketsic-picker-select" class="hidden w-full px-3 py-2 rounded-lg border border-gray-300 text-sm" onchange="selectPocketsicProject(this.value)">
+          </select>
+        </div>
+      </div>`;
+  } else {
+    mount.innerHTML = `
+      <div style="background: white; border-radius: 12px; padding: 24px; box-shadow: 0 1px 3px rgba(0,0,0,0.08);">
+        <div class="flex items-center justify-between mb-2">
+          <p class="font-bold" style="font-size: 15px; color: #032D60;">PocketSIC Project</p>
+        </div>
+        <div style="display: flex; align-items: center; gap: 12px; padding: 10px 0;">
+          <div style="width: 36px; height: 36px; border-radius: 10px; background: #F9FAFB; border: 2px dashed #D1D5DB; display: flex; align-items: center; justify-content: center; font-size: 16px; flex-shrink: 0;">📱</div>
+          <div style="flex: 1; min-width: 0;">
+            <div style="font-weight: 600; font-size: 14px; color: #9CA3AF;">No PocketSIC project linked</div>
+            <div style="font-size: 12px; color: #9CA3AF;">Link a project to import scenes for your video.</div>
+          </div>
+          <button onclick="showPocketsicPicker()" class="cursor-pointer" style="background: #0176D3; color: white; font-size: 12px; font-weight: 600; padding: 6px 14px; border-radius: 8px; border: none;">Link Project</button>
+        </div>
+        <div id="pocketsic-picker" style="display: none; margin-top: 12px; padding-top: 12px; border-top: 1px solid #f0f0f0;">
+          <label style="font-size: 12px; font-weight: 600; color: #555; display: block; margin-bottom: 4px;">Select a project</label>
+          <div id="pocketsic-picker-loading" class="text-sm text-gray-400 py-1">Loading projects...</div>
+          <select id="pocketsic-picker-select" class="hidden w-full px-3 py-2 rounded-lg border border-gray-300 text-sm" onchange="selectPocketsicProject(this.value)">
+          </select>
+        </div>
+      </div>`;
+  }
+}
+
+function renderScriptWriterCard(video) {
+  const mount = document.getElementById('scriptwriter-card');
+  const hasScript = !!(video.scriptwriter_script_name || video.scriptwriter_script_id);
   const swData = video.scriptwriter_data || {};
   const synopsis = swData.synopsis || swData.cx_summary || swData.brand_description || '';
-  document.getElementById('scriptwriter-synopsis').textContent = synopsis;
+
+  if (hasScript) {
+    mount.innerHTML = `
+      <div style="background: white; border-radius: 12px; padding: 24px; box-shadow: 0 1px 3px rgba(0,0,0,0.08);">
+        <div class="flex items-center justify-between mb-2">
+          <p class="font-bold" style="font-size: 15px; color: #032D60;">Demo Script</p>
+          <div class="flex items-center gap-2">
+            <button onclick="showScriptPicker()" class="cursor-pointer" style="background: none; border: none; color: #0176D3; font-size: 12px; font-weight: 600; padding: 0;">Change</button>
+            <span style="color: #ddd;">|</span>
+            <button onclick="unlinkScriptWriterScript()" class="cursor-pointer" style="background: none; border: none; color: #EF4444; font-size: 12px; font-weight: 600; padding: 0;">Remove</button>
+          </div>
+        </div>
+        <div style="display: flex; align-items: center; gap: 12px; padding: 10px 0;">
+          <div style="width: 36px; height: 36px; border-radius: 10px; background: linear-gradient(135deg, #7C3AED, #A78BFA); display: flex; align-items: center; justify-content: center; font-size: 16px; color: white; flex-shrink: 0;">📝</div>
+          <div style="flex: 1; min-width: 0;">
+            <div style="font-weight: 600; font-size: 14px; color: #111; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${esc(video.scriptwriter_script_name || 'Script #' + video.scriptwriter_script_id)}</div>
+            <div style="font-size: 12px; color: #888; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${esc(synopsis)}</div>
+          </div>
+          <span style="font-size: 11px; color: #888; background: #F3F4F6; padding: 2px 8px; border-radius: 6px;">Script Writer</span>
+        </div>
+        <div id="script-picker" style="display: none; margin-top: 12px; padding-top: 12px; border-top: 1px solid #f0f0f0;">
+          <label style="font-size: 12px; font-weight: 600; color: #555; display: block; margin-bottom: 4px;">Select a different script</label>
+          <div id="script-picker-inline-loading" class="text-sm text-gray-400 py-1">Loading scripts...</div>
+          <select id="script-picker-inline-select" class="hidden w-full px-3 py-2 rounded-lg border border-gray-300 text-sm" onchange="selectScript(this.value)">
+          </select>
+        </div>
+      </div>`;
+  } else {
+    mount.innerHTML = `
+      <div style="background: white; border-radius: 12px; padding: 24px; box-shadow: 0 1px 3px rgba(0,0,0,0.08);">
+        <div class="flex items-center justify-between mb-2">
+          <p class="font-bold" style="font-size: 15px; color: #032D60;">Demo Script</p>
+        </div>
+        <div style="display: flex; align-items: center; gap: 12px; padding: 10px 0;">
+          <div style="width: 36px; height: 36px; border-radius: 10px; background: #F9FAFB; border: 2px dashed #D1D5DB; display: flex; align-items: center; justify-content: center; font-size: 16px; flex-shrink: 0;">📝</div>
+          <div style="flex: 1; min-width: 0;">
+            <div style="font-weight: 600; font-size: 14px; color: #9CA3AF;">No demo script linked</div>
+            <div style="font-size: 12px; color: #9CA3AF;">Link a Script Writer script to use as the basis for narration.</div>
+          </div>
+          <button onclick="showScriptPicker()" class="cursor-pointer" style="background: #7C3AED; color: white; font-size: 12px; font-weight: 600; padding: 6px 14px; border-radius: 8px; border: none;">Link Script</button>
+        </div>
+        <div id="script-picker" style="display: none; margin-top: 12px; padding-top: 12px; border-top: 1px solid #f0f0f0;">
+          <label style="font-size: 12px; font-weight: 600; color: #555; display: block; margin-bottom: 4px;">Select a script</label>
+          <div id="script-picker-inline-loading" class="text-sm text-gray-400 py-1">Loading scripts...</div>
+          <select id="script-picker-inline-select" class="hidden w-full px-3 py-2 rounded-lg border border-gray-300 text-sm" onchange="selectScript(this.value)">
+          </select>
+        </div>
+      </div>`;
+  }
+}
+
+// ── PocketSIC & Script Writer picker / unlink functions ──
+
+async function showPocketsicPicker() {
+  const picker = document.getElementById('pocketsic-picker');
+  const loading = document.getElementById('pocketsic-picker-loading');
+  const select = document.getElementById('pocketsic-picker-select');
+  if (!picker) return;
+
+  picker.style.display = 'block';
+  loading.classList.remove('hidden');
+  select.classList.add('hidden');
+  select.innerHTML = '<option value="">— Select a project —</option>';
+
+  try {
+    const email = document.getElementById('user-email').textContent;
+    const resp = await fetch(`/api/pocketsic/projects?email=${encodeURIComponent(email)}`);
+    if (!resp.ok) throw new Error('Failed to load projects');
+    const data = await resp.json();
+    const projects = data.projects || data.items || [];
+    projects.forEach(p => {
+      const projName = p.name || p.data?.metadata?.name || p.data?.metadata?.brand || `Project #${p.id}`;
+      select.innerHTML += `<option value="${p.id}" data-name="${esc(projName)}">${esc(projName)}</option>`;
+    });
+    loading.classList.add('hidden');
+    select.classList.remove('hidden');
+  } catch (err) {
+    loading.textContent = 'Error loading projects: ' + err.message;
+  }
+}
+
+async function selectPocketsicProject(projectId) {
+  if (!projectId || !currentVideoId) return;
+  const select = document.getElementById('pocketsic-picker-select');
+  const projName = select?.selectedOptions[0]?.dataset?.name || `Project #${projectId}`;
+
+  try {
+    // Fetch scenes for the selected project
+    const email = document.getElementById('user-email').textContent;
+    const scenesResp = await fetch(`/api/pocketsic/projects/${projectId}/scenes?email=${encodeURIComponent(email)}`);
+    if (!scenesResp.ok) throw new Error('Failed to load scenes');
+    const scenesData = await scenesResp.json();
+    const scenes = scenesData.scenes || [];
+
+    // Build scene_data and scene_ids
+    const sceneDataObj = { scenes: scenes.map(s => ({ id: s.id, name: s.name || s.scene_name || `Scene ${s.id}`, url: s.url || s.scene_url || '' })) };
+    const sceneIds = scenes.map(s => s.id);
+
+    // Update the video
+    await fetch(`/api/videos/${currentVideoId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        pocketsicProjectId: projectId,
+        pocketsicProjectName: projName,
+        sceneData: sceneDataObj,
+        email: email
+      })
+    });
+
+    // Refresh video view
+    viewVideo(currentVideoId);
+  } catch (err) {
+    alert('Failed to link project: ' + err.message);
+  }
+}
+
+async function unlinkPocketsicProject() {
+  if (!currentVideoId) return;
+  if (!confirm('Remove PocketSIC project link? Scenes data will be cleared.')) return;
+
+  try {
+    const email = document.getElementById('user-email').textContent;
+    await fetch(`/api/videos/${currentVideoId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        pocketsicProjectId: '',
+        pocketsicProjectName: '',
+        sceneData: {},
+        email: email
+      })
+    });
+    viewVideo(currentVideoId);
+  } catch (err) {
+    alert('Failed to unlink project: ' + err.message);
+  }
+}
+
+async function showScriptPicker() {
+  const picker = document.getElementById('script-picker');
+  const loading = document.getElementById('script-picker-inline-loading');
+  const select = document.getElementById('script-picker-inline-select');
+  if (!picker) return;
+
+  picker.style.display = 'block';
+  loading.classList.remove('hidden');
+  select.classList.add('hidden');
+  select.innerHTML = '<option value="">— Select a script —</option>';
+
+  try {
+    const email = document.getElementById('user-email').textContent;
+    const resp = await fetch(`/api/scriptwriter/scripts?email=${encodeURIComponent(email)}`);
+    if (!resp.ok) throw new Error('Failed to load scripts');
+    const data = await resp.json();
+    const scripts = data.scripts || [];
+    scripts.forEach(s => {
+      const label = s.script_name || s.brand_name || `Script #${s.id}`;
+      const brand = s.brand_name ? ` (${s.brand_name})` : '';
+      select.innerHTML += `<option value="${s.id}" data-name="${esc(label)}">${esc(label)}${esc(brand)}</option>`;
+    });
+    loading.classList.add('hidden');
+    select.classList.remove('hidden');
+  } catch (err) {
+    loading.textContent = 'Error loading scripts: ' + err.message;
+  }
+}
+
+async function selectScript(scriptId) {
+  if (!scriptId || !currentVideoId) return;
+  const select = document.getElementById('script-picker-inline-select');
+  const scriptName = select?.selectedOptions[0]?.dataset?.name || `Script #${scriptId}`;
+
+  try {
+    // Fetch full script data
+    const email = document.getElementById('user-email').textContent;
+    const resp = await fetch(`/api/scriptwriter/scripts/${scriptId}?email=${encodeURIComponent(email)}`);
+    if (!resp.ok) throw new Error('Failed to load script data');
+    const fullScript = await resp.json();
+    const scriptData = fullScript.script || fullScript;
+
+    // Update the video — clear narration_script so next generation uses the new script
+    await fetch(`/api/videos/${currentVideoId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        scriptWriterScriptId: scriptId,
+        scriptWriterScriptName: scriptName,
+        scriptWriterData: scriptData,
+        narrationScript: '',
+        email: email
+      })
+    });
+
+    // Refresh video view
+    viewVideo(currentVideoId);
+  } catch (err) {
+    alert('Failed to link script: ' + err.message);
+  }
+}
+
+async function unlinkScriptWriterScript() {
+  if (!currentVideoId) return;
+  if (!confirm('Remove demo script link? You can always link a new one later.')) return;
+
+  try {
+    const email = document.getElementById('user-email').textContent;
+    await fetch(`/api/videos/${currentVideoId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        scriptWriterScriptId: '',
+        scriptWriterScriptName: '',
+        scriptWriterData: '',
+        email: email
+      })
+    });
+    viewVideo(currentVideoId);
+  } catch (err) {
+    alert('Failed to unlink script: ' + err.message);
+  }
 }
 
 function renderScript(script) {

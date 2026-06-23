@@ -725,7 +725,7 @@ app.post('/api/videos', async (req, res) => {
 // PUT /api/videos/:id — update video settings
 app.put('/api/videos/:id', async (req, res) => {
   try {
-    const { email, name, brandName, voiceId, language, durationTarget, sceneData, narrationScript, musicTrackId, customInstructions } = req.body;
+    const { email, name, brandName, voiceId, language, durationTarget, sceneData, narrationScript, musicTrackId, customInstructions, pocketsicProjectId, pocketsicProjectName, scriptWriterScriptId, scriptWriterScriptName, scriptWriterData } = req.body;
     if (!email) return res.status(400).json({ error: 'Email required' });
 
     const user = await getOrCreateUser(email);
@@ -769,7 +769,7 @@ app.put('/api/videos/:id', async (req, res) => {
     }
     if (narrationScript !== undefined && narrationScript !== null) {
       sets.push('narration_script = ?');
-      params.push(typeof narrationScript === 'string' ? narrationScript : JSON.stringify(narrationScript));
+      params.push(narrationScript === '' ? null : (typeof narrationScript === 'string' ? narrationScript : JSON.stringify(narrationScript)));
     }
     if (musicTrackId !== undefined && musicTrackId !== null) {
       sets.push('music_track_id = ?');
@@ -778,6 +778,30 @@ app.put('/api/videos/:id', async (req, res) => {
     if (customInstructions !== undefined && customInstructions !== null) {
       sets.push('custom_instructions = ?');
       params.push(customInstructions === '' ? null : customInstructions.trim());
+    }
+
+    // PocketSIC project fields (empty string clears them)
+    if (pocketsicProjectId !== undefined) {
+      sets.push('pocketsic_project_id = ?');
+      params.push(pocketsicProjectId === '' || pocketsicProjectId === null ? null : pocketsicProjectId);
+    }
+    if (pocketsicProjectName !== undefined) {
+      sets.push('pocketsic_project_name = ?');
+      params.push(pocketsicProjectName === '' || pocketsicProjectName === null ? null : pocketsicProjectName);
+    }
+
+    // Script Writer fields (empty string clears them)
+    if (scriptWriterScriptId !== undefined) {
+      sets.push('scriptwriter_script_id = ?');
+      params.push(scriptWriterScriptId === '' || scriptWriterScriptId === null ? null : scriptWriterScriptId);
+    }
+    if (scriptWriterScriptName !== undefined) {
+      sets.push('scriptwriter_script_name = ?');
+      params.push(scriptWriterScriptName === '' || scriptWriterScriptName === null ? null : scriptWriterScriptName);
+    }
+    if (scriptWriterData !== undefined) {
+      sets.push('scriptwriter_data = ?');
+      params.push(scriptWriterData === '' || scriptWriterData === null ? null : (typeof scriptWriterData === 'string' ? scriptWriterData : JSON.stringify(scriptWriterData)));
     }
 
     // Three-state guard for persona_image_url: truthy → use it, empty string → clear to null, null/undefined → keep existing
@@ -823,8 +847,9 @@ app.put('/api/videos/:id', async (req, res) => {
 
     if (sets.length > 0) {
       sets.push('updated_at = NOW()');
-      params.push(req.params.id, user.id);
-      await query(`UPDATE videos SET ${sets.join(', ')} WHERE id = ? AND user_id = ?`, params);
+      params.push(req.params.id);
+      // Ownership already verified above (including admin bypass)
+      await query(`UPDATE videos SET ${sets.join(', ')} WHERE id = ?`, params);
     }
 
     res.json({ success: true });

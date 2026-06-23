@@ -598,20 +598,11 @@
         </div>
       </div>
 
+      <!-- PocketSIC Project Source Card -->
+      <div id="pocketsic-card" class="mb-6"></div>
+
       <!-- Demo Script Source Card (from Script Writer) -->
-      <div id="scriptwriter-card" class="hidden mb-6" style="background: white; border-radius: 12px; padding: 24px; box-shadow: 0 1px 3px rgba(0,0,0,0.08);">
-        <div class="flex items-center justify-between mb-2">
-          <p class="font-bold" style="font-size: 15px; color: #032D60;">Demo Script</p>
-          <span style="font-size: 11px; color: #888; background: #F3F4F6; padding: 2px 8px; border-radius: 6px;">Script Writer</span>
-        </div>
-        <div style="display: flex; align-items: center; gap: 12px; padding: 10px 0;">
-          <div style="width: 36px; height: 36px; border-radius: 10px; background: linear-gradient(135deg, #7C3AED, #A78BFA); display: flex; align-items: center; justify-content: center; font-size: 16px; color: white; flex-shrink: 0;">📝</div>
-          <div style="flex: 1; min-width: 0;">
-            <div id="scriptwriter-name" style="font-weight: 600; font-size: 14px; color: #111; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"></div>
-            <div id="scriptwriter-synopsis" style="font-size: 12px; color: #888; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"></div>
-          </div>
-        </div>
-      </div>
+      <div id="scriptwriter-card" class="mb-6"></div>
 
       <!-- Narration Script Card (editable) -->
       <div id="script-card" class="mb-6" style="background: white; border-radius: 12px; padding: 24px; box-shadow: 0 1px 3px rgba(0,0,0,0.08);">
@@ -642,6 +633,7 @@
               <option value="intro">Intro</option>
               <option value="transition" selected>Transition (B-Roll)</option>
               <option value="scene">Scene (PocketSIC)</option>
+              <option value="custom">Scene (Custom)</option>
               <option value="outro">Outro</option>
             </select>
           </div>
@@ -656,6 +648,13 @@
           <div id="add-seg-broll-row" class="mb-3">
             <label style="font-size: 12px; font-weight: 600; color: #555; display: block; margin-bottom: 4px;">B-Roll Description</label>
             <input id="add-seg-broll" type="text" placeholder="e.g. Customer walking through a shopping district" style="width: 100%; padding: 8px 10px; border: 1px solid #e5e7eb; border-radius: 8px; font-size: 14px; box-sizing: border-box;">
+          </div>
+          <div id="add-seg-custom-row" class="mb-3 hidden">
+            <label style="font-size: 12px; font-weight: 600; color: #555; display: block; margin-bottom: 4px;">Upload Image or Video <span style="color: #ea001e;">*</span></label>
+            <input type="file" id="add-seg-custom-file" accept="image/*,video/*" onchange="previewCustomAsset()" style="width: 100%; padding: 6px; border: 1px solid #e5e7eb; border-radius: 8px; font-size: 13px; box-sizing: border-box;">
+            <div id="add-seg-custom-preview" style="margin-top: 8px;"></div>
+            <p style="font-size: 11px; color: #888; margin: 6px 0 0 0; line-height: 1.4;">Upload a still image or video clip to use as the visual for this scene.</p>
+            <p style="font-size: 11px; color: #888; margin: 4px 0 0 0; line-height: 1.4;"><strong>Video with audio:</strong> If you leave the narration blank, the video's original audio will be used. If you enter narration text, AI voiceover replaces the original audio.</p>
           </div>
           <div class="mb-3">
             <label style="font-size: 12px; font-weight: 600; color: #555; display: block; margin-bottom: 4px;">Narration</label>
@@ -1654,7 +1653,8 @@ async function viewVideo(id, skipPush) {
       console.error('[viewVideo] renderPersonaImage error:', err);
     }
 
-    // Script Writer source card
+    // Source cards
+    renderPocketsicCard(video);
     renderScriptWriterCard(video);
 
     // Narration Script — auto-generate if scenes exist but no script yet
@@ -1724,19 +1724,288 @@ function renderScenes(sceneData) {
   `).join('');
 }
 
-function renderScriptWriterCard(video) {
-  const card = document.getElementById('scriptwriter-card');
-  if (!video.scriptwriter_script_name && !video.scriptwriter_script_id) {
-    card.classList.add('hidden');
-    return;
-  }
-  card.classList.remove('hidden');
-  document.getElementById('scriptwriter-name').textContent = video.scriptwriter_script_name || `Script #${video.scriptwriter_script_id}`;
+function renderPocketsicCard(video) {
+  const mount = document.getElementById('pocketsic-card');
+  const hasProject = !!(video.pocketsic_project_id || video.pocketsic_project_name);
+  const sceneData = video.scene_data || {};
+  const sceneCount = (sceneData.scenes || []).length;
 
-  // Try to show synopsis from scriptwriter_data
+  if (hasProject) {
+    mount.innerHTML = `
+      <div style="background: white; border-radius: 12px; padding: 24px; box-shadow: 0 1px 3px rgba(0,0,0,0.08);">
+        <div class="flex items-center justify-between mb-2">
+          <p class="font-bold" style="font-size: 15px; color: #032D60;">PocketSIC Project</p>
+          <div class="flex items-center gap-2">
+            <button onclick="showPocketsicPicker()" class="cursor-pointer" style="background: none; border: none; color: #0176D3; font-size: 12px; font-weight: 600; padding: 0;">Change</button>
+            <span style="color: #ddd;">|</span>
+            <button onclick="unlinkPocketsicProject()" class="cursor-pointer" style="background: none; border: none; color: #EF4444; font-size: 12px; font-weight: 600; padding: 0;">Remove</button>
+          </div>
+        </div>
+        <div style="display: flex; align-items: center; gap: 12px; padding: 10px 0;">
+          <div style="width: 36px; height: 36px; border-radius: 10px; background: linear-gradient(135deg, #032D60, #0176D3); display: flex; align-items: center; justify-content: center; font-size: 16px; color: white; flex-shrink: 0;">📱</div>
+          <div style="flex: 1; min-width: 0;">
+            <div style="font-weight: 600; font-size: 14px; color: #111; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${esc(video.pocketsic_project_name || 'Project #' + video.pocketsic_project_id)}</div>
+            <div style="font-size: 12px; color: #888;">${sceneCount} scene${sceneCount !== 1 ? 's' : ''} imported</div>
+          </div>
+          <span style="font-size: 11px; color: #888; background: #F3F4F6; padding: 2px 8px; border-radius: 6px;">PocketSIC</span>
+        </div>
+        <div id="pocketsic-picker" style="display: none; margin-top: 12px; padding-top: 12px; border-top: 1px solid #f0f0f0;">
+          <label style="font-size: 12px; font-weight: 600; color: #555; display: block; margin-bottom: 4px;">Select a different project</label>
+          <div id="pocketsic-picker-loading" class="text-sm text-gray-400 py-1">Loading projects...</div>
+          <select id="pocketsic-picker-select" class="hidden w-full px-3 py-2 rounded-lg border border-gray-300 text-sm" onchange="selectPocketsicProject(this.value)">
+          </select>
+        </div>
+      </div>`;
+  } else {
+    mount.innerHTML = `
+      <div style="background: white; border-radius: 12px; padding: 24px; box-shadow: 0 1px 3px rgba(0,0,0,0.08);">
+        <div class="flex items-center justify-between mb-2">
+          <p class="font-bold" style="font-size: 15px; color: #032D60;">PocketSIC Project</p>
+        </div>
+        <div style="display: flex; align-items: center; gap: 12px; padding: 10px 0;">
+          <div style="width: 36px; height: 36px; border-radius: 10px; background: #F9FAFB; border: 2px dashed #D1D5DB; display: flex; align-items: center; justify-content: center; font-size: 16px; flex-shrink: 0;">📱</div>
+          <div style="flex: 1; min-width: 0;">
+            <div style="font-weight: 600; font-size: 14px; color: #9CA3AF;">No PocketSIC project linked</div>
+            <div style="font-size: 12px; color: #9CA3AF;">Link a project to import scenes for your video.</div>
+          </div>
+          <button onclick="showPocketsicPicker()" class="cursor-pointer" style="background: #0176D3; color: white; font-size: 12px; font-weight: 600; padding: 6px 14px; border-radius: 8px; border: none;">Link Project</button>
+        </div>
+        <div id="pocketsic-picker" style="display: none; margin-top: 12px; padding-top: 12px; border-top: 1px solid #f0f0f0;">
+          <label style="font-size: 12px; font-weight: 600; color: #555; display: block; margin-bottom: 4px;">Select a project</label>
+          <div id="pocketsic-picker-loading" class="text-sm text-gray-400 py-1">Loading projects...</div>
+          <select id="pocketsic-picker-select" class="hidden w-full px-3 py-2 rounded-lg border border-gray-300 text-sm" onchange="selectPocketsicProject(this.value)">
+          </select>
+        </div>
+      </div>`;
+  }
+}
+
+function renderScriptWriterCard(video) {
+  const mount = document.getElementById('scriptwriter-card');
+  const hasScript = !!(video.scriptwriter_script_name || video.scriptwriter_script_id);
   const swData = video.scriptwriter_data || {};
   const synopsis = swData.synopsis || swData.cx_summary || swData.brand_description || '';
-  document.getElementById('scriptwriter-synopsis').textContent = synopsis;
+
+  if (hasScript) {
+    mount.innerHTML = `
+      <div style="background: white; border-radius: 12px; padding: 24px; box-shadow: 0 1px 3px rgba(0,0,0,0.08);">
+        <div class="flex items-center justify-between mb-2">
+          <p class="font-bold" style="font-size: 15px; color: #032D60;">Demo Script</p>
+          <div class="flex items-center gap-2">
+            <button onclick="showScriptPicker()" class="cursor-pointer" style="background: none; border: none; color: #0176D3; font-size: 12px; font-weight: 600; padding: 0;">Change</button>
+            <span style="color: #ddd;">|</span>
+            <button onclick="unlinkScriptWriterScript()" class="cursor-pointer" style="background: none; border: none; color: #EF4444; font-size: 12px; font-weight: 600; padding: 0;">Remove</button>
+          </div>
+        </div>
+        <div style="display: flex; align-items: center; gap: 12px; padding: 10px 0;">
+          <div style="width: 36px; height: 36px; border-radius: 10px; background: linear-gradient(135deg, #7C3AED, #A78BFA); display: flex; align-items: center; justify-content: center; font-size: 16px; color: white; flex-shrink: 0;">📝</div>
+          <div style="flex: 1; min-width: 0;">
+            <div style="font-weight: 600; font-size: 14px; color: #111; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${esc(video.scriptwriter_script_name || 'Script #' + video.scriptwriter_script_id)}</div>
+            <div style="font-size: 12px; color: #888; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${esc(synopsis)}</div>
+          </div>
+          <span style="font-size: 11px; color: #888; background: #F3F4F6; padding: 2px 8px; border-radius: 6px;">Script Writer</span>
+        </div>
+        <div id="script-picker" style="display: none; margin-top: 12px; padding-top: 12px; border-top: 1px solid #f0f0f0;">
+          <label style="font-size: 12px; font-weight: 600; color: #555; display: block; margin-bottom: 4px;">Select a different script</label>
+          <div id="script-picker-inline-loading" class="text-sm text-gray-400 py-1">Loading scripts...</div>
+          <select id="script-picker-inline-select" class="hidden w-full px-3 py-2 rounded-lg border border-gray-300 text-sm" onchange="selectScript(this.value)">
+          </select>
+        </div>
+      </div>`;
+  } else {
+    mount.innerHTML = `
+      <div style="background: white; border-radius: 12px; padding: 24px; box-shadow: 0 1px 3px rgba(0,0,0,0.08);">
+        <div class="flex items-center justify-between mb-2">
+          <p class="font-bold" style="font-size: 15px; color: #032D60;">Demo Script</p>
+        </div>
+        <div style="display: flex; align-items: center; gap: 12px; padding: 10px 0;">
+          <div style="width: 36px; height: 36px; border-radius: 10px; background: #F9FAFB; border: 2px dashed #D1D5DB; display: flex; align-items: center; justify-content: center; font-size: 16px; flex-shrink: 0;">📝</div>
+          <div style="flex: 1; min-width: 0;">
+            <div style="font-weight: 600; font-size: 14px; color: #9CA3AF;">No demo script linked</div>
+            <div style="font-size: 12px; color: #9CA3AF;">Link a Script Writer script to use as the basis for narration.</div>
+          </div>
+          <button onclick="showScriptPicker()" class="cursor-pointer" style="background: #7C3AED; color: white; font-size: 12px; font-weight: 600; padding: 6px 14px; border-radius: 8px; border: none;">Link Script</button>
+        </div>
+        <div id="script-picker" style="display: none; margin-top: 12px; padding-top: 12px; border-top: 1px solid #f0f0f0;">
+          <label style="font-size: 12px; font-weight: 600; color: #555; display: block; margin-bottom: 4px;">Select a script</label>
+          <div id="script-picker-inline-loading" class="text-sm text-gray-400 py-1">Loading scripts...</div>
+          <select id="script-picker-inline-select" class="hidden w-full px-3 py-2 rounded-lg border border-gray-300 text-sm" onchange="selectScript(this.value)">
+          </select>
+        </div>
+      </div>`;
+  }
+}
+
+// ── PocketSIC & Script Writer picker / unlink functions ──
+
+async function showPocketsicPicker() {
+  const picker = document.getElementById('pocketsic-picker');
+  const loading = document.getElementById('pocketsic-picker-loading');
+  const select = document.getElementById('pocketsic-picker-select');
+  if (!picker) return;
+
+  picker.style.display = 'block';
+  loading.classList.remove('hidden');
+  select.classList.add('hidden');
+  select.innerHTML = '<option value="">— Select a project —</option>';
+
+  try {
+    const email = document.getElementById('user-email').textContent;
+    const resp = await fetch(`/api/pocketsic/projects?email=${encodeURIComponent(email)}`);
+    if (!resp.ok) throw new Error('Failed to load projects');
+    const data = await resp.json();
+    const projects = data.projects || data.items || [];
+    projects.forEach(p => {
+      const projName = p.name || p.data?.metadata?.name || p.data?.metadata?.brand || `Project #${p.id}`;
+      select.innerHTML += `<option value="${p.id}" data-name="${esc(projName)}">${esc(projName)}</option>`;
+    });
+    loading.classList.add('hidden');
+    select.classList.remove('hidden');
+  } catch (err) {
+    loading.textContent = 'Error loading projects: ' + err.message;
+  }
+}
+
+async function selectPocketsicProject(projectId) {
+  if (!projectId || !currentVideoId) return;
+  const select = document.getElementById('pocketsic-picker-select');
+  const projName = select?.selectedOptions[0]?.dataset?.name || `Project #${projectId}`;
+
+  try {
+    // Fetch scenes for the selected project
+    const email = document.getElementById('user-email').textContent;
+    const scenesResp = await fetch(`/api/pocketsic/projects/${projectId}/scenes?email=${encodeURIComponent(email)}`);
+    if (!scenesResp.ok) throw new Error('Failed to load scenes');
+    const scenesData = await scenesResp.json();
+    const scenes = scenesData.scenes || [];
+
+    // Build scene_data and scene_ids
+    const sceneDataObj = { scenes: scenes.map(s => ({ id: s.id, name: s.name || s.scene_name || `Scene ${s.id}`, url: s.url || s.scene_url || '' })) };
+    const sceneIds = scenes.map(s => s.id);
+
+    // Update the video
+    await fetch(`/api/videos/${currentVideoId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        pocketsicProjectId: projectId,
+        pocketsicProjectName: projName,
+        sceneData: sceneDataObj,
+        email: email
+      })
+    });
+
+    // Refresh video view
+    viewVideo(currentVideoId);
+  } catch (err) {
+    alert('Failed to link project: ' + err.message);
+  }
+}
+
+async function unlinkPocketsicProject() {
+  if (!currentVideoId) return;
+  if (!confirm('Remove PocketSIC project link? Scenes data will be cleared.')) return;
+
+  try {
+    const email = document.getElementById('user-email').textContent;
+    await fetch(`/api/videos/${currentVideoId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        pocketsicProjectId: '',
+        pocketsicProjectName: '',
+        sceneData: {},
+        email: email
+      })
+    });
+    viewVideo(currentVideoId);
+  } catch (err) {
+    alert('Failed to unlink project: ' + err.message);
+  }
+}
+
+async function showScriptPicker() {
+  const picker = document.getElementById('script-picker');
+  const loading = document.getElementById('script-picker-inline-loading');
+  const select = document.getElementById('script-picker-inline-select');
+  if (!picker) return;
+
+  picker.style.display = 'block';
+  loading.classList.remove('hidden');
+  select.classList.add('hidden');
+  select.innerHTML = '<option value="">— Select a script —</option>';
+
+  try {
+    const email = document.getElementById('user-email').textContent;
+    const resp = await fetch(`/api/scriptwriter/scripts?email=${encodeURIComponent(email)}`);
+    if (!resp.ok) throw new Error('Failed to load scripts');
+    const data = await resp.json();
+    const scripts = data.scripts || [];
+    scripts.forEach(s => {
+      const label = s.script_name || s.brand_name || `Script #${s.id}`;
+      const brand = s.brand_name ? ` (${s.brand_name})` : '';
+      select.innerHTML += `<option value="${s.id}" data-name="${esc(label)}">${esc(label)}${esc(brand)}</option>`;
+    });
+    loading.classList.add('hidden');
+    select.classList.remove('hidden');
+  } catch (err) {
+    loading.textContent = 'Error loading scripts: ' + err.message;
+  }
+}
+
+async function selectScript(scriptId) {
+  if (!scriptId || !currentVideoId) return;
+  const select = document.getElementById('script-picker-inline-select');
+  const scriptName = select?.selectedOptions[0]?.dataset?.name || `Script #${scriptId}`;
+
+  try {
+    // Fetch full script data
+    const email = document.getElementById('user-email').textContent;
+    const resp = await fetch(`/api/scriptwriter/scripts/${scriptId}?email=${encodeURIComponent(email)}`);
+    if (!resp.ok) throw new Error('Failed to load script data');
+    const fullScript = await resp.json();
+    const scriptData = fullScript.script || fullScript;
+
+    // Update the video — clear narration_script so next generation uses the new script
+    await fetch(`/api/videos/${currentVideoId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        scriptWriterScriptId: scriptId,
+        scriptWriterScriptName: scriptName,
+        scriptWriterData: scriptData,
+        narrationScript: '',
+        email: email
+      })
+    });
+
+    // Refresh video view
+    viewVideo(currentVideoId);
+  } catch (err) {
+    alert('Failed to link script: ' + err.message);
+  }
+}
+
+async function unlinkScriptWriterScript() {
+  if (!currentVideoId) return;
+  if (!confirm('Remove demo script link? You can always link a new one later.')) return;
+
+  try {
+    const email = document.getElementById('user-email').textContent;
+    await fetch(`/api/videos/${currentVideoId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        scriptWriterScriptId: '',
+        scriptWriterScriptName: '',
+        scriptWriterData: '',
+        email: email
+      })
+    });
+    viewVideo(currentVideoId);
+  } catch (err) {
+    alert('Failed to unlink script: ' + err.message);
+  }
 }
 
 function renderScript(script) {
@@ -1818,6 +2087,7 @@ function renderScript(script) {
     const typeLabel = seg.type === 'scene' ? `scene${seg.channel ? ' — ' + esc(seg.channel) : ''}` : seg.type;
     const hasBroll = seg.visualType === 'broll' && seg.brollDescription;
     const isSceneCapture = seg.visualType === 'scene_capture';
+    const isCustomAsset = seg.visualType === 'custom_asset';
     // Visible visual summary line (always shown)
     const visualSummary = hasBroll
       ? `<div style="margin-top: 6px; padding: 6px 10px; background: #F9FAFB; border: 1px solid #E5E7EB; border-radius: 8px; display: flex; align-items: flex-start; gap: 6px;">
@@ -1828,6 +2098,11 @@ function renderScript(script) {
         ? `<div style="margin-top: 6px; padding: 6px 10px; background: #F0F7FF; border: 1px solid #B8D4E8; border-radius: 8px; display: flex; align-items: center; gap: 6px;">
           <span style="font-size: 11px; flex-shrink: 0;">🖥️</span>
           <span style="font-size: 12px; color: #0176D3; line-height: 1.4;"><strong>Visual:</strong> Scene capture${seg.sceneId ? ' (Scene ' + seg.sceneId + ')' : ''}${seg.channel ? ' — ' + esc(seg.channel) : ''}</span>
+        </div>`
+      : isCustomAsset
+        ? `<div style="margin-top: 6px; padding: 6px 10px; background: #FEF3C7; border: 1px solid #FDE68A; border-radius: 8px; display: flex; align-items: center; gap: 6px;">
+          <span style="font-size: 11px; flex-shrink: 0;">${seg.customAssetType === 'video' ? '🎥' : '🖼️'}</span>
+          <span style="font-size: 12px; color: #92400E; line-height: 1.4;"><strong>Visual:</strong> Custom ${seg.customAssetType || 'asset'} (uploaded)${seg.useUploadedAudio ? ' — using original audio' : ''}</span>
         </div>`
         : '';
 
@@ -1841,7 +2116,7 @@ function renderScript(script) {
           <p style="font-size: 10px; color: #9CA3AF; margin: 3px 0 0 0; line-height: 1.3;">💡 Each clip is max 8 seconds. Longer sections use multiple clips with varied angles around your description. Be specific for better results.</p>
         </div>` : `
         <div style="background: #F9FAFB; border: 1px solid #E5E7EB; border-radius: 8px; padding: 10px 12px; margin-bottom: 8px;">
-          <span style="font-size: 11px; color: #888;">Visual: ${seg.visualType === 'scene_capture' ? 'Scene capture (not editable)' : seg.visualType || 'none'}</span>
+          <span style="font-size: 11px; color: #888;">Visual: ${seg.visualType === 'scene_capture' ? 'Scene capture (not editable)' : seg.visualType === 'custom_asset' ? 'Custom ' + (seg.customAssetType || 'asset') + ' (uploaded)' : seg.visualType || 'none'}</span>
         </div>`}
         <div style="display: flex; gap: 14px; margin-bottom: 8px; padding: 0 2px;">
           <label style="display: flex; align-items: center; gap: 5px; font-size: 12px; color: #555; cursor: pointer;">
@@ -1863,6 +2138,7 @@ function renderScript(script) {
         <span style="font-size: 10px; color: #ccc;">~${seg.estimatedDuration || '?'}s</span>
         ${canEdit ? `<span id="seg-changed-badge-${i}" class="seg-changed-badge" style="display: none; font-size: 9px; font-weight: 700; color: #F59E0B; background: #FFFBEB; border: 1px solid #FDE68A; padding: 1px 6px; border-radius: 4px; text-transform: uppercase; letter-spacing: 0.03em;">edited</span>` : ''}
         ${canEdit ? `<button onclick="toggleSegExpand(${i})" class="cursor-pointer seg-expand-toggle" data-seg-index="${i}" title="Edit this section" style="background: none; border: 1px solid #E5E7EB; border-radius: 6px; width: 26px; height: 26px; display: flex; align-items: center; justify-content: center; font-size: 11px; color: #7C3AED; margin-left: 4px;">✎</button>` : ''}
+        ${canEdit ? `<button onclick="regenerateSingleSegment(${i})" class="cursor-pointer seg-header-regen" data-seg-index="${i}" title="Regenerate this section" style="display: none; background: #7C3AED; border: none; border-radius: 6px; height: 26px; padding: 0 10px; font-size: 11px; font-weight: 700; color: white; align-items: center; justify-content: center; gap: 3px; margin-left: 2px; white-space: nowrap;">🔄 Regenerate</button>` : ''}
         <span style="margin-left: auto; display: flex; gap: 2px;">
           ${i > 0 ? `<button onclick="moveSegment(${i}, -1)" title="Move up" class="cursor-pointer" style="background: none; border: 1px solid #e5e7eb; border-radius: 6px; width: 26px; height: 26px; display: flex; align-items: center; justify-content: center; font-size: 12px; color: #666;">↑</button>` : ''}
           ${i < total - 1 ? `<button onclick="moveSegment(${i}, 1)" title="Move down" class="cursor-pointer" style="background: none; border: 1px solid #e5e7eb; border-radius: 6px; width: 26px; height: 26px; display: flex; align-items: center; justify-content: center; font-size: 12px; color: #666;">↓</button>` : ''}
@@ -1982,6 +2258,8 @@ function showAddSegmentDialog() {
   document.getElementById('add-seg-broll').value = '';
   document.getElementById('add-seg-narration').value = '';
   document.getElementById('add-seg-duration').value = '10';
+  document.getElementById('add-seg-custom-file').value = '';
+  document.getElementById('add-seg-custom-preview').innerHTML = '';
   onAddSegTypeChange();
   document.getElementById('add-segment-dialog').classList.remove('hidden');
   document.getElementById('add-segment-dialog').style.display = 'flex';
@@ -1995,13 +2273,38 @@ function hideAddSegmentDialog() {
 function onAddSegTypeChange() {
   const type = document.getElementById('add-seg-type').value;
   const isScene = type === 'scene';
-  const isBroll = !isScene;
+  const isCustom = type === 'custom';
+  const showBroll = !isScene && !isCustom;
   document.getElementById('add-seg-channel-row').classList.toggle('hidden', !isScene);
   document.getElementById('add-seg-sceneid-row').classList.toggle('hidden', !isScene);
-  document.getElementById('add-seg-broll-row').classList.toggle('hidden', !isBroll);
+  document.getElementById('add-seg-broll-row').classList.toggle('hidden', !showBroll);
+  document.getElementById('add-seg-custom-row').classList.toggle('hidden', !isCustom);
+  // Update narration placeholder for custom type
+  const narrationTa = document.getElementById('add-seg-narration');
+  if (isCustom) {
+    narrationTa.placeholder = 'Optional — leave blank to use the video\'s original audio';
+  } else {
+    narrationTa.placeholder = 'What should the narrator say during this section?';
+  }
 }
 
-function addSegment() {
+function previewCustomAsset() {
+  const file = document.getElementById('add-seg-custom-file').files[0];
+  const preview = document.getElementById('add-seg-custom-preview');
+  if (!file) { preview.innerHTML = ''; return; }
+
+  if (file.type.startsWith('image/')) {
+    const url = URL.createObjectURL(file);
+    preview.innerHTML = `<img src="${url}" style="max-width: 100%; max-height: 120px; border-radius: 8px; border: 1px solid #e5e7eb;">`;
+  } else if (file.type.startsWith('video/')) {
+    const url = URL.createObjectURL(file);
+    preview.innerHTML = `<video src="${url}" controls style="max-width: 100%; max-height: 120px; border-radius: 8px; border: 1px solid #e5e7eb;"></video>`;
+  } else {
+    preview.innerHTML = `<p style="font-size: 12px; color: #EF4444;">Unsupported file type. Please upload an image or video.</p>`;
+  }
+}
+
+async function addSegment() {
   if (!window._currentScript) return;
   collectNarrationEdits();
 
@@ -2015,7 +2318,7 @@ function addSegment() {
     type,
     sceneId: null,
     channel: null,
-    visualType: type === 'scene' ? 'scene_capture' : 'broll',
+    visualType: type === 'scene' ? 'scene_capture' : (type === 'custom' ? 'custom_asset' : 'broll'),
     brollDescription: null,
     narration: narration || '',
     estimatedDuration: Math.max(duration, 4),
@@ -2027,6 +2330,42 @@ function addSegment() {
     if (!sceneId) { alert('Please enter a Scene ID.'); return; }
     newSeg.sceneId = sceneId;
     newSeg.channel = channel || 'default';
+  } else if (type === 'custom') {
+    const file = document.getElementById('add-seg-custom-file').files[0];
+    if (!file) { alert('Please upload an image or video file.'); return; }
+
+    // Validate file size
+    const maxSize = file.type.startsWith('video/') ? 50 * 1024 * 1024 : 10 * 1024 * 1024;
+    if (file.size > maxSize) {
+      alert(`File too large. Max ${file.type.startsWith('video/') ? '50MB' : '10MB'}.`);
+      return;
+    }
+
+    // Read file as base64 and upload
+    const addBtn = document.querySelector('#add-segment-dialog button[onclick="addSegment()"]');
+    if (addBtn) { addBtn.disabled = true; addBtn.textContent = '⏳ Uploading...'; }
+    try {
+      const base64 = await readFileAsBase64(file);
+      const email = document.getElementById('user-email').textContent;
+      const resp = await fetch(`/api/videos/${currentVideoId}/upload-custom-asset`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ data: base64, filename: file.name, contentType: file.type, email })
+      });
+      if (!resp.ok) {
+        const err = await resp.json();
+        throw new Error(err.error || 'Upload failed');
+      }
+      const result = await resp.json();
+      newSeg.customAssetUrl = result.url;
+      newSeg.customAssetType = file.type.startsWith('video/') ? 'video' : 'image';
+      newSeg.useUploadedAudio = file.type.startsWith('video/') && !narration;
+    } catch (err) {
+      alert('Upload failed: ' + err.message);
+      if (addBtn) { addBtn.disabled = false; addBtn.textContent = 'Add Section'; }
+      return;
+    }
+    if (addBtn) { addBtn.disabled = false; addBtn.textContent = 'Add Section'; }
   } else {
     const broll = document.getElementById('add-seg-broll').value.trim();
     newSeg.brollDescription = broll || `Cinematic ${type} b-roll footage`;
@@ -2044,6 +2383,15 @@ function addSegment() {
   renderScript(window._currentScript);
   document.getElementById('save-script-btn').classList.remove('hidden');
   hideAddSegmentDialog();
+}
+
+function readFileAsBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(new Error('Failed to read file'));
+    reader.readAsDataURL(file);
+  });
 }
 
 async function generateScriptOnly() {
@@ -2224,11 +2572,16 @@ function toggleSegExpand(index) {
   document.querySelectorAll('.seg-expand-toggle').forEach(b => {
     b.style.background = 'none'; b.style.color = '#7C3AED'; b.style.borderColor = '#E5E7EB';
   });
+  // Hide all header regen buttons
+  document.querySelectorAll('.seg-header-regen').forEach(b => b.style.display = 'none');
 
   if (!isVisible) {
     panel.style.display = 'block';
     const toggle = document.querySelector(`.seg-expand-toggle[data-seg-index="${index}"]`);
     if (toggle) { toggle.style.background = '#7C3AED'; toggle.style.color = 'white'; toggle.style.borderColor = '#7C3AED'; }
+    // Show the header regen button for this segment
+    const headerRegen = document.querySelector(`.seg-header-regen[data-seg-index="${index}"]`);
+    if (headerRegen) headerRegen.style.display = 'inline-flex';
 
     // Make narration textarea editable when panel is open
     const narrationTa = document.querySelector(`textarea[data-seg-index="${index}"]`);

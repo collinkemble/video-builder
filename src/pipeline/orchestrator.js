@@ -338,7 +338,7 @@ async function _runPipelineImpl(videoId, userId, options = {}) {
         seg.visualType = 'broll';
         console.log(`[Pipeline] Added missing brollDescription to ${seg.type} segment (order ${seg.order})`);
       }
-      if ((seg.type === 'intro' || seg.type === 'outro' || seg.type === 'transition') && seg.visualType !== 'broll') {
+      if ((seg.type === 'intro' || seg.type === 'outro' || seg.type === 'transition') && seg.visualType !== 'broll' && seg.visualType !== 'custom_asset') {
         seg.visualType = 'broll';
         console.log(`[Pipeline] Fixed visualType to 'broll' for ${seg.type} segment (order ${seg.order})`);
       }
@@ -858,6 +858,12 @@ async function regenerateSegments(videoId, userId, changes) {
           } catch (err) {
             console.warn(`[Regen] Scene recapture failed for segment ${c.order}: ${err.message}`);
           }
+          continue;
+        }
+
+        // Custom asset segments have a fixed visual — skip b-roll regeneration
+        if (seg.visualType === 'custom_asset') {
+          console.log(`[Regen] Segment ${c.order} is a custom asset — keeping existing visual`);
           continue;
         }
 

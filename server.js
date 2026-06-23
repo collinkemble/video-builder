@@ -725,7 +725,7 @@ app.post('/api/videos', async (req, res) => {
 // PUT /api/videos/:id — update video settings
 app.put('/api/videos/:id', async (req, res) => {
   try {
-    const { email, name, brandName, voiceId, language, durationTarget, sceneData, narrationScript, musicTrackId, customInstructions } = req.body;
+    const { email, name, brandName, voiceId, language, durationTarget, sceneData, narrationScript, musicTrackId, customInstructions, pocketsicProjectId, pocketsicProjectName, scriptWriterScriptId, scriptWriterScriptName, scriptWriterData } = req.body;
     if (!email) return res.status(400).json({ error: 'Email required' });
 
     const user = await getOrCreateUser(email);
@@ -769,7 +769,7 @@ app.put('/api/videos/:id', async (req, res) => {
     }
     if (narrationScript !== undefined && narrationScript !== null) {
       sets.push('narration_script = ?');
-      params.push(typeof narrationScript === 'string' ? narrationScript : JSON.stringify(narrationScript));
+      params.push(narrationScript === '' ? null : (typeof narrationScript === 'string' ? narrationScript : JSON.stringify(narrationScript)));
     }
     if (musicTrackId !== undefined && musicTrackId !== null) {
       sets.push('music_track_id = ?');
@@ -778,6 +778,30 @@ app.put('/api/videos/:id', async (req, res) => {
     if (customInstructions !== undefined && customInstructions !== null) {
       sets.push('custom_instructions = ?');
       params.push(customInstructions === '' ? null : customInstructions.trim());
+    }
+
+    // PocketSIC project fields (empty string clears them)
+    if (pocketsicProjectId !== undefined) {
+      sets.push('pocketsic_project_id = ?');
+      params.push(pocketsicProjectId === '' || pocketsicProjectId === null ? null : pocketsicProjectId);
+    }
+    if (pocketsicProjectName !== undefined) {
+      sets.push('pocketsic_project_name = ?');
+      params.push(pocketsicProjectName === '' || pocketsicProjectName === null ? null : pocketsicProjectName);
+    }
+
+    // Script Writer fields (empty string clears them)
+    if (scriptWriterScriptId !== undefined) {
+      sets.push('scriptwriter_script_id = ?');
+      params.push(scriptWriterScriptId === '' || scriptWriterScriptId === null ? null : scriptWriterScriptId);
+    }
+    if (scriptWriterScriptName !== undefined) {
+      sets.push('scriptwriter_script_name = ?');
+      params.push(scriptWriterScriptName === '' || scriptWriterScriptName === null ? null : scriptWriterScriptName);
+    }
+    if (scriptWriterData !== undefined) {
+      sets.push('scriptwriter_data = ?');
+      params.push(scriptWriterData === '' || scriptWriterData === null ? null : (typeof scriptWriterData === 'string' ? scriptWriterData : JSON.stringify(scriptWriterData)));
     }
 
     // Three-state guard for persona_image_url: truthy → use it, empty string → clear to null, null/undefined → keep existing
@@ -823,8 +847,9 @@ app.put('/api/videos/:id', async (req, res) => {
 
     if (sets.length > 0) {
       sets.push('updated_at = NOW()');
-      params.push(req.params.id, user.id);
-      await query(`UPDATE videos SET ${sets.join(', ')} WHERE id = ? AND user_id = ?`, params);
+      params.push(req.params.id);
+      // Ownership already verified above (including admin bypass)
+      await query(`UPDATE videos SET ${sets.join(', ')} WHERE id = ?`, params);
     }
 
     res.json({ success: true });
@@ -1452,6 +1477,60 @@ app.post('/api/videos/:id/upload-persona-image', async (req, res) => {
   } catch (err) {
     console.error('Persona image upload failed:', err);
     res.status(500).json({ error: 'Failed to upload persona image: ' + err.message });
+  }
+});
+
+// POST /api/videos/:id/upload-custom-asset — upload image/video for custom scene
+app.post('/api/videos/:id/upload-custom-asset', async (req, res) => {
+  try {
+    const { data, filename, contentType, email } = req.body;
+    if (!email) return res.status(400).json({ error: 'Email required' });
+    if (!data) return res.status(400).json({ error: 'File data required (base64)' });
+
+    const user = await getOrCreateUser(email);
+    const rows = isAdmin(email)
+      ? await query('SELECT id FROM videos WHERE id = ?', [req.params.id])
+      : await query('SELECT id FROM videos WHERE id = ? AND user_id = ?', [req.params.id, user.id]);
+    if (rows.length === 0) return res.status(404).json({ error: 'Video not found' });
+
+    // Validate content type
+    const isImage = contentType && contentType.startsWith('image/');
+    const isVideo = contentType && contentType.startsWith('video/');
+    if (!isImage && !isVideo) return res.status(400).json({ error: 'Only image and video files are accepted' });
+
+    // Parse base64 data URI
+    let buffer;
+    if (data.startsWith('data:')) {
+      const match = data.match(/^data:[^;]+;base64,(.+)$/);
+      if (!match) return res.status(400).json({ error: 'Invalid file data format' });
+      buffer = Buffer.from(match[1], 'base64');
+    } else {
+      buffer = Buffer.from(data, 'base64');
+    }
+
+    // Validate size — 50MB for video, 10MB for image
+    const maxSize = isVideo ? 50 * 1024 * 1024 : 10 * 1024 * 1024;
+    if (buffer.length > maxSize) {
+      return res.status(400).json({ error: `File too large (max ${isVideo ? '50MB' : '10MB'})` });
+    }
+
+    // Determine extension from filename or content type
+    const extMap = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/jpg': 'jpg', 'image/gif': 'gif', 'image/webp': 'webp', 'video/mp4': 'mp4', 'video/webm': 'webm', 'video/quicktime': 'mov' };
+    let ext = extMap[contentType] || (filename ? filename.split('.').pop() : (isVideo ? 'mp4' : 'png'));
+
+    // Upload to R2
+    const { uploadFile } = require('./src/utils/r2');
+    const key = `videos/${user.id}/${req.params.id}/custom_${Date.now()}.${ext}`;
+    const tmpPath = require('path').join(require('os').tmpdir(), `custom_upload_${Date.now()}.${ext}`);
+    require('fs').writeFileSync(tmpPath, buffer);
+    const assetUrl = await uploadFile(key, tmpPath, contentType);
+    try { require('fs').unlinkSync(tmpPath); } catch (e) { /* ignore */ }
+
+    console.log(`[Custom Asset] Uploaded ${isVideo ? 'video' : 'image'} (${(buffer.length / 1024 / 1024).toFixed(1)}MB) to ${assetUrl}`);
+    res.json({ url: assetUrl });
+  } catch (err) {
+    console.error('Custom asset upload failed:', err);
+    res.status(500).json({ error: 'Failed to upload custom asset: ' + err.message });
   }
 });
 

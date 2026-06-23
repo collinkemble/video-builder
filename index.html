@@ -2608,9 +2608,15 @@ function renderPipelineSteps(jobs) {
   const hasFullPipeline = !!jobMap['script'] || !!jobMap['capture'];
   const stepsToShow = hasFullPipeline ? STEP_ORDER : STEP_ORDER.filter(s => !!jobMap[s]);
 
-  // If no steps to show, show nothing
+  // If no steps to show yet, show a "preparing" placeholder so the user
+  // knows the pipeline is starting (jobs haven't been created in the DB yet)
   if (stepsToShow.length === 0) {
-    container.innerHTML = '';
+    container.innerHTML = `
+      <div style="text-align: center; padding: 20px 0;">
+        <div style="font-size: 40px; margin-bottom: 12px;">⚙️</div>
+        <div style="font-size: 16px; font-weight: 600; color: #6B7280;">Preparing pipeline…</div>
+        <div style="font-size: 13px; color: #9CA3AF; margin-top: 4px;">Setting up your video generation</div>
+      </div>`;
     return;
   }
 

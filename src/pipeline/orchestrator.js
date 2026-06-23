@@ -116,6 +116,11 @@ async function _runPipelineImpl(videoId, userId, options = {}) {
     const [video] = await query('SELECT * FROM videos WHERE id = ? AND user_id = ?', [videoId, userId]);
     if (!video) throw new Error('Video not found');
 
+    // Immediately set status and create the script job so the frontend
+    // can show pipeline progress while we resolve assets from PocketSIC
+    await updateVideoStatus(videoId, 'scripting');
+    const scriptJobId = await createJob(videoId, userId, 'script');
+
     const sceneData = typeof video.scene_data === 'string' ? JSON.parse(video.scene_data) : (video.scene_data || {});
     // Sort scenes by ID ascending — PocketSIC IDs are auto-increment and represent journey order.
     // scene_data.scenes may be stored in reverse or arbitrary order from the import.
@@ -193,13 +198,10 @@ async function _runPipelineImpl(videoId, userId, options = {}) {
     }
 
     // ── Step 1: Script Generation ──
-    // If user already generated/edited a script, reuse it; otherwise generate one now
+    // (status + job were already created above, before PocketSIC lookups)
     const existingScript = video.narration_script
       ? (typeof video.narration_script === 'string' ? JSON.parse(video.narration_script) : video.narration_script)
       : null;
-
-    await updateVideoStatus(videoId, 'scripting');
-    const scriptJobId = await createJob(videoId, userId, 'script');
 
     let script;
     try {

@@ -633,6 +633,7 @@
               <option value="intro">Intro</option>
               <option value="transition" selected>Transition (B-Roll)</option>
               <option value="scene">Scene (PocketSIC)</option>
+              <option value="custom">Scene (Custom)</option>
               <option value="outro">Outro</option>
             </select>
           </div>
@@ -647,6 +648,13 @@
           <div id="add-seg-broll-row" class="mb-3">
             <label style="font-size: 12px; font-weight: 600; color: #555; display: block; margin-bottom: 4px;">B-Roll Description</label>
             <input id="add-seg-broll" type="text" placeholder="e.g. Customer walking through a shopping district" style="width: 100%; padding: 8px 10px; border: 1px solid #e5e7eb; border-radius: 8px; font-size: 14px; box-sizing: border-box;">
+          </div>
+          <div id="add-seg-custom-row" class="mb-3 hidden">
+            <label style="font-size: 12px; font-weight: 600; color: #555; display: block; margin-bottom: 4px;">Upload Image or Video <span style="color: #ea001e;">*</span></label>
+            <input type="file" id="add-seg-custom-file" accept="image/*,video/*" onchange="previewCustomAsset()" style="width: 100%; padding: 6px; border: 1px solid #e5e7eb; border-radius: 8px; font-size: 13px; box-sizing: border-box;">
+            <div id="add-seg-custom-preview" style="margin-top: 8px;"></div>
+            <p style="font-size: 11px; color: #888; margin: 6px 0 0 0; line-height: 1.4;">Upload a still image or video clip to use as the visual for this scene.</p>
+            <p style="font-size: 11px; color: #888; margin: 4px 0 0 0; line-height: 1.4;"><strong>Video with audio:</strong> If you leave the narration blank, the video's original audio will be used. If you enter narration text, AI voiceover replaces the original audio.</p>
           </div>
           <div class="mb-3">
             <label style="font-size: 12px; font-weight: 600; color: #555; display: block; margin-bottom: 4px;">Narration</label>
@@ -2079,6 +2087,7 @@ function renderScript(script) {
     const typeLabel = seg.type === 'scene' ? `scene${seg.channel ? ' — ' + esc(seg.channel) : ''}` : seg.type;
     const hasBroll = seg.visualType === 'broll' && seg.brollDescription;
     const isSceneCapture = seg.visualType === 'scene_capture';
+    const isCustomAsset = seg.visualType === 'custom_asset';
     // Visible visual summary line (always shown)
     const visualSummary = hasBroll
       ? `<div style="margin-top: 6px; padding: 6px 10px; background: #F9FAFB; border: 1px solid #E5E7EB; border-radius: 8px; display: flex; align-items: flex-start; gap: 6px;">
@@ -2089,6 +2098,11 @@ function renderScript(script) {
         ? `<div style="margin-top: 6px; padding: 6px 10px; background: #F0F7FF; border: 1px solid #B8D4E8; border-radius: 8px; display: flex; align-items: center; gap: 6px;">
           <span style="font-size: 11px; flex-shrink: 0;">🖥️</span>
           <span style="font-size: 12px; color: #0176D3; line-height: 1.4;"><strong>Visual:</strong> Scene capture${seg.sceneId ? ' (Scene ' + seg.sceneId + ')' : ''}${seg.channel ? ' — ' + esc(seg.channel) : ''}</span>
+        </div>`
+      : isCustomAsset
+        ? `<div style="margin-top: 6px; padding: 6px 10px; background: #FEF3C7; border: 1px solid #FDE68A; border-radius: 8px; display: flex; align-items: center; gap: 6px;">
+          <span style="font-size: 11px; flex-shrink: 0;">${seg.customAssetType === 'video' ? '🎥' : '🖼️'}</span>
+          <span style="font-size: 12px; color: #92400E; line-height: 1.4;"><strong>Visual:</strong> Custom ${seg.customAssetType || 'asset'} (uploaded)${seg.useUploadedAudio ? ' — using original audio' : ''}</span>
         </div>`
         : '';
 
@@ -2102,7 +2116,7 @@ function renderScript(script) {
           <p style="font-size: 10px; color: #9CA3AF; margin: 3px 0 0 0; line-height: 1.3;">💡 Each clip is max 8 seconds. Longer sections use multiple clips with varied angles around your description. Be specific for better results.</p>
         </div>` : `
         <div style="background: #F9FAFB; border: 1px solid #E5E7EB; border-radius: 8px; padding: 10px 12px; margin-bottom: 8px;">
-          <span style="font-size: 11px; color: #888;">Visual: ${seg.visualType === 'scene_capture' ? 'Scene capture (not editable)' : seg.visualType || 'none'}</span>
+          <span style="font-size: 11px; color: #888;">Visual: ${seg.visualType === 'scene_capture' ? 'Scene capture (not editable)' : seg.visualType === 'custom_asset' ? 'Custom ' + (seg.customAssetType || 'asset') + ' (uploaded)' : seg.visualType || 'none'}</span>
         </div>`}
         <div style="display: flex; gap: 14px; margin-bottom: 8px; padding: 0 2px;">
           <label style="display: flex; align-items: center; gap: 5px; font-size: 12px; color: #555; cursor: pointer;">
@@ -2244,6 +2258,8 @@ function showAddSegmentDialog() {
   document.getElementById('add-seg-broll').value = '';
   document.getElementById('add-seg-narration').value = '';
   document.getElementById('add-seg-duration').value = '10';
+  document.getElementById('add-seg-custom-file').value = '';
+  document.getElementById('add-seg-custom-preview').innerHTML = '';
   onAddSegTypeChange();
   document.getElementById('add-segment-dialog').classList.remove('hidden');
   document.getElementById('add-segment-dialog').style.display = 'flex';
@@ -2257,13 +2273,38 @@ function hideAddSegmentDialog() {
 function onAddSegTypeChange() {
   const type = document.getElementById('add-seg-type').value;
   const isScene = type === 'scene';
-  const isBroll = !isScene;
+  const isCustom = type === 'custom';
+  const showBroll = !isScene && !isCustom;
   document.getElementById('add-seg-channel-row').classList.toggle('hidden', !isScene);
   document.getElementById('add-seg-sceneid-row').classList.toggle('hidden', !isScene);
-  document.getElementById('add-seg-broll-row').classList.toggle('hidden', !isBroll);
+  document.getElementById('add-seg-broll-row').classList.toggle('hidden', !showBroll);
+  document.getElementById('add-seg-custom-row').classList.toggle('hidden', !isCustom);
+  // Update narration placeholder for custom type
+  const narrationTa = document.getElementById('add-seg-narration');
+  if (isCustom) {
+    narrationTa.placeholder = 'Optional — leave blank to use the video\'s original audio';
+  } else {
+    narrationTa.placeholder = 'What should the narrator say during this section?';
+  }
 }
 
-function addSegment() {
+function previewCustomAsset() {
+  const file = document.getElementById('add-seg-custom-file').files[0];
+  const preview = document.getElementById('add-seg-custom-preview');
+  if (!file) { preview.innerHTML = ''; return; }
+
+  if (file.type.startsWith('image/')) {
+    const url = URL.createObjectURL(file);
+    preview.innerHTML = `<img src="${url}" style="max-width: 100%; max-height: 120px; border-radius: 8px; border: 1px solid #e5e7eb;">`;
+  } else if (file.type.startsWith('video/')) {
+    const url = URL.createObjectURL(file);
+    preview.innerHTML = `<video src="${url}" controls style="max-width: 100%; max-height: 120px; border-radius: 8px; border: 1px solid #e5e7eb;"></video>`;
+  } else {
+    preview.innerHTML = `<p style="font-size: 12px; color: #EF4444;">Unsupported file type. Please upload an image or video.</p>`;
+  }
+}
+
+async function addSegment() {
   if (!window._currentScript) return;
   collectNarrationEdits();
 
@@ -2277,7 +2318,7 @@ function addSegment() {
     type,
     sceneId: null,
     channel: null,
-    visualType: type === 'scene' ? 'scene_capture' : 'broll',
+    visualType: type === 'scene' ? 'scene_capture' : (type === 'custom' ? 'custom_asset' : 'broll'),
     brollDescription: null,
     narration: narration || '',
     estimatedDuration: Math.max(duration, 4),
@@ -2289,6 +2330,42 @@ function addSegment() {
     if (!sceneId) { alert('Please enter a Scene ID.'); return; }
     newSeg.sceneId = sceneId;
     newSeg.channel = channel || 'default';
+  } else if (type === 'custom') {
+    const file = document.getElementById('add-seg-custom-file').files[0];
+    if (!file) { alert('Please upload an image or video file.'); return; }
+
+    // Validate file size
+    const maxSize = file.type.startsWith('video/') ? 50 * 1024 * 1024 : 10 * 1024 * 1024;
+    if (file.size > maxSize) {
+      alert(`File too large. Max ${file.type.startsWith('video/') ? '50MB' : '10MB'}.`);
+      return;
+    }
+
+    // Read file as base64 and upload
+    const addBtn = document.querySelector('#add-segment-dialog button[onclick="addSegment()"]');
+    if (addBtn) { addBtn.disabled = true; addBtn.textContent = '⏳ Uploading...'; }
+    try {
+      const base64 = await readFileAsBase64(file);
+      const email = document.getElementById('user-email').textContent;
+      const resp = await fetch(`/api/videos/${currentVideoId}/upload-custom-asset`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ data: base64, filename: file.name, contentType: file.type, email })
+      });
+      if (!resp.ok) {
+        const err = await resp.json();
+        throw new Error(err.error || 'Upload failed');
+      }
+      const result = await resp.json();
+      newSeg.customAssetUrl = result.url;
+      newSeg.customAssetType = file.type.startsWith('video/') ? 'video' : 'image';
+      newSeg.useUploadedAudio = file.type.startsWith('video/') && !narration;
+    } catch (err) {
+      alert('Upload failed: ' + err.message);
+      if (addBtn) { addBtn.disabled = false; addBtn.textContent = 'Add Section'; }
+      return;
+    }
+    if (addBtn) { addBtn.disabled = false; addBtn.textContent = 'Add Section'; }
   } else {
     const broll = document.getElementById('add-seg-broll').value.trim();
     newSeg.brollDescription = broll || `Cinematic ${type} b-roll footage`;
@@ -2306,6 +2383,15 @@ function addSegment() {
   renderScript(window._currentScript);
   document.getElementById('save-script-btn').classList.remove('hidden');
   hideAddSegmentDialog();
+}
+
+function readFileAsBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(new Error('Failed to read file'));
+    reader.readAsDataURL(file);
+  });
 }
 
 async function generateScriptOnly() {

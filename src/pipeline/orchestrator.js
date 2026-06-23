@@ -18,40 +18,7 @@ let _currentVideoId = null;
 let _pipelineStartedAt = null;
 const pipelineQueue = [];
 
-// Max time a single pipeline can run before being considered stuck (10 minutes)
-const PIPELINE_TIMEOUT_MS = 10 * 60 * 1000;
-
-// ── Periodic Watchdog ──
-// Runs every 60s independently of the pipeline queue to detect stuck pipelines.
-// If a pipeline has been running longer than PIPELINE_TIMEOUT_MS, force-release it
-// and mark the stuck video as failed.
-setInterval(async () => {
-  if (!pipelineRunning || !_pipelineStartedAt) return;
-  const elapsed = Date.now() - _pipelineStartedAt;
-  if (elapsed > PIPELINE_TIMEOUT_MS) {
-    console.error(`[Pipeline Watchdog] ⚠️ Video ${_currentVideoId} has been running for ${Math.round(elapsed / 1000)}s — force-failing.`);
-    const stuckVideoId = _currentVideoId;
-    // Force-release the queue
-    pipelineRunning = false;
-    _currentVideoId = null;
-    _pipelineStartedAt = null;
-    // Mark the stuck video as failed in DB
-    try {
-      await query("UPDATE videos SET status = 'failed', error = 'Pipeline timed out (watchdog)' WHERE id = ? AND status NOT IN ('completed', 'draft', 'failed')", [stuckVideoId]);
-      await query("UPDATE video_jobs SET status = 'failed', error = 'Pipeline timed out (watchdog)', completed_at = NOW() WHERE video_id = ? AND status IN ('pending', 'running')", [stuckVideoId]);
-      console.log(`[Pipeline Watchdog] Video ${stuckVideoId} marked as failed.`);
-    } catch (e) {
-      console.warn(`[Pipeline Watchdog] Failed to update DB: ${e.message}`);
-    }
-    // Process next in queue if any
-    if (pipelineQueue.length > 0) {
-      const next = pipelineQueue.shift();
-      pipelineRunning = true;
-      console.log(`[Pipeline Watchdog] Starting next pipeline: video ${next.videoId}`);
-      _runPipelineNow(next);
-    }
-  }
-}, 60000);
+const PIPELINE_TIMEOUT_MS = 20 * 60 * 1000; // 20 minutes
 
 /**
  * Helper: wrap a promise with a timeout. Rejects with a timeout error if not resolved in time.
@@ -170,6 +137,11 @@ async function _runPipelineImpl(videoId, userId, options = {}) {
     const [video] = await query('SELECT * FROM videos WHERE id = ? AND user_id = ?', [videoId, userId]);
     if (!video) throw new Error('Video not found');
 
+    // Immediately set status and create the script job so the frontend
+    // can show pipeline progress while we resolve assets from PocketSIC
+    await updateVideoStatus(videoId, 'scripting');
+    const scriptJobId = await createJob(videoId, userId, 'script');
+
     const sceneData = typeof video.scene_data === 'string' ? JSON.parse(video.scene_data) : (video.scene_data || {});
     // Sort scenes by ID ascending — PocketSIC IDs are auto-increment and represent journey order.
     // scene_data.scenes may be stored in reverse or arbitrary order from the import.
@@ -247,13 +219,10 @@ async function _runPipelineImpl(videoId, userId, options = {}) {
     }
 
     // ── Step 1: Script Generation ──
-    // If user already generated/edited a script, reuse it; otherwise generate one now
+    // (status + job were already created above, before PocketSIC lookups)
     const existingScript = video.narration_script
       ? (typeof video.narration_script === 'string' ? JSON.parse(video.narration_script) : video.narration_script)
       : null;
-
-    await updateVideoStatus(videoId, 'scripting');
-    const scriptJobId = await createJob(videoId, userId, 'script');
 
     let script;
     try {
@@ -1274,5 +1243,60 @@ async function regenerateSegments(videoId, userId, changes) {
     throw err;
   }
 }
+
+// ── Pipeline Watchdog ──
+// Checks every 60s if the current pipeline has exceeded the timeout.
+// Before force-failing, checks the DB to see if the video already completed
+// (which can happen if the pipeline finished but the queue lock wasn't released).
+setInterval(async () => {
+  if (!pipelineRunning || !_pipelineStartedAt) return;
+  const elapsed = Date.now() - _pipelineStartedAt;
+  if (elapsed > PIPELINE_TIMEOUT_MS) {
+    const stuckVideoId = _currentVideoId;
+    console.warn(`[Pipeline Watchdog] ⚠️ Video ${stuckVideoId} has been running for ${Math.round(elapsed / 1000)}s — checking DB status before acting.`);
+    try {
+      const [video] = await query('SELECT status, video_url FROM videos WHERE id = ?', [stuckVideoId]);
+      const dbStatus = video ? video.status : 'unknown';
+
+      if (['completed', 'failed', 'draft'].includes(dbStatus)) {
+        // Video already finished — just release the queue lock
+        console.log(`[Pipeline Watchdog] Video ${stuckVideoId} is already "${dbStatus}" in DB — releasing queue lock (no action needed).`);
+        pipelineRunning = false;
+        _currentVideoId = null;
+        _pipelineStartedAt = null;
+      } else if (dbStatus === 'uploading' && video.video_url) {
+        // Upload likely finishing — wait one more cycle
+        console.log(`[Pipeline Watchdog] Video ${stuckVideoId} is "${dbStatus}" with a video_url — likely finishing. Waiting one more cycle.`);
+        return;
+      } else {
+        // Genuinely stuck — force-fail
+        console.error(`[Pipeline Watchdog] Video ${stuckVideoId} is stuck at "${dbStatus}" — force-failing.`);
+        pipelineRunning = false;
+        _currentVideoId = null;
+        _pipelineStartedAt = null;
+        await query(
+          "UPDATE videos SET status = 'failed', error = 'Pipeline timed out (watchdog)' WHERE id = ? AND status NOT IN ('completed', 'draft', 'failed')",
+          [stuckVideoId]
+        );
+        await query(
+          "UPDATE video_jobs SET status = 'failed', error = 'Pipeline timed out (watchdog)', completed_at = NOW() WHERE video_id = ? AND status IN ('pending', 'running')",
+          [stuckVideoId]
+        );
+      }
+    } catch (e) {
+      console.warn(`[Pipeline Watchdog] DB check failed (${e.message}) — force-releasing queue.`);
+      pipelineRunning = false;
+      _currentVideoId = null;
+      _pipelineStartedAt = null;
+    }
+    // Start next queued video if any
+    if (!pipelineRunning && pipelineQueue.length > 0) {
+      const next = pipelineQueue.shift();
+      pipelineRunning = true;
+      _pipelineStartedAt = Date.now();
+      _runPipelineNow(next);
+    }
+  }
+}, 60000);
 
 module.exports = { runPipeline, getPipelineStatus, regenerateSegments, getQueueInfo };

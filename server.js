@@ -18,7 +18,7 @@ const fs = require('fs');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const BUILD_VERSION = 'v183-admin-bypass';
+const BUILD_VERSION = 'v186-pipeline-visibility';
 
 // ─── Staging Banner ───
 const STAGING_BANNER_HTML = '<div style="background:#f59e0b;color:#000;text-align:center;padding:4px;font-size:12px;font-weight:700;position:fixed;top:0;left:0;right:0;z-index:99999;">⚠️ STAGING ENVIRONMENT</div><div style="height:28px;"></div>';
@@ -40,7 +40,7 @@ const APP_URL_MAP = {
   'https://pocketsic.aubreydemo.com':        process.env.POCKETSIC_URL        || 'https://pocketsic.aubreydemo.com',
   'https://saleo-builder.aubreydemo.com':    process.env.SALEOBUILDER_URL     || 'https://saleo-builder.aubreydemo.com',
   'https://video-builder.aubreydemo.com':    process.env.VIDEO_BUILDER_URL    || 'https://video-builder.aubreydemo.com',
-  'https://leave-behind-generator.aubreydemo.com':     process.env.LEAVE_BEHIND_URL     || 'https://leave-behind-generator.aubreydemo.com',
+  'https://leave-behind.aubreydemo.com':     process.env.LEAVE_BEHIND_URL     || 'https://leave-behind.aubreydemo.com',
 };
 if (spaHtml) {
   for (const [prodUrl, envUrl] of Object.entries(APP_URL_MAP)) {
@@ -315,6 +315,7 @@ app.get('/api/api-keys', async (req, res) => {
   try {
     const email = req.query.email;
     if (!email) return res.status(400).json({ error: 'Email required' });
+    if (!isAdmin(email)) return res.status(403).json({ error: 'Admin access required' });
 
     const user = await getOrCreateUser(email);
     const keys = await query(
@@ -335,6 +336,7 @@ app.post('/api/api-keys', async (req, res) => {
     if (!email || !name || !name.trim()) {
       return res.status(400).json({ error: 'Email and key name are required' });
     }
+    if (!isAdmin(email)) return res.status(403).json({ error: 'Admin access required' });
 
     const user = await getOrCreateUser(email);
     const rawKey = generateApiKeyToken();
@@ -364,6 +366,7 @@ app.delete('/api/api-keys/:id', async (req, res) => {
   try {
     const email = req.query.email;
     if (!email) return res.status(400).json({ error: 'Email required' });
+    if (!isAdmin(email)) return res.status(403).json({ error: 'Admin access required' });
 
     const user = await getOrCreateUser(email);
     const result = await query(
@@ -407,7 +410,7 @@ app.get('/api/users', async (req, res) => {
   }
 });
 
-// GET /api/users/:userId/items — admin-only: list a user's videos
+// GET /api/users/:userId/items — list items for a specific user (admin only)
 app.get('/api/users/:userId/items', async (req, res) => {
   try {
     const email = req.query.email;
@@ -563,13 +566,10 @@ app.get('/api/videos/:id', async (req, res) => {
     if (!email) return res.status(400).json({ error: 'Email required' });
 
     const user = await getOrCreateUser(email);
-    const admin = isAdmin(email);
-
     let rows;
-    if (admin) {
+    if (isAdmin(email)) {
       rows = await query(
-        `SELECT v.*, u.email AS owner_email, u.name AS owner_name
-         FROM videos v JOIN users u ON u.id = v.user_id WHERE v.id = ?`,
+        'SELECT v.*, u.email AS owner_email, u.name AS owner_name FROM videos v JOIN users u ON u.id = v.user_id WHERE v.id = ?',
         [req.params.id]
       );
     } else {
@@ -854,10 +854,11 @@ app.delete('/api/videos/:id', async (req, res) => {
     await query('DELETE FROM video_jobs WHERE video_id = ?', [req.params.id]);
 
     // Delete the video record
-    await query('DELETE FROM videos WHERE id = ? AND user_id = ?', [req.params.id, user.id]);
+    const deleteUserId = video.user_id || user.id;
+    await query('DELETE FROM videos WHERE id = ?', [req.params.id]);
 
     // Clean up R2 assets in background (don't block the response)
-    deleteVideoAssets(user.id, req.params.id).catch(err => {
+    deleteVideoAssets(deleteUserId, req.params.id).catch(err => {
       console.error(`Failed to clean up R2 assets for video ${req.params.id}:`, err.message);
     });
 
@@ -873,34 +874,16 @@ app.delete('/api/videos/:id', async (req, res) => {
 // ═══════════════════════════════════════════════
 
 // POST /api/videos/:id/generate-script — run ONLY the script generation step (Gemini)
-// Uses chunked transfer encoding with keepalive pings to prevent Heroku H12 (30s idle timeout).
-// The Gemini API can take 60-90 seconds for complex scripts.
 app.post('/api/videos/:id/generate-script', async (req, res) => {
-  // Start chunked JSON response to prevent Heroku H12 timeout.
-  // We send whitespace keepalive bytes every 10s while waiting for Gemini.
-  res.setHeader('Content-Type', 'application/json');
-  res.setHeader('Transfer-Encoding', 'chunked');
-  res.flushHeaders();
-
-  const keepalive = setInterval(() => {
-    try { res.write(' '); } catch {}
-  }, 10000);
-
   try {
     const { email } = req.body;
-    if (!email) {
-      clearInterval(keepalive);
-      return res.end(JSON.stringify({ error: 'Email required' }));
-    }
+    if (!email) return res.status(400).json({ error: 'Email required' });
 
     const user = await getOrCreateUser(email);
     const rows = isAdmin(email)
       ? await query('SELECT * FROM videos WHERE id = ?', [req.params.id])
       : await query('SELECT * FROM videos WHERE id = ? AND user_id = ?', [req.params.id, user.id]);
-    if (rows.length === 0) {
-      clearInterval(keepalive);
-      return res.end(JSON.stringify({ error: 'Video not found' }));
-    }
+    if (rows.length === 0) return res.status(404).json({ error: 'Video not found' });
 
     const video = rows[0];
     const sceneData = typeof video.scene_data === 'string' ? JSON.parse(video.scene_data || '{}') : (video.scene_data || {});
@@ -912,8 +895,7 @@ app.post('/api/videos/:id/generate-script', async (req, res) => {
     });
 
     if (scenes.length === 0) {
-      clearInterval(keepalive);
-      return res.end(JSON.stringify({ error: 'No scenes found. Import a PocketSIC project first.' }));
+      return res.status(400).json({ error: 'No scenes found. Import a PocketSIC project first.' });
     }
 
     const scriptWriterData = video.scriptwriter_data
@@ -939,12 +921,10 @@ app.post('/api/videos/:id/generate-script', async (req, res) => {
     // Save script to video record
     await query('UPDATE videos SET narration_script = ?, updated_at = NOW() WHERE id = ?', [JSON.stringify(script), req.params.id]);
 
-    clearInterval(keepalive);
-    res.end(JSON.stringify({ success: true, script }));
+    res.json({ success: true, script });
   } catch (err) {
     console.error('Script generation failed:', err);
-    clearInterval(keepalive);
-    res.end(JSON.stringify({ error: 'Script generation failed: ' + err.message }));
+    res.status(500).json({ error: 'Script generation failed: ' + err.message });
   }
 });
 
@@ -1015,10 +995,9 @@ app.post('/api/videos/:id/regenerate-segments', async (req, res) => {
     }
 
     const user = await getOrCreateUser(email);
-    const admin = isAdmin(email);
 
     // Verify ownership and check status (admins can operate on any video)
-    const rows = admin
+    const rows = isAdmin(email)
       ? await query('SELECT * FROM videos WHERE id = ?', [req.params.id])
       : await query('SELECT * FROM videos WHERE id = ? AND user_id = ?', [req.params.id, user.id]);
     if (rows.length === 0) return res.status(404).json({ error: 'Video not found' });
@@ -1045,111 +1024,6 @@ app.post('/api/videos/:id/regenerate-segments', async (req, res) => {
   } catch (err) {
     console.error('Failed to start segment regeneration:', err);
     res.status(500).json({ error: 'Failed to start segment regeneration' });
-  }
-});
-
-// POST /api/videos/:id/remove-section — delete a section and recompose without full regeneration
-app.post('/api/videos/:id/remove-section', async (req, res) => {
-  try {
-    const { email, order } = req.body;
-    if (!email) return res.status(400).json({ error: 'Email required' });
-    if (order === undefined || order === null) {
-      return res.status(400).json({ error: 'Segment order is required' });
-    }
-
-    const user = await getOrCreateUser(email);
-    const admin = isAdmin(email);
-    const rows = admin
-      ? await query('SELECT * FROM videos WHERE id = ?', [req.params.id])
-      : await query('SELECT * FROM videos WHERE id = ? AND user_id = ?', [req.params.id, user.id]);
-    if (rows.length === 0) return res.status(404).json({ error: 'Video not found' });
-
-    const video = rows[0];
-    if (video.status !== 'completed') {
-      return res.status(409).json({ error: 'Video must be completed before removing sections' });
-    }
-
-    // Parse JSON fields
-    const script = video.narration_script
-      ? (typeof video.narration_script === 'string' ? JSON.parse(video.narration_script) : video.narration_script)
-      : null;
-    if (!script || !script.segments || script.segments.length === 0) {
-      return res.status(409).json({ error: 'No script segments found' });
-    }
-
-    const segmentAssets = video.segment_assets
-      ? (typeof video.segment_assets === 'string' ? JSON.parse(video.segment_assets) : video.segment_assets)
-      : null;
-    if (!segmentAssets || !segmentAssets.clips || Object.keys(segmentAssets.clips).length === 0) {
-      return res.status(409).json({ error: 'No segment assets available. Please regenerate the full video first.' });
-    }
-
-    // Validate: must have >1 segment remaining
-    if (script.segments.length <= 1) {
-      return res.status(400).json({ error: 'Cannot remove the last remaining section' });
-    }
-
-    // Find the segment to remove
-    const segIdx = script.segments.findIndex(s => s.order === order);
-    if (segIdx === -1) {
-      return res.status(404).json({ error: `Segment with order ${order} not found` });
-    }
-
-    console.log(`[RemoveSection] Removing segment order=${order} from video ${req.params.id} (${script.segments.length} segments → ${script.segments.length - 1})`);
-
-    // Remove segment from script
-    script.segments.splice(segIdx, 1);
-
-    // Remove clip from segment_assets
-    const oldClips = segmentAssets.clips;
-    delete oldClips[String(order)];
-
-    // Parse voiceover_timestamps
-    let timestamps = video.voiceover_timestamps
-      ? (typeof video.voiceover_timestamps === 'string' ? JSON.parse(video.voiceover_timestamps) : video.voiceover_timestamps)
-      : null;
-    if (timestamps && timestamps.segments) {
-      timestamps.segments = timestamps.segments.filter(t => t.order !== order);
-    }
-
-    // Renumber remaining segments sequentially (0, 1, 2, ...)
-    const newClips = {};
-    script.segments.forEach((seg, i) => {
-      const oldOrder = seg.order;
-      // Move clip URL from old order to new order
-      if (oldClips[String(oldOrder)]) {
-        newClips[String(i)] = oldClips[String(oldOrder)];
-      }
-      // Update timestamp order
-      if (timestamps && timestamps.segments) {
-        const ts = timestamps.segments.find(t => t.order === oldOrder);
-        if (ts) ts.order = i;
-      }
-      // Update segment order
-      seg.order = i;
-    });
-    segmentAssets.clips = newClips;
-
-    // Persist updated JSON fields to DB
-    await query(
-      'UPDATE videos SET narration_script = ?, segment_assets = ?, voiceover_timestamps = ? WHERE id = ?',
-      [JSON.stringify(script), JSON.stringify(segmentAssets), timestamps ? JSON.stringify(timestamps) : null, req.params.id]
-    );
-
-    // Respond immediately — recomposition happens in background
-    res.json({ success: true, message: 'Section removed. Recomposing video...' });
-
-    // Trigger recomposition via regenerateSegments with voiceover-only regen
-    // Pass the first remaining segment with regenerateVoiceover flag to trigger
-    // a full voiceover rebuild (narration changed since a segment was removed)
-    regenerateSegments(req.params.id, video.user_id, [
-      { order: script.segments[0].order, regenerateVoiceover: true }
-    ]).catch(err => {
-      console.error(`Remove-section recompose failed for video ${req.params.id}:`, err.message);
-    });
-  } catch (err) {
-    console.error('Failed to remove section:', err);
-    res.status(500).json({ error: 'Failed to remove section' });
   }
 });
 
@@ -1205,7 +1079,26 @@ app.get('/api/videos/:id/status', async (req, res) => {
     if (!email) return res.status(400).json({ error: 'Email required' });
 
     const user = await getOrCreateUser(email);
-    const status = await getPipelineStatus(req.params.id, user.id);
+    const admin = isAdmin(email);
+
+    // Admin bypass: query without user_id filter
+    let status;
+    if (admin) {
+      const [video] = await query(
+        'SELECT id, name, status, error, duration_actual, video_url, thumbnail_url, created_at, updated_at FROM videos WHERE id = ?',
+        [req.params.id]
+      );
+      if (!video) {
+        return res.status(404).json({ error: 'Video not found' });
+      }
+      const jobs = await query(
+        'SELECT id, step, status, progress, total, error, started_at, completed_at FROM video_jobs WHERE video_id = ? ORDER BY created_at ASC',
+        [req.params.id]
+      );
+      status = { video, jobs };
+    } else {
+      status = await getPipelineStatus(req.params.id, user.id);
+    }
 
     if (!status) {
       return res.status(404).json({ error: 'Video not found' });
@@ -1521,7 +1414,9 @@ app.post('/api/videos/:id/upload-persona-image', async (req, res) => {
     if (!imageData) return res.status(400).json({ error: 'Image data required (base64)' });
 
     const user = await getOrCreateUser(email);
-    const rows = await query('SELECT id FROM videos WHERE id = ? AND user_id = ?', [req.params.id, user.id]);
+    const rows = isAdmin(email)
+      ? await query('SELECT id FROM videos WHERE id = ?', [req.params.id])
+      : await query('SELECT id FROM videos WHERE id = ? AND user_id = ?', [req.params.id, user.id]);
     if (rows.length === 0) return res.status(404).json({ error: 'Video not found' });
 
     // Parse base64 data URI — supports data:image/png;base64,... or raw base64
@@ -1567,7 +1462,9 @@ app.delete('/api/videos/:id/persona-image', async (req, res) => {
     if (!email) return res.status(400).json({ error: 'Email required' });
 
     const user = await getOrCreateUser(email);
-    const rows = await query('SELECT id FROM videos WHERE id = ? AND user_id = ?', [req.params.id, user.id]);
+    const rows = isAdmin(email)
+      ? await query('SELECT id FROM videos WHERE id = ?', [req.params.id])
+      : await query('SELECT id FROM videos WHERE id = ? AND user_id = ?', [req.params.id, user.id]);
     if (rows.length === 0) return res.status(404).json({ error: 'Video not found' });
 
     await query('UPDATE videos SET persona_image_url = NULL, updated_at = NOW() WHERE id = ?', [req.params.id]);
@@ -1587,7 +1484,9 @@ app.post('/api/videos/:id/upload-brand-logo', async (req, res) => {
     if (!imageData) return res.status(400).json({ error: 'Image data required (base64)' });
 
     const user = await getOrCreateUser(email);
-    const rows = await query('SELECT id FROM videos WHERE id = ? AND user_id = ?', [req.params.id, user.id]);
+    const rows = isAdmin(email)
+      ? await query('SELECT id FROM videos WHERE id = ?', [req.params.id])
+      : await query('SELECT id FROM videos WHERE id = ? AND user_id = ?', [req.params.id, user.id]);
     if (rows.length === 0) return res.status(404).json({ error: 'Video not found' });
 
     // Parse base64 data URI
@@ -2366,17 +2265,14 @@ async function checkVeoCapability() {
  *
  * All interrupted videos (queued or processing) are silently reset to 'draft'
  * so users can just click Generate again — no scary error messages.
- *
- * Also recovers videos with empty/invalid status (e.g., '' from DemoForge race conditions).
  */
 async function recoverStaleJobs() {
   try {
-    console.log('[Recovery] Checking for interrupted videos...');
     const stale = await query(
-      "SELECT id, name, status FROM videos WHERE status IN ('queued', 'scripting', 'voiceover', 'capturing', 'compositing', 'uploading', 'broll') OR (status = '' AND error IS NULL)"
+      "SELECT id, name, status FROM videos WHERE status IN ('queued', 'scripting', 'voiceover', 'capturing', 'compositing', 'uploading')"
     );
-    console.log(`[Recovery] Found ${stale.length} video(s) with in-progress status.`);
     if (stale.length > 0) {
+      console.log(`[Recovery] Found ${stale.length} interrupted video(s) — resetting to draft.`);
       for (const v of stale) {
         await query(
           "UPDATE videos SET status = 'draft', error = NULL WHERE id = ?",
@@ -2386,10 +2282,8 @@ async function recoverStaleJobs() {
           "UPDATE video_jobs SET status = 'failed', error = 'Interrupted by restart', completed_at = NOW() WHERE video_id = ? AND status IN ('pending', 'running')",
           [v.id]
         );
-        console.log(`[Recovery] Video ${v.id} ("${v.name}") was '${v.status}' — reset to draft.`);
+        console.log(`[Recovery] Video ${v.id} ("${v.name}") was ${v.status} — reset to draft.`);
       }
-    } else {
-      console.log('[Recovery] No interrupted videos found.');
     }
   } catch (err) {
     console.warn('[Recovery] Stale job recovery failed:', err.message);

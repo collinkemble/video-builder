@@ -1259,8 +1259,14 @@ function runFfmpeg(args, label) {
       proc.kill('SIGKILL');
     }, 5 * 60 * 1000);
 
+    // Keep only the last ~10KB of stderr to avoid RangeError: Invalid string length
+    // when FFmpeg produces massive progress output on long composites
     let stderr = '';
-    proc.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
+    const STDERR_MAX = 10 * 1024;
+    proc.stderr.on('data', (chunk) => {
+      stderr += chunk.toString();
+      if (stderr.length > STDERR_MAX * 2) stderr = stderr.slice(-STDERR_MAX);
+    });
 
     proc.on('close', (code) => {
       clearTimeout(timeout);

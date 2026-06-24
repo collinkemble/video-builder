@@ -840,7 +840,7 @@ async function regenerateSegments(videoId, userId, changes) {
                     '-an', '-movflags', '+faststart', normalizedPath,
                   ], { stdio: ['ignore', 'pipe', 'pipe'] });
                   let stderr = '';
-                  proc.stderr.on('data', d => stderr += d);
+                  proc.stderr.on('data', d => { stderr += d; if (stderr.length > 20000) stderr = stderr.slice(-10000); });
                   proc.on('close', code => code === 0 ? resolve() : reject(new Error(`FFmpeg failed: ${stderr.slice(-200)}`)));
                   proc.on('error', reject);
                 });
@@ -919,7 +919,7 @@ async function regenerateSegments(videoId, userId, changes) {
                   '-movflags', '+faststart', normalizedPath,
                 ], { stdio: ['ignore', 'pipe', 'pipe'] });
                 let stderr = '';
-                proc.stderr.on('data', d => stderr += d);
+                proc.stderr.on('data', d => { stderr += d; if (stderr.length > 20000) stderr = stderr.slice(-10000); });
                 proc.on('close', code => code === 0 ? resolve() : reject(new Error(`FFmpeg failed: ${stderr.slice(-200)}`)));
                 proc.on('error', reject);
               });
@@ -935,7 +935,7 @@ async function regenerateSegments(videoId, userId, changes) {
                   '-movflags', '+faststart', normalizedPath,
                 ], { stdio: ['ignore', 'pipe', 'pipe'] });
                 let stderr = '';
-                proc.stderr.on('data', d => stderr += d);
+                proc.stderr.on('data', d => { stderr += d; if (stderr.length > 20000) stderr = stderr.slice(-10000); });
                 proc.on('close', code => code === 0 ? resolve() : reject(new Error(`FFmpeg failed: ${stderr.slice(-200)}`)));
                 proc.on('error', reject);
               });
@@ -1035,7 +1035,7 @@ async function regenerateSegments(videoId, userId, changes) {
                   '-an', '-movflags', '+faststart', normalizedPath,
                 ], { stdio: ['ignore', 'pipe', 'pipe'] });
                 let stderr = '';
-                proc.stderr.on('data', d => stderr += d);
+                proc.stderr.on('data', d => { stderr += d; if (stderr.length > 20000) stderr = stderr.slice(-10000); });
                 proc.on('close', code => code === 0 ? resolve() : reject(new Error(`FFmpeg failed: ${stderr.slice(-200)}`)));
                 proc.on('error', reject);
               });
@@ -1051,7 +1051,7 @@ async function regenerateSegments(videoId, userId, changes) {
                   '-movflags', '+faststart', normalizedPath,
                 ], { stdio: ['ignore', 'pipe', 'pipe'] });
                 let stderr = '';
-                proc.stderr.on('data', d => stderr += d);
+                proc.stderr.on('data', d => { stderr += d; if (stderr.length > 20000) stderr = stderr.slice(-10000); });
                 proc.on('close', code => code === 0 ? resolve() : reject(new Error(`FFmpeg failed: ${stderr.slice(-200)}`)));
                 proc.on('error', reject);
               });
@@ -1076,7 +1076,7 @@ async function regenerateSegments(videoId, userId, changes) {
                     '-an', '-movflags', '+faststart', partPath,
                   ], { stdio: ['ignore', 'pipe', 'pipe'] });
                   let stderr = '';
-                  proc.stderr.on('data', d => stderr += d);
+                  proc.stderr.on('data', d => { stderr += d; if (stderr.length > 20000) stderr = stderr.slice(-10000); });
                   proc.on('close', code => code === 0 ? resolve() : reject(new Error(`FFmpeg failed: ${stderr.slice(-200)}`)));
                   proc.on('error', reject);
                 });
@@ -1092,7 +1092,7 @@ async function regenerateSegments(videoId, userId, changes) {
                     '-movflags', '+faststart', partPath,
                   ], { stdio: ['ignore', 'pipe', 'pipe'] });
                   let stderr = '';
-                  proc.stderr.on('data', d => stderr += d);
+                  proc.stderr.on('data', d => { stderr += d; if (stderr.length > 20000) stderr = stderr.slice(-10000); });
                   proc.on('close', code => code === 0 ? resolve() : reject(new Error(`FFmpeg failed: ${stderr.slice(-200)}`)));
                   proc.on('error', reject);
                 });
@@ -1112,7 +1112,7 @@ async function regenerateSegments(videoId, userId, changes) {
                 '-an', '-movflags', '+faststart', normalizedPath,
               ], { stdio: ['ignore', 'pipe', 'pipe'] });
               let stderr = '';
-              proc.stderr.on('data', d => stderr += d);
+              proc.stderr.on('data', d => { stderr += d; if (stderr.length > 20000) stderr = stderr.slice(-10000); });
               proc.on('close', code => code === 0 ? resolve() : reject(new Error(`Concat failed: ${stderr.slice(-200)}`)));
               proc.on('error', reject);
             });
@@ -1209,7 +1209,7 @@ async function regenerateSegments(videoId, userId, changes) {
         '-c', 'copy', '-movflags', '+faststart', silentPath,
       ], { stdio: ['ignore', 'pipe', 'pipe'] });
       let stderr = '';
-      proc.stderr.on('data', d => stderr += d);
+      proc.stderr.on('data', d => { stderr += d; if (stderr.length > 20000) stderr = stderr.slice(-10000); });
       proc.on('close', code => code === 0 ? resolve() : reject(new Error(`Concat failed: ${stderr.slice(-200)}`)));
       proc.on('error', reject);
     });
@@ -1308,7 +1308,7 @@ async function regenerateSegments(videoId, userId, changes) {
       await new Promise((resolve, reject) => {
         const proc = spawn(ffmpegPath, audioArgs, { stdio: ['ignore', 'pipe', 'pipe'] });
         let stderr = '';
-        proc.stderr.on('data', d => stderr += d);
+        proc.stderr.on('data', d => { stderr += d; if (stderr.length > 20000) stderr = stderr.slice(-10000); });
         proc.on('close', code => code === 0 ? resolve() : reject(new Error(`Audio overlay failed: ${stderr.slice(-200)}`)));
         proc.on('error', reject);
       });

@@ -45,28 +45,31 @@ async function uploadFile(key, body, contentType) {
   let fileBody = body;
   let fileSize = 0;
 
+  let useStream = false;
   if (typeof body === 'string' && fs.existsSync(body)) {
     // Get file size first for logging
     const stat = fs.statSync(body);
     fileSize = stat.size;
-    console.log(`[R2] Reading file: ${body} (${(fileSize / 1024 / 1024).toFixed(1)}MB)`);
+    console.log(`[R2] File: ${body} (${(fileSize / 1024 / 1024).toFixed(1)}MB)`);
 
-    // For files under 50MB, read into buffer (simpler, reliable)
-    // For larger files, still read into buffer but log a warning
-    if (fileSize > 50 * 1024 * 1024) {
-      console.warn(`[R2] ⚠️ Large file upload: ${(fileSize / 1024 / 1024).toFixed(1)}MB — may use significant memory`);
+    // Use streaming for files over 5MB to reduce memory pressure
+    if (fileSize > 5 * 1024 * 1024) {
+      fileBody = fs.createReadStream(body);
+      useStream = true;
+      console.log(`[R2] Using stream upload for ${(fileSize / 1024 / 1024).toFixed(1)}MB file`);
+    } else {
+      fileBody = fs.readFileSync(body);
+      console.log(`[R2] File read into memory: ${(fileBody.length / 1024 / 1024).toFixed(1)}MB in ${Date.now() - startTime}ms`);
     }
-    fileBody = fs.readFileSync(body);
-    console.log(`[R2] File read into memory: ${(fileBody.length / 1024 / 1024).toFixed(1)}MB in ${Date.now() - startTime}ms`);
   }
 
-  // Ensure fileBody is a Buffer for reliable upload with explicit ContentLength
-  if (!Buffer.isBuffer(fileBody)) {
+  // Ensure fileBody is a Buffer for reliable upload with explicit ContentLength (skip for streams)
+  if (!useStream && !Buffer.isBuffer(fileBody)) {
     fileBody = Buffer.from(fileBody);
   }
-  fileSize = fileBody.length;
+  if (!useStream) fileSize = fileBody.length;
 
-  console.log(`[R2] Uploading: key=${key}, size=${(fileSize / 1024 / 1024).toFixed(1)}MB, type=${contentType}`);
+  console.log(`[R2] Uploading: key=${key}, size=${(fileSize / 1024 / 1024).toFixed(1)}MB, type=${contentType}${useStream ? ' (streaming)' : ''}`);
   const uploadStart = Date.now();
 
   const putResult = await client.send(new PutObjectCommand({
@@ -74,14 +77,15 @@ async function uploadFile(key, body, contentType) {
     Key: key,
     Body: fileBody,
     ContentType: contentType,
-    ContentLength: fileBody.length,
+    ContentLength: fileSize,
     CacheControl: 'public, max-age=31536000',
   }));
 
   const uploadDuration = Date.now() - uploadStart;
-  console.log(`[R2] PutObject complete: key=${key}, size=${fileBody.length}, etag=${putResult.ETag || 'none'}, status=${putResult.$metadata?.httpStatusCode}, took=${uploadDuration}ms`);
+  console.log(`[R2] PutObject complete: key=${key}, size=${fileSize}, etag=${putResult.ETag || 'none'}, status=${putResult.$metadata?.httpStatusCode}, took=${uploadDuration}ms`);
 
-  // Free the buffer immediately after upload to reduce memory pressure
+  // Free the buffer/stream immediately after upload to reduce memory pressure
+  if (useStream && fileBody.destroy) fileBody.destroy();
   fileBody = null;
 
   // Verify the object exists in R2 after upload using HEAD (not GET — avoids re-downloading)

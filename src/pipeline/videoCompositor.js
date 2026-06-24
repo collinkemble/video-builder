@@ -76,11 +76,17 @@ async function composeVideo({
         console.log(`[Compositor] Downloading custom asset for segment ${entry.order}: ${sp}`);
         const resp = await fetch(sp);
         if (!resp.ok) throw new Error(`Failed to download custom asset: HTTP ${resp.status}`);
-        const buffer = Buffer.from(await resp.arrayBuffer());
-        fs.writeFileSync(localPath, buffer);
+        // Stream to file to reduce memory pressure
+        const fileStream = fs.createWriteStream(localPath);
+        await new Promise((resolve, reject) => {
+          resp.body.pipe(fileStream);
+          fileStream.on('finish', resolve);
+          fileStream.on('error', reject);
+        });
         entry.sourcePaths[idx] = localPath;
         if (idx === 0) entry.sourcePath = localPath;
-        console.log(`[Compositor] Downloaded custom asset (${(buffer.length / 1024 / 1024).toFixed(1)}MB) → ${localPath}`);
+        const dlSize = fs.statSync(localPath).size;
+        console.log(`[Compositor] Downloaded custom asset (${(dlSize / 1024 / 1024).toFixed(1)}MB) → ${localPath}`);
       }
     }
   }
@@ -236,9 +242,16 @@ async function composeVideo({
       musicPath = path.join(workDir, 'bgmusic.mp3');
       const musicResp = await fetch(musicTrackUrl);
       if (musicResp.ok) {
-        const musicBuffer = Buffer.from(await musicResp.arrayBuffer());
-        fs.writeFileSync(musicPath, musicBuffer);
-        console.log(`[Compositor] Background music downloaded: ${(musicBuffer.length / 1024).toFixed(0)}KB`);
+        // Stream to file instead of buffering in memory
+        const { Writable } = require('stream');
+        const fileStream = fs.createWriteStream(musicPath);
+        await new Promise((resolve, reject) => {
+          musicResp.body.pipe(fileStream);
+          fileStream.on('finish', resolve);
+          fileStream.on('error', reject);
+        });
+        const musicSize = fs.statSync(musicPath).size;
+        console.log(`[Compositor] Background music downloaded: ${(musicSize / 1024).toFixed(0)}KB`);
       } else {
         console.warn(`[Compositor] Music download failed (${musicResp.status}). Skipping background music.`);
         musicPath = null;

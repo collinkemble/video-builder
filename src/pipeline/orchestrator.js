@@ -1271,7 +1271,13 @@ async function regenerateSegments(videoId, userId, changes) {
           musicPath = path.join(workDir, 'bgmusic.mp3');
           const musicResp = await fetch(musicUrl);
           if (musicResp.ok) {
-            fs.writeFileSync(musicPath, Buffer.from(await musicResp.arrayBuffer()));
+            // Stream to file to reduce memory pressure
+            const musicStream = fs.createWriteStream(musicPath);
+            await new Promise((resolve, reject) => {
+              musicResp.body.pipe(musicStream);
+              musicStream.on('finish', resolve);
+              musicStream.on('error', reject);
+            });
           } else {
             musicPath = null;
           }

@@ -23,7 +23,7 @@ CRITICAL RULES YOU MUST FOLLOW:
 1. ABSOLUTELY NO screens of any kind — no phone screens, laptop screens, tablet screens, computer monitors, TV screens, smartwatch screens, or any digital display showing content.
 2. ABSOLUTELY NO close-ups of devices — do not show any device screen from an angle where you can see what is displayed.
 3. DO NOT generate images of people looking at screens, typing on keyboards, or using touchscreens in close-up.
-4. Feature the person from the reference image as the MAIN character. Show them in lifestyle moments: walking, shopping, enjoying products, in beautiful environments.
+4. Feature the person from the reference image as the MAIN character. Show them in lifestyle moments: walking, shopping, enjoying products, in beautiful environments. IMPORTANT: Dress the person in clothing appropriate for the scene — if they are exercising, put them in athletic wear; if at a formal event, put them in formal attire; if outdoors hiking, put them in outdoor gear. Do NOT keep them in whatever outfit they are wearing in the reference image if it does not match the activity. Their face and identity stay the same, but their wardrobe MUST fit the scene.
 5. ABSOLUTELY NO text of any kind — no text overlays, no logos, no UI mockups, no signage with readable text, no writing on vehicles, no labels, no brand names visible, no letters or words anywhere in the scene.
 6. Slow cinematic motion only — no rapid movement.
 7. ABSOLUTELY NO morphing between people — the person must remain the SAME throughout. Do NOT transition one person into a different person.
@@ -98,7 +98,7 @@ async function generateBrollVideo({ description, brandName, brandDescription = '
   // If persona image is provided, enhance the prompt to explicitly mention the person
   let personaPromptHint = '';
   if (personaImageUrl) {
-    personaPromptHint = 'IMPORTANT: You MUST feature the exact person from the provided reference image as the main character in this clip. Match their face, hair, skin tone, body type, and all physical features precisely from the reference image. Do not change their appearance in any way. ';
+    personaPromptHint = 'IMPORTANT: You MUST feature the exact person from the provided reference image as the main character in this clip. Match their face, hair, skin tone, body type, and facial features precisely from the reference image. However, ADAPT their clothing and outfit to match the scene — if the scene involves exercise, dress them in athletic wear; if a formal event, dress them formally; if casual, dress them casually. The person\'s IDENTITY stays the same but their WARDROBE should fit the activity and setting described. ';
   }
 
   // Build brand/persona context to ground the visual in the right world

@@ -1272,11 +1272,15 @@ async function regenerateSegments(videoId, userId, changes) {
           const musicResp = await fetch(musicUrl);
           if (musicResp.ok) {
             // Stream to file to reduce memory pressure
+            // Use Readable.fromWeb() because Node 24 native fetch returns a Web ReadableStream
+            const { Readable } = require('stream');
             const musicStream = fs.createWriteStream(musicPath);
+            const nodeStream = Readable.fromWeb(musicResp.body);
             await new Promise((resolve, reject) => {
-              musicResp.body.pipe(musicStream);
+              nodeStream.pipe(musicStream);
               musicStream.on('finish', resolve);
               musicStream.on('error', reject);
+              nodeStream.on('error', reject);
             });
           } else {
             musicPath = null;

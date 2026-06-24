@@ -77,11 +77,15 @@ async function composeVideo({
         const resp = await fetch(sp);
         if (!resp.ok) throw new Error(`Failed to download custom asset: HTTP ${resp.status}`);
         // Stream to file to reduce memory pressure
+        // Use Readable.fromWeb() because Node 24 native fetch returns a Web ReadableStream
+        const { Readable } = require('stream');
         const fileStream = fs.createWriteStream(localPath);
+        const nodeStream = Readable.fromWeb(resp.body);
         await new Promise((resolve, reject) => {
-          resp.body.pipe(fileStream);
+          nodeStream.pipe(fileStream);
           fileStream.on('finish', resolve);
           fileStream.on('error', reject);
+          nodeStream.on('error', reject);
         });
         entry.sourcePaths[idx] = localPath;
         if (idx === 0) entry.sourcePath = localPath;
@@ -243,12 +247,15 @@ async function composeVideo({
       const musicResp = await fetch(musicTrackUrl);
       if (musicResp.ok) {
         // Stream to file instead of buffering in memory
-        const { Writable } = require('stream');
+        // Use Readable.fromWeb() because Node 24 native fetch returns a Web ReadableStream, not a Node.js Readable
+        const { Readable } = require('stream');
         const fileStream = fs.createWriteStream(musicPath);
+        const nodeStream = Readable.fromWeb(musicResp.body);
         await new Promise((resolve, reject) => {
-          musicResp.body.pipe(fileStream);
+          nodeStream.pipe(fileStream);
           fileStream.on('finish', resolve);
           fileStream.on('error', reject);
+          nodeStream.on('error', reject);
         });
         const musicSize = fs.statSync(musicPath).size;
         console.log(`[Compositor] Background music downloaded: ${(musicSize / 1024).toFixed(0)}KB`);

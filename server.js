@@ -1316,8 +1316,17 @@ app.get('/api/music-tracks/:id/stream', async (req, res) => {
     }
     res.set('Content-Type', 'audio/mpeg');
     res.set('Cache-Control', 'public, max-age=86400'); // cache 24h
-    const buffer = Buffer.from(await audioResp.arrayBuffer());
-    res.send(buffer);
+    // Forward Content-Length so the browser can seek and show progress
+    const cl = audioResp.headers.get('content-length');
+    if (cl) res.set('Content-Length', cl);
+    // Stream directly instead of buffering the entire file
+    const { Readable } = require('stream');
+    const nodeStream = Readable.fromWeb(audioResp.body);
+    nodeStream.pipe(res);
+    nodeStream.on('error', (err) => {
+      console.error(`Music stream pipe error for ${track.id}:`, err.message);
+      if (!res.headersSent) res.status(502).json({ error: 'Stream error' });
+    });
   } catch (err) {
     console.error(`Music stream error for ${track.id}:`, err.message);
     res.status(502).json({ error: 'Failed to stream music' });
@@ -2349,17 +2358,93 @@ async function checkVeoCapability() {
 /**
  * On startup, recover videos that were interrupted by a dyno restart.
  *
- * All interrupted videos (queued or processing) are silently reset to 'draft'
- * so users can just click Generate again — no scary error messages.
+ * Videos that were deep enough in the pipeline (compositing/uploading) AND
+ * already have segment assets (clips) get auto-resumed via the regeneration
+ * path — no user action needed.
+ *
+ * Videos still in early stages (scripting/voiceover/capturing) are reset to
+ * draft so users can click Generate again.
  */
 async function recoverStaleJobs() {
   try {
     const stale = await query(
-      "SELECT id, name, status FROM videos WHERE status IN ('queued', 'scripting', 'voiceover', 'capturing', 'compositing', 'uploading')"
+      "SELECT id, name, status, user_id, segment_assets, voiceover_url, narration_script FROM videos WHERE status IN ('queued', 'scripting', 'voiceover', 'capturing', 'compositing', 'uploading')"
     );
-    if (stale.length > 0) {
-      console.log(`[Recovery] Found ${stale.length} interrupted video(s) — resetting to draft.`);
-      for (const v of stale) {
+    if (stale.length === 0) return;
+
+    console.log(`[Recovery] Found ${stale.length} interrupted video(s).`);
+
+    for (const v of stale) {
+      // Check if video was far enough along to auto-resume
+      const hasSegmentAssets = v.segment_assets && (() => {
+        try {
+          const sa = typeof v.segment_assets === 'string' ? JSON.parse(v.segment_assets) : v.segment_assets;
+          return sa && sa.clips && Object.keys(sa.clips).length > 0;
+        } catch { return false; }
+      })();
+
+      const canAutoResume = hasSegmentAssets && v.voiceover_url &&
+        ['compositing', 'uploading'].includes(v.status);
+
+      if (canAutoResume) {
+        // Video has all assets — auto-resume by requeueing the full pipeline
+        // The pipeline will detect existing segment_assets and skip to composite
+        console.log(`[Recovery] Video ${v.id} ("${v.name}") was ${v.status} with segment assets — auto-resuming.`);
+
+        // Mark as queued and clear error so UI shows progress
+        await query(
+          "UPDATE videos SET status = 'queued', error = NULL WHERE id = ?",
+          [v.id]
+        );
+        await query(
+          "UPDATE video_jobs SET status = 'failed', error = 'Interrupted by restart — auto-resuming', completed_at = NOW() WHERE video_id = ? AND status IN ('pending', 'running')",
+          [v.id]
+        );
+
+        // Build the changes list — regenerate all segments (voiceover exists, just need to recomposite)
+        // We pass an empty changes array with regenerateBroll=false for all segments
+        // This will download existing clips from segment_assets and recomposite
+        try {
+          const script = v.narration_script
+            ? (typeof v.narration_script === 'string' ? JSON.parse(v.narration_script) : v.narration_script)
+            : null;
+          if (script && script.segments) {
+            // Use regenerateSegments with no actual changes — just triggers recomposite from existing clips
+            const noOpChanges = script.segments.map(seg => ({
+              order: seg.order,
+              regenerateVoiceover: false,
+              regenerateBroll: false,
+              narration: seg.narration, // pass narration to satisfy validation
+            }));
+
+            // Schedule auto-resume after server is fully started (2s delay)
+            setTimeout(async () => {
+              try {
+                console.log(`[Recovery] Auto-resuming video ${v.id} via regenerateSegments...`);
+                const { regenerateSegments } = require('./src/pipeline/orchestrator');
+                await regenerateSegments(v.id, v.user_id, noOpChanges);
+                console.log(`[Recovery] ✅ Video ${v.id} auto-resume completed successfully.`);
+              } catch (err) {
+                console.error(`[Recovery] Auto-resume failed for video ${v.id}: ${err.message}`);
+                // On failure, reset to completed (since it has segment_assets) so user can manually retry
+                await query(
+                  "UPDATE videos SET status = 'completed', error = ? WHERE id = ?",
+                  [`Auto-resume failed: ${err.message}. Try regenerating any section to rebuild the video.`, v.id]
+                );
+              }
+            }, 2000);
+
+          } else {
+            // No script — can't auto-resume, reset to draft
+            await query("UPDATE videos SET status = 'draft', error = NULL WHERE id = ?", [v.id]);
+            console.log(`[Recovery] Video ${v.id} has segment assets but no script — reset to draft.`);
+          }
+        } catch (parseErr) {
+          await query("UPDATE videos SET status = 'draft', error = NULL WHERE id = ?", [v.id]);
+          console.log(`[Recovery] Video ${v.id} script parse failed — reset to draft.`);
+        }
+      } else {
+        // Early-stage interruption — reset to draft
         await query(
           "UPDATE videos SET status = 'draft', error = NULL WHERE id = ?",
           [v.id]
@@ -2413,6 +2498,39 @@ async function start() {
 
   server.timeout = 300000;
   server.keepAliveTimeout = 300000;
+
+  // Graceful shutdown handler — Heroku sends SIGTERM before restarting
+  // We get 30 seconds to clean up. Mark any running pipeline status in DB
+  // so the recovery logic on next startup can auto-resume if possible.
+  process.on('SIGTERM', async () => {
+    console.log('[Shutdown] SIGTERM received — starting graceful shutdown...');
+
+    // Mark any currently-running pipeline video so recovery knows it was interrupted cleanly
+    try {
+      const stale = await query(
+        "SELECT id, name, status FROM videos WHERE status IN ('queued', 'scripting', 'voiceover', 'capturing', 'compositing', 'uploading')"
+      );
+      for (const v of stale) {
+        console.log(`[Shutdown] Marking video ${v.id} ("${v.name}") as interrupted (was: ${v.status}).`);
+        // Don't change status — let recoverStaleJobs handle it on next boot
+        // Just log so we know it was a clean SIGTERM, not an OOM crash
+      }
+    } catch (err) {
+      console.warn('[Shutdown] Failed to check running pipelines:', err.message);
+    }
+
+    // Close the HTTP server (stop accepting new requests)
+    server.close(() => {
+      console.log('[Shutdown] HTTP server closed. Exiting.');
+      process.exit(0);
+    });
+
+    // Force exit after 25 seconds (Heroku gives 30s)
+    setTimeout(() => {
+      console.warn('[Shutdown] Forced exit after 25s timeout.');
+      process.exit(1);
+    }, 25000);
+  });
 }
 
 start();

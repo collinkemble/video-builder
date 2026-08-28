@@ -122,13 +122,73 @@ async function _runPipelineImpl(videoId, userId, options = {}) {
     const scriptJobId = await createJob(videoId, userId, 'script');
 
     const sceneData = typeof video.scene_data === 'string' ? JSON.parse(video.scene_data) : (video.scene_data || {});
-    // Sort scenes by ID ascending — PocketSIC IDs are auto-increment and represent journey order.
-    // scene_data.scenes may be stored in reverse or arbitrary order from the import.
-    const scenes = (sceneData.scenes || []).slice().sort((a, b) => {
-      const idA = a.id || a.sceneId || 0;
-      const idB = b.id || b.sceneId || 0;
-      return idA - idB;
-    });
+    // Order scenes using the CX Summary (customer journey narrative) when available.
+    // PocketSIC scene IDs are NOT guaranteed to be in journey order — scenes may be
+    // added, deleted, and re-created in any order.  The CX Summary describes the
+    // journey in the correct sequence, so we match each scene's channel/name against
+    // the narrative text and sort by first-mention position.
+    const rawScenes = (sceneData.scenes || []).slice();
+    const cxSummary = sceneData.cx_summary || '';
+    let scenes;
+    if (cxSummary && rawScenes.length > 1) {
+      const cxLower = cxSummary.toLowerCase();
+      // Build a map of channel keywords → first occurrence position in the CX Summary
+      const channelKeywords = {
+        insta: ['instagram', 'insta'],
+        site: ['website', 'e-commerce', 'ecommerce', 'web site', 'online'],
+        email: ['email', 'e-mail'],
+        imessage: ['imessage', 'i-message', 'sms', 'text message', 'text '],
+        retailcloud: ['retail cloud', 'in-store', 'in store', 'store visit', ' pos ', ' pos,', 'associate', 'clienteling'],
+        autocloud: ['auto cloud', 'autocloud', 'dealership', 'showroom'],
+        slack: ['slack'],
+        whatsapp: ['whatsapp', 'whats app'],
+        tiktok: ['tiktok', 'tik tok'],
+        facebook: ['facebook'],
+        x: ['twitter', ' x '],
+        sms: ['sms'],
+        loyalty: ['loyalty'],
+        portal: ['portal', 'self-service'],
+      };
+
+      // For each scene, find the earliest mention of its channel in the CX Summary.
+      // ONLY use channel-specific keywords — do NOT match generic scene-name words
+      // (e.g. brand names like "Mavis", "Tire") as they appear early in the summary
+      // and would incorrectly reorder scenes.
+      const scenesWithPos = rawScenes.map(s => {
+        const ch = (s.channel || s.channel_type || '').toLowerCase();
+        let minPos = Infinity;
+
+        // Check channel-specific keywords only
+        const keywords = channelKeywords[ch] || [ch];
+        for (const kw of keywords) {
+          const pos = cxLower.indexOf(kw);
+          if (pos !== -1 && pos < minPos) minPos = pos;
+        }
+
+        return { scene: s, pos: minPos };
+      });
+
+      // Only reorder if we matched at least half the scenes
+      const matched = scenesWithPos.filter(sp => sp.pos !== Infinity).length;
+      if (matched >= rawScenes.length / 2) {
+        scenesWithPos.sort((a, b) => {
+          if (a.pos === Infinity && b.pos === Infinity) return 0;
+          if (a.pos === Infinity) return 1;
+          if (b.pos === Infinity) return -1;
+          return a.pos - b.pos;
+        });
+        scenes = scenesWithPos.map(sp => sp.scene);
+        console.log(`[Pipeline] Scenes reordered using CX Summary (${matched}/${rawScenes.length} matched): ${scenes.map(s => s.channel || s.id).join(' → ')}`);
+      } else {
+        // Not enough matches — preserve original order from scene_data
+        scenes = rawScenes;
+        console.log(`[Pipeline] CX Summary matching insufficient (${matched}/${rawScenes.length}), using scene_data order`);
+      }
+    } else {
+      // No CX Summary — preserve original order from scene_data
+      scenes = rawScenes;
+      console.log(`[Pipeline] No CX Summary available, using scene_data order: ${scenes.map(s => s.channel || s.id).join(' → ')}`);
+    }
     const scriptWriterData = video.scriptwriter_data
       ? (typeof video.scriptwriter_data === 'string' ? JSON.parse(video.scriptwriter_data) : video.scriptwriter_data)
       : null;

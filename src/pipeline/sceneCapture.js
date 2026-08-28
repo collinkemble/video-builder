@@ -901,7 +901,11 @@ function stitchFramesToVideo(frameDir, outputPath, duration) {
     const proc = spawn(ffmpegPath, args, { stdio: ['ignore', 'pipe', 'pipe'] });
 
     let stderr = '';
-    proc.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
+    const STDERR_MAX = 10 * 1024;
+    proc.stderr.on('data', (chunk) => {
+      stderr += chunk.toString();
+      if (stderr.length > STDERR_MAX * 2) stderr = stderr.slice(-STDERR_MAX);
+    });
 
     proc.on('close', (code) => {
       if (code === 0) {

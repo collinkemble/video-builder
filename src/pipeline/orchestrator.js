@@ -20,9 +20,30 @@ const pipelineQueue = [];
 
 const PIPELINE_TIMEOUT_MS = 20 * 60 * 1000; // 20 minutes
 
+/**
+ * Helper: wrap a promise with a timeout. Rejects with a timeout error if not resolved in time.
+ */
+function withTimeout(promise, ms, label) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`${label} timed out after ${Math.round(ms / 1000)}s`)), ms);
+    promise.then(
+      (val) => { clearTimeout(timer); resolve(val); },
+      (err) => { clearTimeout(timer); reject(err); }
+    );
+  });
+}
+
 function enqueuePipeline(videoId, userId, options) {
   return new Promise((resolve, reject) => {
     const task = { videoId, userId, options, resolve, reject };
+
+    // Watchdog: if a pipeline has been running longer than the timeout, force-release it
+    if (pipelineRunning && _pipelineStartedAt && (Date.now() - _pipelineStartedAt > PIPELINE_TIMEOUT_MS)) {
+      console.error(`[Pipeline Queue] ⚠️ Watchdog: current pipeline (video ${_currentVideoId}) has been running for ${Math.round((Date.now() - _pipelineStartedAt) / 1000)}s — force-releasing queue.`);
+      pipelineRunning = false;
+      _currentVideoId = null;
+      _pipelineStartedAt = null;
+    }
 
     if (!pipelineRunning) {
       // No pipeline running — start immediately
@@ -32,7 +53,7 @@ function enqueuePipeline(videoId, userId, options) {
     } else {
       // Queue it
       pipelineQueue.push(task);
-      console.log(`[Pipeline Queue] Video ${videoId} queued (position ${pipelineQueue.length}). Waiting for current pipeline to finish.`);
+      console.log(`[Pipeline Queue] Video ${videoId} queued (position ${pipelineQueue.length}). Current pipeline: video ${_currentVideoId}, running for ${_pipelineStartedAt ? Math.round((Date.now() - _pipelineStartedAt) / 1000) + 's' : 'unknown'}.`);
       // Update video status to indicate it's queued
       query("UPDATE videos SET status = 'queued' WHERE id = ?", [videoId]).catch(() => {});
     }
@@ -467,10 +488,15 @@ async function _runPipelineImpl(videoId, userId, options = {}) {
     }
 
     // ── Step 5b: Upload individual segment clips for selective regeneration ──
+    // Wrap in a 90s timeout — these are optional and must not block the main upload
     try {
       if (compositeResult.segmentClips && compositeResult.segmentClips.length > 0) {
         console.log(`[Pipeline] Uploading ${compositeResult.segmentClips.length} segment clips to R2...`);
-        const segClipUrls = await uploadSegmentClips(userId, videoId, compositeResult.segmentClips);
+        const segClipUrls = await withTimeout(
+          uploadSegmentClips(userId, videoId, compositeResult.segmentClips),
+          90000,
+          'Segment clip upload'
+        );
 
         // Also store voiceover URL per-segment (timestamps are already in DB)
         const segmentAssets = {
@@ -498,11 +524,41 @@ async function _runPipelineImpl(videoId, userId, options = {}) {
     try {
       await updateJob(uploadJobId, 'running');
 
-      const urls = await uploadVideoAssets(userId, videoId, {
+      // Log file sizes before upload
+      const filesToUpload = {
         videoPath: compositeResult.videoPath,
         thumbnailPath: compositeResult.thumbnailPath,
         voiceoverPath: voiceoverResult.audioPath,
-      });
+      };
+      for (const [label, fpath] of Object.entries(filesToUpload)) {
+        if (fpath && fs.existsSync(fpath)) {
+          const stat = fs.statSync(fpath);
+          console.log(`[Pipeline] Upload file: ${label} = ${fpath} (${(stat.size / 1024 / 1024).toFixed(1)}MB)`);
+        } else if (fpath) {
+          console.warn(`[Pipeline] Upload file MISSING: ${label} = ${fpath}`);
+        }
+      }
+
+      // Log memory usage before upload
+      const memBefore = process.memoryUsage();
+      console.log(`[Pipeline] Memory before upload: rss=${(memBefore.rss / 1024 / 1024).toFixed(0)}MB, heap=${(memBefore.heapUsed / 1024 / 1024).toFixed(0)}MB/${(memBefore.heapTotal / 1024 / 1024).toFixed(0)}MB`);
+
+      console.log(`[Pipeline] Starting R2 upload for video ${videoId}...`);
+      const uploadStartTime = Date.now();
+
+      // Wrap upload in a 2-minute timeout — R2 uploads should never take this long
+      const urls = await withTimeout(
+        uploadVideoAssets(userId, videoId, filesToUpload),
+        120000,
+        'R2 upload'
+      );
+
+      const uploadDuration = Date.now() - uploadStartTime;
+      console.log(`[Pipeline] ✅ R2 upload completed for video ${videoId} in ${uploadDuration}ms`);
+
+      // Log memory usage after upload
+      const memAfter = process.memoryUsage();
+      console.log(`[Pipeline] Memory after upload: rss=${(memAfter.rss / 1024 / 1024).toFixed(0)}MB, heap=${(memAfter.heapUsed / 1024 / 1024).toFixed(0)}MB/${(memAfter.heapTotal / 1024 / 1024).toFixed(0)}MB`);
 
       // Update segment_assets with voiceover URL
       try {
@@ -534,7 +590,9 @@ async function _runPipelineImpl(videoId, userId, options = {}) {
       );
 
       await completeJob(uploadJobId, urls);
+      console.log(`[Pipeline] ✅ Video ${videoId} marked as completed`);
     } catch (err) {
+      console.error(`[Pipeline] ❌ Upload failed for video ${videoId}: ${err.message}`);
       await failJob(uploadJobId, err.message);
       throw err;
     }
@@ -842,7 +900,7 @@ async function regenerateSegments(videoId, userId, changes) {
                     '-an', '-movflags', '+faststart', normalizedPath,
                   ], { stdio: ['ignore', 'pipe', 'pipe'] });
                   let stderr = '';
-                  proc.stderr.on('data', d => stderr += d);
+                  proc.stderr.on('data', d => { stderr += d; if (stderr.length > 20000) stderr = stderr.slice(-10000); });
                   proc.on('close', code => code === 0 ? resolve() : reject(new Error(`FFmpeg failed: ${stderr.slice(-200)}`)));
                   proc.on('error', reject);
                 });
@@ -863,9 +921,91 @@ async function regenerateSegments(videoId, userId, changes) {
           continue;
         }
 
-        // Custom asset segments have a fixed visual — skip b-roll regeneration
+        // Custom asset segments — download the asset and create a normalized clip
         if (seg.visualType === 'custom_asset') {
-          console.log(`[Regen] Segment ${c.order} is a custom asset — keeping existing visual`);
+          if (!seg.customAssetUrl) {
+            console.log(`[Regen] Segment ${c.order} is a custom asset but has no URL — skipping`);
+            continue;
+          }
+          // If this segment already has a clip in existingClips, skip processing
+          if (existingClips[c.order]) {
+            console.log(`[Regen] Segment ${c.order} is a custom asset with existing clip — keeping`);
+            continue;
+          }
+          try {
+            // Calculate target duration — use estimatedDuration as minimum floor
+            const tsMap = {};
+            if (timestamps && timestamps.segments) {
+              timestamps.segments.forEach(ts => { tsMap[ts.order] = ts; });
+            }
+            const orderedTs = timestamps && timestamps.segments
+              ? timestamps.segments.slice().sort((a, b) => a.order - b.order)
+              : [];
+            const ts = tsMap[seg.order];
+            let duration = seg.estimatedDuration || 10;
+            if (ts) {
+              const tsIdx = orderedTs.findIndex(t => t.order === seg.order);
+              const nextTs = (tsIdx >= 0 && tsIdx < orderedTs.length - 1) ? orderedTs[tsIdx + 1] : null;
+              const audioDuration = nextTs ? (nextTs.startTime - ts.startTime) : (ts.endTime - ts.startTime);
+              // Custom assets: estimatedDuration is the minimum floor
+              duration = Math.max(audioDuration, seg.estimatedDuration || 0);
+            }
+            if (duration < 1) duration = 1;
+
+            console.log(`[Regen] Downloading custom asset for segment ${c.order} (${seg.customAssetType}, ${duration.toFixed(1)}s)...`);
+            const isVideo = seg.customAssetType === 'video';
+            const assetExt = isVideo ? 'mp4' : 'png';
+            const assetLocalPath = path.join(workDir, `custom_download_${c.order}.${assetExt}`);
+
+            const assetResp = await fetch(seg.customAssetUrl);
+            if (!assetResp.ok) throw new Error(`Failed to download custom asset: ${assetResp.status}`);
+            fs.writeFileSync(assetLocalPath, Buffer.from(await assetResp.arrayBuffer()));
+
+            const normalizedPath = path.join(workDir, `regen_clip_${c.order}.mp4`);
+            const ffmpegPath = process.env.FFMPEG_PATH || 'ffmpeg';
+            const { spawn } = require('child_process');
+
+            if (isVideo) {
+              // Normalize video to 1920x1080 and target duration — preserve audio if useUploadedAudio
+              const preserveAudio = seg.useUploadedAudio === true;
+              const audioArgs = preserveAudio ? [] : ['-an'];
+              await new Promise((resolve, reject) => {
+                const proc = spawn(ffmpegPath, [
+                  '-y', '-stream_loop', '-1', '-i', assetLocalPath,
+                  '-vf', 'scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,format=yuv420p',
+                  '-c:v', 'libx264', '-preset', 'fast', '-crf', '26',
+                  '-t', String(duration), '-r', '30', '-pix_fmt', 'yuv420p',
+                  ...audioArgs,
+                  '-movflags', '+faststart', normalizedPath,
+                ], { stdio: ['ignore', 'pipe', 'pipe'] });
+                let stderr = '';
+                proc.stderr.on('data', d => { stderr += d; if (stderr.length > 20000) stderr = stderr.slice(-10000); });
+                proc.on('close', code => code === 0 ? resolve() : reject(new Error(`FFmpeg failed: ${stderr.slice(-200)}`)));
+                proc.on('error', reject);
+              });
+            } else {
+              // Image → video with Ken Burns zoom
+              const totalFrames = Math.ceil(duration * 30);
+              await new Promise((resolve, reject) => {
+                const proc = spawn(ffmpegPath, [
+                  '-y', '-loop', '1', '-i', assetLocalPath,
+                  '-vf', `scale=2208:1242,crop='1920-((1920-1651)*n/${totalFrames})':'1080-((1080-929)*n/${totalFrames})',scale=1920:1080,format=yuv420p`,
+                  '-c:v', 'libx264', '-preset', 'fast', '-crf', '26',
+                  '-t', String(duration), '-r', '30', '-pix_fmt', 'yuv420p',
+                  '-movflags', '+faststart', normalizedPath,
+                ], { stdio: ['ignore', 'pipe', 'pipe'] });
+                let stderr = '';
+                proc.stderr.on('data', d => { stderr += d; if (stderr.length > 20000) stderr = stderr.slice(-10000); });
+                proc.on('close', code => code === 0 ? resolve() : reject(new Error(`FFmpeg failed: ${stderr.slice(-200)}`)));
+                proc.on('error', reject);
+              });
+            }
+
+            newBrollClips[c.order] = normalizedPath;
+            console.log(`[Regen] ✓ Custom asset processed for segment ${c.order} (${duration.toFixed(1)}s)`);
+          } catch (err) {
+            console.warn(`[Regen] Custom asset processing failed for segment ${c.order}: ${err.message}`);
+          }
           continue;
         }
 
@@ -955,7 +1095,7 @@ async function regenerateSegments(videoId, userId, changes) {
                   '-an', '-movflags', '+faststart', normalizedPath,
                 ], { stdio: ['ignore', 'pipe', 'pipe'] });
                 let stderr = '';
-                proc.stderr.on('data', d => stderr += d);
+                proc.stderr.on('data', d => { stderr += d; if (stderr.length > 20000) stderr = stderr.slice(-10000); });
                 proc.on('close', code => code === 0 ? resolve() : reject(new Error(`FFmpeg failed: ${stderr.slice(-200)}`)));
                 proc.on('error', reject);
               });
@@ -971,7 +1111,7 @@ async function regenerateSegments(videoId, userId, changes) {
                   '-movflags', '+faststart', normalizedPath,
                 ], { stdio: ['ignore', 'pipe', 'pipe'] });
                 let stderr = '';
-                proc.stderr.on('data', d => stderr += d);
+                proc.stderr.on('data', d => { stderr += d; if (stderr.length > 20000) stderr = stderr.slice(-10000); });
                 proc.on('close', code => code === 0 ? resolve() : reject(new Error(`FFmpeg failed: ${stderr.slice(-200)}`)));
                 proc.on('error', reject);
               });
@@ -996,7 +1136,7 @@ async function regenerateSegments(videoId, userId, changes) {
                     '-an', '-movflags', '+faststart', partPath,
                   ], { stdio: ['ignore', 'pipe', 'pipe'] });
                   let stderr = '';
-                  proc.stderr.on('data', d => stderr += d);
+                  proc.stderr.on('data', d => { stderr += d; if (stderr.length > 20000) stderr = stderr.slice(-10000); });
                   proc.on('close', code => code === 0 ? resolve() : reject(new Error(`FFmpeg failed: ${stderr.slice(-200)}`)));
                   proc.on('error', reject);
                 });
@@ -1012,7 +1152,7 @@ async function regenerateSegments(videoId, userId, changes) {
                     '-movflags', '+faststart', partPath,
                   ], { stdio: ['ignore', 'pipe', 'pipe'] });
                   let stderr = '';
-                  proc.stderr.on('data', d => stderr += d);
+                  proc.stderr.on('data', d => { stderr += d; if (stderr.length > 20000) stderr = stderr.slice(-10000); });
                   proc.on('close', code => code === 0 ? resolve() : reject(new Error(`FFmpeg failed: ${stderr.slice(-200)}`)));
                   proc.on('error', reject);
                 });
@@ -1032,7 +1172,7 @@ async function regenerateSegments(videoId, userId, changes) {
                 '-an', '-movflags', '+faststart', normalizedPath,
               ], { stdio: ['ignore', 'pipe', 'pipe'] });
               let stderr = '';
-              proc.stderr.on('data', d => stderr += d);
+              proc.stderr.on('data', d => { stderr += d; if (stderr.length > 20000) stderr = stderr.slice(-10000); });
               proc.on('close', code => code === 0 ? resolve() : reject(new Error(`Concat failed: ${stderr.slice(-200)}`)));
               proc.on('error', reject);
             });
@@ -1129,10 +1269,54 @@ async function regenerateSegments(videoId, userId, changes) {
         '-c', 'copy', '-movflags', '+faststart', silentPath,
       ], { stdio: ['ignore', 'pipe', 'pipe'] });
       let stderr = '';
-      proc.stderr.on('data', d => stderr += d);
+      proc.stderr.on('data', d => { stderr += d; if (stderr.length > 20000) stderr = stderr.slice(-10000); });
       proc.on('close', code => code === 0 ? resolve() : reject(new Error(`Concat failed: ${stderr.slice(-200)}`)));
       proc.on('error', reject);
     });
+
+    // ── Pad voiceover for custom_asset segments with extended durations ──
+    // Same logic as compositor: if custom_asset estimatedDuration > voiceover duration,
+    // insert silence to keep subsequent narration in sync with visuals.
+    if (voiceoverPath && fs.existsSync(voiceoverPath) && timestamps && timestamps.segments) {
+      const tsMapPad = {};
+      timestamps.segments.forEach(ts => { tsMapPad[ts.order] = ts; });
+      const orderedTsPad = timestamps.segments.slice().sort((a, b) => a.order - b.order);
+
+      const paddingPoints = [];
+      let cumulativePadding = 0;
+
+      for (const seg of script.segments) {
+        if (seg.visualType !== 'custom_asset' || !seg.estimatedDuration) continue;
+        const ts = tsMapPad[seg.order];
+        if (!ts) continue;
+
+        const tsIdx = orderedTsPad.findIndex(t => t.order === seg.order);
+        const nextTs = (tsIdx >= 0 && tsIdx < orderedTsPad.length - 1) ? orderedTsPad[tsIdx + 1] : null;
+        const audioDuration = nextTs ? (nextTs.startTime - ts.startTime) : (ts.endTime - ts.startTime);
+
+        if (seg.estimatedDuration > audioDuration) {
+          const padding = seg.estimatedDuration - audioDuration;
+          paddingPoints.push({
+            insertAt: ts.endTime + cumulativePadding,
+            silenceDuration: padding,
+          });
+          cumulativePadding += padding;
+          console.log(`[Regen] Custom asset segment ${seg.order}: padding voiceover by ${padding.toFixed(1)}s`);
+        }
+      }
+
+      if (paddingPoints.length > 0) {
+        try {
+          const { padVoiceoverWithSilence } = require('./videoCompositor');
+          const paddedPath = path.join(workDir, 'voiceover_padded.mp3');
+          await padVoiceoverWithSilence(voiceoverPath, paddedPath, paddingPoints, workDir);
+          voiceoverPath = paddedPath;
+          console.log(`[Regen] ✓ Voiceover padded at ${paddingPoints.length} point(s)`);
+        } catch (err) {
+          console.warn(`[Regen] Voiceover padding failed (non-fatal): ${err.message}`);
+        }
+      }
+    }
 
     // ── Overlay voiceover audio ──
     const finalPath = path.join(workDir, `video_regen_${Date.now()}.mp4`);
@@ -1147,7 +1331,17 @@ async function regenerateSegments(videoId, userId, changes) {
           musicPath = path.join(workDir, 'bgmusic.mp3');
           const musicResp = await fetch(musicUrl);
           if (musicResp.ok) {
-            fs.writeFileSync(musicPath, Buffer.from(await musicResp.arrayBuffer()));
+            // Stream to file to reduce memory pressure
+            // Use Readable.fromWeb() because Node 24 native fetch returns a Web ReadableStream
+            const { Readable } = require('stream');
+            const musicStream = fs.createWriteStream(musicPath);
+            const nodeStream = Readable.fromWeb(musicResp.body);
+            await new Promise((resolve, reject) => {
+              nodeStream.pipe(musicStream);
+              musicStream.on('finish', resolve);
+              musicStream.on('error', reject);
+              nodeStream.on('error', reject);
+            });
           } else {
             musicPath = null;
           }
@@ -1178,7 +1372,7 @@ async function regenerateSegments(videoId, userId, changes) {
       await new Promise((resolve, reject) => {
         const proc = spawn(ffmpegPath, audioArgs, { stdio: ['ignore', 'pipe', 'pipe'] });
         let stderr = '';
-        proc.stderr.on('data', d => stderr += d);
+        proc.stderr.on('data', d => { stderr += d; if (stderr.length > 20000) stderr = stderr.slice(-10000); });
         proc.on('close', code => code === 0 ? resolve() : reject(new Error(`Audio overlay failed: ${stderr.slice(-200)}`)));
         proc.on('error', reject);
       });

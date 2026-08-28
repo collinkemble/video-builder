@@ -76,11 +76,21 @@ async function composeVideo({
         console.log(`[Compositor] Downloading custom asset for segment ${entry.order}: ${sp}`);
         const resp = await fetch(sp);
         if (!resp.ok) throw new Error(`Failed to download custom asset: HTTP ${resp.status}`);
-        const buffer = Buffer.from(await resp.arrayBuffer());
-        fs.writeFileSync(localPath, buffer);
+        // Stream to file to reduce memory pressure
+        // Use Readable.fromWeb() because Node 24 native fetch returns a Web ReadableStream
+        const { Readable } = require('stream');
+        const fileStream = fs.createWriteStream(localPath);
+        const nodeStream = Readable.fromWeb(resp.body);
+        await new Promise((resolve, reject) => {
+          nodeStream.pipe(fileStream);
+          fileStream.on('finish', resolve);
+          fileStream.on('error', reject);
+          nodeStream.on('error', reject);
+        });
         entry.sourcePaths[idx] = localPath;
         if (idx === 0) entry.sourcePath = localPath;
-        console.log(`[Compositor] Downloaded custom asset (${(buffer.length / 1024 / 1024).toFixed(1)}MB) → ${localPath}`);
+        const dlSize = fs.statSync(localPath).size;
+        console.log(`[Compositor] Downloaded custom asset (${(dlSize / 1024 / 1024).toFixed(1)}MB) → ${localPath}`);
       }
     }
   }
@@ -236,9 +246,19 @@ async function composeVideo({
       musicPath = path.join(workDir, 'bgmusic.mp3');
       const musicResp = await fetch(musicTrackUrl);
       if (musicResp.ok) {
-        const musicBuffer = Buffer.from(await musicResp.arrayBuffer());
-        fs.writeFileSync(musicPath, musicBuffer);
-        console.log(`[Compositor] Background music downloaded: ${(musicBuffer.length / 1024).toFixed(0)}KB`);
+        // Stream to file instead of buffering in memory
+        // Use Readable.fromWeb() because Node 24 native fetch returns a Web ReadableStream, not a Node.js Readable
+        const { Readable } = require('stream');
+        const fileStream = fs.createWriteStream(musicPath);
+        const nodeStream = Readable.fromWeb(musicResp.body);
+        await new Promise((resolve, reject) => {
+          nodeStream.pipe(fileStream);
+          fileStream.on('finish', resolve);
+          fileStream.on('error', reject);
+          nodeStream.on('error', reject);
+        });
+        const musicSize = fs.statSync(musicPath).size;
+        console.log(`[Compositor] Background music downloaded: ${(musicSize / 1024).toFixed(0)}KB`);
       } else {
         console.warn(`[Compositor] Music download failed (${musicResp.status}). Skipping background music.`);
         musicPath = null;
@@ -246,6 +266,89 @@ async function composeVideo({
     } catch (err) {
       console.warn(`[Compositor] Music download error: ${err.message}. Skipping background music.`);
       musicPath = null;
+    }
+  }
+
+  // ── Step 3c: Pad voiceover for custom_asset segments with extended durations ──
+  // When a custom_asset segment's estimatedDuration > voiceover-derived duration,
+  // we need to insert silence into the voiceover at the right positions so
+  // subsequent narration stays in sync with the visual clips.
+  let customAssetVoiceoverDelay = 0;
+  if (voiceoverPath && fs.existsSync(voiceoverPath) && timestamps && timestamps.segments) {
+    const tsMap = {};
+    timestamps.segments.forEach(ts => { tsMap[ts.order] = ts; });
+    const orderedTs = timestamps.segments.slice().sort((a, b) => a.order - b.order);
+
+    // Check each timeline entry for custom_asset extensions
+    for (let ei = 0; ei < timelineEntries.length; ei++) {
+      const entry = timelineEntries[ei];
+      if (!entry.isCustomAsset) continue;
+      // Find the matching segment
+      const seg = segments.find(s => s.order === entry.order);
+      if (!seg || !seg.estimatedDuration) continue;
+
+      const ts = tsMap[entry.order];
+      if (!ts) continue;
+
+      // Calculate the voiceover-derived duration for this segment
+      const tsIdx = orderedTs.findIndex(t => t.order === entry.order);
+      const nextTs = (tsIdx >= 0 && tsIdx < orderedTs.length - 1) ? orderedTs[tsIdx + 1] : null;
+      const audioDuration = nextTs ? (nextTs.startTime - ts.startTime) : (ts.endTime - ts.startTime);
+
+      if (seg.estimatedDuration > audioDuration) {
+        const padding = seg.estimatedDuration - audioDuration;
+        customAssetVoiceoverDelay += padding;
+        console.log(`[Compositor] Custom asset segment ${entry.order}: extending voiceover by ${padding.toFixed(1)}s (audio: ${audioDuration.toFixed(1)}s → visual: ${seg.estimatedDuration}s)`);
+      }
+    }
+
+    if (customAssetVoiceoverDelay > 0) {
+      console.log(`[Compositor] Total voiceover padding for custom assets: ${customAssetVoiceoverDelay.toFixed(1)}s`);
+      // For simplicity, if there's only one custom asset extension point, or all are contiguous,
+      // we can use adelay on the portion after the custom asset. But for the general case,
+      // we split the audio, insert silence, and rejoin.
+      // Simple approach: if the padding is from custom assets that appear BEFORE the remaining narration,
+      // we insert silence at the first custom asset's narration end point.
+      const customEntries = timelineEntries.filter(e => e.isCustomAsset);
+      if (customEntries.length > 0) {
+        // Find cumulative visual time up to and including each custom asset
+        // to determine where silence goes in the voiceover
+        let cumulativePadding = 0;
+        const paddingPoints = []; // [{insertAt: seconds, silenceDuration: seconds}]
+
+        for (const ce of customEntries) {
+          const seg = segments.find(s => s.order === ce.order);
+          if (!seg || !seg.estimatedDuration) continue;
+          const ts = tsMap[ce.order];
+          if (!ts) continue;
+
+          const tsIdx = orderedTs.findIndex(t => t.order === ce.order);
+          const nextTs = (tsIdx >= 0 && tsIdx < orderedTs.length - 1) ? orderedTs[tsIdx + 1] : null;
+          const audioDuration = nextTs ? (nextTs.startTime - ts.startTime) : (ts.endTime - ts.startTime);
+
+          if (seg.estimatedDuration > audioDuration) {
+            const padding = seg.estimatedDuration - audioDuration;
+            // Insert silence right after this segment's narration ends (adjusted by prior padding)
+            paddingPoints.push({
+              insertAt: ts.endTime + cumulativePadding,
+              silenceDuration: padding,
+            });
+            cumulativePadding += padding;
+          }
+        }
+
+        if (paddingPoints.length > 0) {
+          try {
+            const paddedVoiceoverPath = path.join(workDir, 'voiceover_padded.mp3');
+            await padVoiceoverWithSilence(voiceoverPath, paddedVoiceoverPath, paddingPoints, workDir);
+            voiceoverPath = paddedVoiceoverPath;
+            console.log(`[Compositor] ✓ Voiceover padded at ${paddingPoints.length} point(s)`);
+          } catch (err) {
+            console.warn(`[Compositor] Voiceover padding failed (non-fatal): ${err.message}`);
+            // Continue without padding — timing may be slightly off but video will still work
+          }
+        }
+      }
     }
   }
 
@@ -389,6 +492,14 @@ function buildTimeline(segments, timestamps, sceneImages, brollImages) {
     }
 
     if (duration < 1) duration = 1;
+
+    // Custom asset segments: enforce estimatedDuration as a minimum floor.
+    // If the narration is shorter than the specified duration, the scene holds
+    // for the full duration. If the narration is longer, the narration wins.
+    if (seg.visualType === 'custom_asset' && seg.estimatedDuration && seg.estimatedDuration > duration) {
+      console.log(`[Compositor] Segment ${seg.order}: custom asset min duration ${seg.estimatedDuration}s > audio-derived ${duration.toFixed(1)}s → extending to ${seg.estimatedDuration}s`);
+      duration = seg.estimatedDuration;
+    }
 
     // NOTE: No b-roll minimum override — visual duration MUST match audio timeline
     // to prevent scenes from drifting ahead of their narration.
@@ -937,6 +1048,88 @@ function videoHasAudioTrack(videoPath) {
 /**
  * Get duration of an audio file in seconds.
  */
+/**
+ * Pad voiceover audio with silence at specified insertion points.
+ * Used when custom_asset segments have estimatedDuration > narration duration,
+ * so subsequent narration stays in sync with the extended visual clips.
+ *
+ * @param {string} inputPath - Path to original voiceover audio
+ * @param {string} outputPath - Path for the padded output audio
+ * @param {Array<{insertAt: number, silenceDuration: number}>} paddingPoints - Where to insert silence
+ * @param {string} workDir - Temp directory for intermediate files
+ */
+async function padVoiceoverWithSilence(inputPath, outputPath, paddingPoints, workDir) {
+  if (!paddingPoints || paddingPoints.length === 0) {
+    fs.copyFileSync(inputPath, outputPath);
+    return;
+  }
+
+  // Sort padding points by insertion time
+  const sorted = [...paddingPoints].sort((a, b) => a.insertAt - b.insertAt);
+
+  // Strategy: split audio at each insertion point, generate silence, concatenate all parts
+  const parts = [];
+  let prevEnd = 0;
+
+  for (let i = 0; i < sorted.length; i++) {
+    const pp = sorted[i];
+    const partIdx = parts.length;
+
+    // Part before the silence insertion
+    if (pp.insertAt > prevEnd) {
+      const partPath = path.join(workDir, `vo_part_${partIdx}.mp3`);
+      await runFfmpeg([
+        '-y', '-i', inputPath,
+        '-ss', String(prevEnd),
+        '-t', String(pp.insertAt - prevEnd),
+        '-c:a', 'libmp3lame', '-q:a', '2',
+        partPath,
+      ], `split voiceover part ${partIdx}`);
+      parts.push(partPath);
+    }
+
+    // Silence part
+    const silencePath = path.join(workDir, `vo_silence_${i}.mp3`);
+    await runFfmpeg([
+      '-y',
+      '-f', 'lavfi', '-i', `anullsrc=r=44100:cl=stereo`,
+      '-t', String(pp.silenceDuration),
+      '-c:a', 'libmp3lame', '-q:a', '2',
+      silencePath,
+    ], `generate ${pp.silenceDuration.toFixed(1)}s silence`);
+    parts.push(silencePath);
+
+    prevEnd = pp.insertAt;
+  }
+
+  // Remaining audio after the last insertion point
+  const audioDur = await getAudioDuration(inputPath);
+  if (prevEnd < audioDur) {
+    const lastPartPath = path.join(workDir, `vo_part_last.mp3`);
+    await runFfmpeg([
+      '-y', '-i', inputPath,
+      '-ss', String(prevEnd),
+      '-c:a', 'libmp3lame', '-q:a', '2',
+      lastPartPath,
+    ], 'split voiceover last part');
+    parts.push(lastPartPath);
+  }
+
+  // Concatenate all parts
+  const concatList = path.join(workDir, 'vo_concat.txt');
+  fs.writeFileSync(concatList, parts.map(p => `file '${p.replace(/'/g, "'\\''")}'`).join('\n'));
+
+  await runFfmpeg([
+    '-y', '-f', 'concat', '-safe', '0', '-i', concatList,
+    '-c:a', 'libmp3lame', '-q:a', '2',
+    outputPath,
+  ], 'concatenate padded voiceover');
+
+  // Clean up intermediate files
+  for (const p of parts) { safeDelete(p); }
+  safeDelete(concatList);
+}
+
 function getAudioDuration(audioPath) {
   return new Promise((resolve, reject) => {
     ffmpeg.ffprobe(audioPath, (err, metadata) => {
@@ -1073,8 +1266,14 @@ function runFfmpeg(args, label) {
       proc.kill('SIGKILL');
     }, 5 * 60 * 1000);
 
+    // Keep only the last ~10KB of stderr to avoid RangeError: Invalid string length
+    // when FFmpeg produces massive progress output on long composites
     let stderr = '';
-    proc.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
+    const STDERR_MAX = 10 * 1024;
+    proc.stderr.on('data', (chunk) => {
+      stderr += chunk.toString();
+      if (stderr.length > STDERR_MAX * 2) stderr = stderr.slice(-STDERR_MAX);
+    });
 
     proc.on('close', (code) => {
       clearTimeout(timeout);
@@ -1132,4 +1331,4 @@ function safeDelete(filePath) {
   try { if (filePath && fs.existsSync(filePath)) fs.unlinkSync(filePath); } catch { /* ignore */ }
 }
 
-module.exports = { composeVideo, applyIntroLogoOverlay, normalizeVideoClip };
+module.exports = { composeVideo, applyIntroLogoOverlay, normalizeVideoClip, padVoiceoverWithSilence };

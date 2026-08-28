@@ -1,4 +1,4 @@
-const { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand, ListObjectsV2Command } = require('@aws-sdk/client-s3');
+const { S3Client, PutObjectCommand, GetObjectCommand, HeadObjectCommand, DeleteObjectCommand, ListObjectsV2Command } = require('@aws-sdk/client-s3');
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 const fs = require('fs');
 const path = require('path');
@@ -40,42 +40,67 @@ const PUBLIC_URL = process.env.R2_PUBLIC_URL || '';
  */
 async function uploadFile(key, body, contentType) {
   const client = getS3Client();
+  const startTime = Date.now();
 
   let fileBody = body;
+  let fileSize = 0;
+
+  let useStream = false;
   if (typeof body === 'string' && fs.existsSync(body)) {
-    fileBody = fs.readFileSync(body);
+    // Get file size first for logging
+    const stat = fs.statSync(body);
+    fileSize = stat.size;
+    console.log(`[R2] File: ${body} (${(fileSize / 1024 / 1024).toFixed(1)}MB)`);
+
+    // Use streaming for files over 5MB to reduce memory pressure
+    if (fileSize > 5 * 1024 * 1024) {
+      fileBody = fs.createReadStream(body);
+      useStream = true;
+      console.log(`[R2] Using stream upload for ${(fileSize / 1024 / 1024).toFixed(1)}MB file`);
+    } else {
+      fileBody = fs.readFileSync(body);
+      console.log(`[R2] File read into memory: ${(fileBody.length / 1024 / 1024).toFixed(1)}MB in ${Date.now() - startTime}ms`);
+    }
   }
 
-  // Ensure fileBody is a Buffer for reliable upload with explicit ContentLength
-  if (!Buffer.isBuffer(fileBody)) {
+  // Ensure fileBody is a Buffer for reliable upload with explicit ContentLength (skip for streams)
+  if (!useStream && !Buffer.isBuffer(fileBody)) {
     fileBody = Buffer.from(fileBody);
   }
+  if (!useStream) fileSize = fileBody.length;
+
+  console.log(`[R2] Uploading: key=${key}, size=${(fileSize / 1024 / 1024).toFixed(1)}MB, type=${contentType}${useStream ? ' (streaming)' : ''}`);
+  const uploadStart = Date.now();
 
   const putResult = await client.send(new PutObjectCommand({
     Bucket: BUCKET,
     Key: key,
     Body: fileBody,
     ContentType: contentType,
-    ContentLength: fileBody.length,
+    ContentLength: fileSize,
     CacheControl: 'public, max-age=31536000',
   }));
 
-  console.log(`[R2] PutObject: key=${key}, size=${fileBody.length}, etag=${putResult.ETag || 'none'}, status=${putResult.$metadata?.httpStatusCode}`);
+  const uploadDuration = Date.now() - uploadStart;
+  console.log(`[R2] PutObject complete: key=${key}, size=${fileSize}, etag=${putResult.ETag || 'none'}, status=${putResult.$metadata?.httpStatusCode}, took=${uploadDuration}ms`);
 
-  // Verify the object exists in R2 after upload
+  // Free the buffer/stream immediately after upload to reduce memory pressure
+  if (useStream && fileBody.destroy) fileBody.destroy();
+  fileBody = null;
+
+  // Verify the object exists in R2 after upload using HEAD (not GET — avoids re-downloading)
   try {
-    const headResult = await client.send(new GetObjectCommand({
+    const headResult = await client.send(new HeadObjectCommand({
       Bucket: BUCKET,
       Key: key,
     }));
-    // Just read and discard — we're verifying it exists
-    if (headResult.Body) {
-      headResult.Body.destroy?.();
-    }
     console.log(`[R2] ✅ Verified object exists: key=${key}, contentLength=${headResult.ContentLength}`);
   } catch (verifyErr) {
     console.warn(`[R2] ⚠️ Object verification FAILED after upload: key=${key}, error=${verifyErr.message}`);
   }
+
+  const totalDuration = Date.now() - startTime;
+  console.log(`[R2] ✅ Upload complete: key=${key}, total=${totalDuration}ms`);
 
   return `${PUBLIC_URL}/${key}`;
 }
@@ -121,30 +146,39 @@ async function uploadVideoAssets(userId, videoId, files) {
   const prefix = `videos/${userId}/${videoId}`;
   const result = {};
 
+  console.log(`[R2] uploadVideoAssets: starting for video ${userId}/${videoId}`);
+
   if (files.videoPath) {
+    console.log(`[R2] uploadVideoAssets: uploading video...`);
     result.videoUrl = await uploadFile(
       `${prefix}/video_${ts}.mp4`,
       files.videoPath,
       'video/mp4'
     );
+    console.log(`[R2] uploadVideoAssets: video uploaded → ${result.videoUrl}`);
   }
 
   if (files.thumbnailPath) {
+    console.log(`[R2] uploadVideoAssets: uploading thumbnail...`);
     result.thumbnailUrl = await uploadFile(
       `${prefix}/thumbnail_${ts}.jpg`,
       files.thumbnailPath,
       'image/jpeg'
     );
+    console.log(`[R2] uploadVideoAssets: thumbnail uploaded`);
   }
 
   if (files.voiceoverPath) {
+    console.log(`[R2] uploadVideoAssets: uploading voiceover...`);
     result.voiceoverUrl = await uploadFile(
       `${prefix}/voiceover_${ts}.mp3`,
       files.voiceoverPath,
       'audio/mpeg'
     );
+    console.log(`[R2] uploadVideoAssets: voiceover uploaded`);
   }
 
+  console.log(`[R2] uploadVideoAssets: all assets uploaded for video ${userId}/${videoId}`);
   return result;
 }
 

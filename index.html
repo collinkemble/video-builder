@@ -40,6 +40,10 @@
       0%, 100% { transform: scale(1); }
       50% { transform: scale(1.3); background: #7C3AED; color: white; border-color: #7C3AED; }
     }
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(-8px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
   </style>
   <style>
     @media (max-width: 768px) {
@@ -2144,6 +2148,16 @@ function renderScript(script) {
         <div style="background: #F9FAFB; border: 1px solid #E5E7EB; border-radius: 8px; padding: 10px 12px; margin-bottom: 8px;">
           <span style="font-size: 11px; color: #888;">Visual: ${seg.visualType === 'scene_capture' ? 'Scene capture (not editable)' : seg.visualType === 'custom_asset' ? 'Custom ' + (seg.customAssetType || 'asset') + ' (uploaded)' : seg.visualType || 'none'}</span>
         </div>`}
+        ${isCustomAsset ? `
+        <div style="background: #FEF3C7; border: 1px solid #FDE68A; border-radius: 8px; padding: 10px 12px; margin-bottom: 8px;">
+          <label style="font-size: 11px; font-weight: 600; color: #92400E; display: block; margin-bottom: 4px;">Minimum Duration (seconds)</label>
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <input type="number" id="seg-duration-${i}" data-duration-index="${i}" value="${seg.estimatedDuration || 10}" min="4" max="120" step="1"
+              oninput="onSegmentDurationEdit(${i})"
+              style="width: 80px; font-size: 14px; font-weight: 600; color: #92400E; padding: 6px 10px; border: 1px solid #FDE68A; border-radius: 6px; background: white; font-family: inherit;">
+            <span style="font-size: 12px; color: #92400E; line-height: 1.4;">If narration is longer than this, the scene extends to fit. If shorter, the scene holds for this duration.</span>
+          </div>
+        </div>` : ''}
         <div style="display: flex; gap: 14px; margin-bottom: 8px; padding: 0 2px;">
           <label style="display: flex; align-items: center; gap: 5px; font-size: 12px; color: #555; cursor: pointer;">
             <input type="checkbox" id="seg-only-narration-${i}" data-seg-index="${i}" style="accent-color: #7C3AED; cursor: pointer;">
@@ -2406,9 +2420,58 @@ async function addSegment() {
   }
 
   renumberSegments();
+
+  // Track the newly added segment's order for "Regenerate with This New Section"
+  const newSegOrder = newSeg.order;
+  const isCompletedVideo = window._currentVideoFull && window._currentVideoFull.status === 'completed'
+    && window._currentVideoFull.segment_assets && window._currentVideoFull.segment_assets.clips
+    && Object.keys(window._currentVideoFull.segment_assets.clips).length > 0;
+
+  if (isCompletedVideo) {
+    window._newlyAddedSegmentOrder = newSegOrder;
+  }
+
   renderScript(window._currentScript);
   document.getElementById('save-script-btn').classList.remove('hidden');
   hideAddSegmentDialog();
+
+  // Show "Regenerate with This New Section" banner for completed videos
+  if (isCompletedVideo && window._newlyAddedSegmentOrder !== undefined) {
+    const container = document.getElementById('script-segments');
+    // Find the new segment's row and inject a banner right after it
+    const segRows = container.querySelectorAll('.script-seg-row');
+    const newSegIndex = window._currentScript.segments.findIndex(s => s.order === window._newlyAddedSegmentOrder);
+    const targetRow = segRows[newSegIndex];
+
+    // Remove any existing banner first
+    const oldBanner = document.getElementById('new-section-regen-banner');
+    if (oldBanner) oldBanner.remove();
+
+    const bannerDiv = document.createElement('div');
+    bannerDiv.id = 'new-section-regen-banner';
+    bannerDiv.style.cssText = 'margin: 8px 0 12px 0; padding: 12px 16px; background: linear-gradient(135deg, #F3E8FF 0%, #EDE9FE 100%); border: 2px solid #C4B5FD; border-radius: 12px; display: flex; align-items: center; gap: 12px; animation: fadeIn 0.3s ease;';
+    bannerDiv.innerHTML = `
+      <span style="font-size: 20px; flex-shrink: 0;">✨</span>
+      <div style="flex: 1;">
+        <div style="font-size: 14px; font-weight: 700; color: #5B21B6;">New section added!</div>
+        <div style="font-size: 12px; color: #7C3AED; margin-top: 2px;">Click to regenerate the video with this new section. Existing sections will not be altered.</div>
+      </div>
+      <button onclick="regenerateWithNewSection()" class="cursor-pointer" style="background: #7C3AED; color: white; font-size: 13px; font-weight: 700; padding: 10px 20px; border-radius: 10px; border: none; white-space: nowrap; transition: all 0.2s; box-shadow: 0 2px 8px rgba(124, 58, 237, 0.3);">🔄 Regenerate with This New Section</button>
+      <button onclick="dismissNewSectionBanner()" class="cursor-pointer" title="Dismiss" style="background: none; border: none; color: #A78BFA; font-size: 16px; padding: 0 4px; flex-shrink: 0;">✕</button>
+    `;
+
+    if (targetRow && targetRow.nextSibling) {
+      container.insertBefore(bannerDiv, targetRow.nextSibling);
+    } else if (targetRow) {
+      container.appendChild(bannerDiv);
+    } else {
+      // Fallback — put at the top of the container
+      container.insertBefore(bannerDiv, container.firstChild);
+    }
+
+    // Scroll to the banner
+    bannerDiv.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
 }
 
 function readFileAsBase64(file) {
@@ -2418,6 +2481,137 @@ function readFileAsBase64(file) {
     reader.onerror = () => reject(new Error('Failed to read file'));
     reader.readAsDataURL(file);
   });
+}
+
+// ── Regenerate with newly added section ──
+// After adding a new section to a completed video, this remaps segment_assets
+// to match the new order numbering, then regenerates just the new section.
+
+async function regenerateWithNewSection() {
+  if (!currentVideoId || !window._currentScript || window._newlyAddedSegmentOrder === undefined) return;
+
+  const email = document.getElementById('user-email').textContent;
+  const newOrder = window._newlyAddedSegmentOrder;
+  const newSeg = window._currentScript.segments.find(s => s.order === newOrder);
+  if (!newSeg) { alert('Could not find the new section.'); return; }
+
+  // Disable the banner button
+  const banner = document.getElementById('new-section-regen-banner');
+  if (banner) {
+    const btn = banner.querySelector('button');
+    if (btn) { btn.disabled = true; btn.textContent = '⏳ Starting...'; btn.style.background = '#A78BFA'; }
+  }
+
+  try {
+    // 1. Save the script with new segment orders
+    collectNarrationEdits();
+    renumberSegments();
+    await fetch(`/api/videos/${currentVideoId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, narrationScript: window._currentScript }),
+    });
+
+    // 2. Remap segment_assets.clips to match new order numbering
+    // When a section is inserted, all subsequent orders shift. We need to remap
+    // existing clip URLs from old orders to new orders so the orchestrator finds them.
+    const video = window._currentVideoFull;
+    const oldSA = video.segment_assets;
+    if (oldSA && oldSA.clips) {
+      // Build mapping: old clip entries sorted by order
+      const oldClipEntries = Object.entries(oldSA.clips)
+        .map(([k, v]) => ({ oldOrder: parseInt(k, 10), url: v }))
+        .sort((a, b) => a.oldOrder - b.oldOrder);
+
+      // The new segment was inserted — all segments EXCEPT the new one existed before.
+      // Map old clips (in original sequential order) to new orders of existing segments.
+      const existingSegsNewOrders = window._currentScript.segments
+        .filter(s => s.order !== newOrder)
+        .map(s => s.order)
+        .sort((a, b) => a - b);
+
+      const remappedClips = {};
+      for (let i = 0; i < Math.min(oldClipEntries.length, existingSegsNewOrders.length); i++) {
+        remappedClips[existingSegsNewOrders[i]] = oldClipEntries[i].url;
+      }
+
+      const newSA = { ...oldSA, clips: remappedClips };
+
+      // Save remapped segment_assets
+      await fetch(`/api/videos/${currentVideoId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, segmentAssets: newSA }),
+      });
+
+      // Update local cache
+      window._currentVideoFull.segment_assets = newSA;
+    }
+
+    // 3. Build change object for the new segment
+    // Always regenerate voiceover — adding a section shifts the audio timeline
+    const change = { order: newOrder, regenerateVoiceover: true };
+    if (newSeg.narration) change.narration = newSeg.narration;
+    if (newSeg.visualType === 'custom_asset') {
+      // Custom assets need regenerateBroll=true so the orchestrator processes the asset file
+      change.regenerateBroll = true;
+    } else if (newSeg.visualType === 'scene_capture') {
+      change.regenerateBroll = true;
+    } else {
+      // broll type — regenerate visuals
+      change.regenerateBroll = true;
+      if (newSeg.brollDescription) change.brollDescription = newSeg.brollDescription;
+    }
+
+    // 4. Call regenerate-segments
+    const resp = await fetch(`/api/videos/${currentVideoId}/regenerate-segments`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, changes: [change] }),
+    });
+
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || 'Failed to start regeneration');
+
+    // Clean up the banner and tracking
+    window._newlyAddedSegmentOrder = undefined;
+    if (banner) banner.remove();
+
+    // Show regenerating state
+    const smartBar = document.getElementById('smart-edit-bar');
+    if (smartBar) {
+      smartBar.innerHTML = `
+        <div style="display: flex; gap: 10px; align-items: center; padding: 2px 0;">
+          <div style="width: 18px; height: 18px; border: 3px solid #0176D3; border-top-color: transparent; border-radius: 50%; animation: spin 0.8s linear infinite; flex-shrink: 0;"></div>
+          <span style="font-size: 14px; font-weight: 600; color: #0176D3;">Regenerating new section...</span>
+          <span style="font-size: 12px; color: #6B7280; margin-left: 4px;">This may take a few minutes. The video will update when complete.</span>
+        </div>`;
+    }
+
+    // Start polling & update status badge
+    startStatusPolling(currentVideoId);
+    const badge = document.getElementById('detail-status-badge');
+    if (badge) {
+      badge.className = 'status-badge status-compositing';
+      badge.textContent = 'Editing...';
+    }
+
+    const progressEl = document.getElementById('pipeline-progress');
+    if (progressEl) progressEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+
+  } catch (err) {
+    alert('Failed to regenerate with new section: ' + err.message);
+    if (banner) {
+      const btn = banner.querySelector('button');
+      if (btn) { btn.disabled = false; btn.textContent = '🔄 Regenerate with This New Section'; btn.style.background = '#7C3AED'; }
+    }
+  }
+}
+
+function dismissNewSectionBanner() {
+  window._newlyAddedSegmentOrder = undefined;
+  const banner = document.getElementById('new-section-regen-banner');
+  if (banner) banner.remove();
 }
 
 async function generateScriptOnly() {
@@ -2539,6 +2733,7 @@ function storeOriginalSegments() {
     window._originalSegments[i] = {
       narration: seg.narration || '',
       brollDescription: seg.brollDescription || '',
+      estimatedDuration: seg.estimatedDuration || 10,
     };
   });
 }
@@ -2551,7 +2746,8 @@ function markSegmentEdited(index, field) {
 
   const narrationChanged = (seg.narration || '') !== orig.narration;
   const brollChanged = (seg.brollDescription || '') !== orig.brollDescription;
-  const isEdited = narrationChanged || brollChanged;
+  const durationChanged = (seg.estimatedDuration || 10) !== (orig.estimatedDuration || 10);
+  const isEdited = narrationChanged || brollChanged || durationChanged;
 
   const badge = document.getElementById(`seg-changed-badge-${index}`);
   const row = document.querySelector(`.script-seg-row[data-seg-index="${index}"]`);
@@ -2641,6 +2837,25 @@ function onSegmentBrollEdit(index) {
   markSegmentEdited(index, 'broll');
 }
 
+function onSegmentDurationEdit(index) {
+  const input = document.getElementById(`seg-duration-${index}`);
+  if (!input || !window._currentScript) return;
+  const seg = window._currentScript.segments[index];
+  if (!seg) return;
+  const val = parseInt(input.value, 10);
+  if (val && val >= 4) {
+    seg.estimatedDuration = val;
+    // Update the duration display in the header row
+    const row = document.querySelector(`.script-seg-row[data-seg-index="${index}"]`);
+    if (row) {
+      const durSpan = row.querySelector('span[style*="color: #ccc"]');
+      if (durSpan) durSpan.textContent = `~${val}s`;
+    }
+  }
+  document.getElementById('save-script-btn').classList.remove('hidden');
+  markSegmentEdited(index, 'duration');
+}
+
 function updateBatchRegenBar() {
   const edited = window._editedSegments ? window._editedSegments.size : 0;
   const bar = document.getElementById('batch-regen-bar');
@@ -2698,13 +2913,15 @@ function buildChangeForSegment(index) {
 
   const narrationChanged = (seg.narration || '') !== orig.narration;
   const brollChanged = (seg.brollDescription || '') !== orig.brollDescription;
+  const durationChanged = (seg.estimatedDuration || 10) !== (orig.estimatedDuration || 10);
 
-  if (!narrationChanged && !brollChanged) return null;
+  if (!narrationChanged && !brollChanged && !durationChanged) return null;
 
   const change = {
     order: seg.order,
-    regenerateVoiceover: narrationChanged,
-    regenerateBroll: brollChanged && (seg.visualType === 'broll' || seg.visualType === 'scene_capture'),
+    // Duration change needs voiceover regen (timeline shifts) and visual regen (clip length changes)
+    regenerateVoiceover: narrationChanged || durationChanged,
+    regenerateBroll: (brollChanged || durationChanged) && (seg.visualType === 'broll' || seg.visualType === 'scene_capture' || seg.visualType === 'custom_asset'),
   };
 
   if (narrationChanged) change.narration = seg.narration;

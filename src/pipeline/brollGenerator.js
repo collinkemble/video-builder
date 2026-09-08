@@ -24,7 +24,7 @@ CRITICAL RULES YOU MUST FOLLOW:
 2. ABSOLUTELY NO close-ups of devices — do not show any device screen from an angle where you can see what is displayed.
 3. DO NOT generate images of people looking at screens, typing on keyboards, or using touchscreens in close-up.
 4. Feature the person from the reference image as the MAIN character. Show them in lifestyle moments: walking, shopping, enjoying products, in beautiful environments. IMPORTANT: Dress the person in clothing appropriate for the scene — if they are exercising, put them in athletic wear; if at a formal event, put them in formal attire; if outdoors hiking, put them in outdoor gear. Do NOT keep them in whatever outfit they are wearing in the reference image if it does not match the activity. Their face and identity stay the same, but their wardrobe MUST fit the scene.
-5. ABSOLUTELY NO text of any kind — no text overlays, no logos, no UI mockups, no signage with readable text, no writing on vehicles, no labels, no brand names visible, no letters or words anywhere in the scene.
+5. ABSOLUTELY NO text, logos, or branding of any kind anywhere in the scene. This is the MOST IMPORTANT rule. Do NOT generate any logos, brand names, labels, signs, writing, lettering, watermarks, or text on ANY surface — not on products, bottles, packaging, clothing, storefronts, vehicles, or backgrounds. All surfaces must be completely clean and unbranded. If the scene includes products (bottles, cans, packaging, etc.), they must be PLAIN and UNBRANDED — solid colors only, no labels, no text, no fake logos. AI-generated text and logos always look wrong and ruin the video. Show generic, elegant, unbranded versions of products instead.
 6. Slow cinematic motion only — no rapid movement.
 7. ABSOLUTELY NO morphing between people — the person must remain the SAME throughout. Do NOT transition one person into a different person.
 8. Show only ONE person (the reference person) per shot. Never add random other people.
@@ -38,7 +38,7 @@ CRITICAL RULES YOU MUST FOLLOW:
 2. ABSOLUTELY NO screens of any kind — no phone screens, laptop screens, tablet screens, computer monitors, TV screens, smartwatch screens, or any digital display showing content.
 3. ABSOLUTELY NO close-ups of devices.
 4. INSTEAD focus on: beautiful environments, storefronts, product displays, nature scenes, cityscapes, architecture, atmospheric lighting, textures, objects related to the brand.
-5. ABSOLUTELY NO text of any kind — no text overlays, no logos, no UI mockups, no signage with readable text, no writing on vehicles, no labels, no brand names visible, no letters or words anywhere in the scene.
+5. ABSOLUTELY NO text, logos, or branding of any kind anywhere in the scene. This is the MOST IMPORTANT rule. Do NOT generate any logos, brand names, labels, signs, writing, lettering, watermarks, or text on ANY surface — not on products, bottles, packaging, clothing, storefronts, vehicles, or backgrounds. All surfaces must be completely clean and unbranded. If the scene includes products (bottles, cans, packaging, etc.), they must be PLAIN and UNBRANDED — solid colors only, no labels, no text, no fake logos. AI-generated text and logos always look wrong and ruin the video. Show generic, elegant, unbranded versions of products instead.
 6. Slow cinematic motion only — no rapid movement.
 7. NO delivery trucks, shipping vehicles, or logistics imagery.
 8. Focus on MOOD and ATMOSPHERE — the visual should evoke the feeling of the brand without showing people.`;
@@ -257,7 +257,7 @@ CRITICAL RULES YOU MUST FOLLOW:
 2. ABSOLUTELY NO close-ups of devices showing screen content.
 3. DO NOT show people looking at screens or using touchscreens in close-up.
 4. INSTEAD focus on: people's faces, emotions, hands, shopping, outdoor scenes, storefronts, lifestyle moments, environments, nature, cityscapes.
-5. ABSOLUTELY NO text of any kind — no text, no logos, no UI mockups, no signage with readable text, no writing on vehicles, no labels, no brand names visible. All surfaces must be clean and text-free.`;
+5. ABSOLUTELY NO text, logos, or branding of any kind. Do NOT generate any logos, brand names, labels, signs, writing, lettering, or text on ANY surface — not on products, bottles, packaging, clothing, storefronts, vehicles, or backgrounds. All products must be PLAIN and UNBRANDED — solid colors only, no labels, no fake logos. All surfaces must be clean and text-free.`;
 
   // Image generation models — ordered newest to oldest
   // gemini-2.0-flash models sunset June 1 2026

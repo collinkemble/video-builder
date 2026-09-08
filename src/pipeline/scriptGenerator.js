@@ -83,7 +83,7 @@ ${sceneList}
 
 Write a narration script that tells a connected customer experience story. The narration should:
 - Start with a SHORT, punchy intro (2-3 sentences) that sets up the BRAND and mentions the Salesforce partnership. The intro MUST include a line like "${brandName}, together with Salesforce, is transforming [the customer experience / the industry / how customers connect]" or similar. Do NOT mention or introduce the persona/character by name in the intro. The intro should mention the brand, Salesforce, and what they're doing together.
-- The persona should be introduced ONLY ONCE, in the narration for the FIRST scene segment (e.g., "Meet [name], who…"). Never introduce or mention the persona by name in the intro segment. If the persona is introduced in the intro, the script is WRONG.
+- PERSONA INTRODUCTION (CRITICAL): After the intro segment and BEFORE the first scene segment, you MUST include a dedicated "persona_intro" transition segment with visualType "broll". This segment introduces the persona by name (e.g., "Meet [name], a [description]...") and uses b-roll visuals showing a lifestyle environment relevant to the persona (NOT the first scene's channel). The brollDescription should depict the persona's world — their lifestyle, environment, or daily routine. Then, the FIRST scene segment's narration should focus ONLY on what happens in that channel (e.g., "Scrolling through Instagram, she spots a personalized ad...") — do NOT re-introduce the persona by name in the scene narration. The persona_intro segment should be about 8-10 seconds. Never introduce or mention the persona by name in the intro segment. If the persona is introduced in the intro, the script is WRONG.
 - NEVER mention the persona's name more than once across the ENTIRE script. After introducing them in the first scene, refer to them as "she", "he", "they", "our customer", etc. — NEVER repeat their name.
 - Walk through each scene as part of a cohesive customer journey
 - Include transition moments between major channel shifts
@@ -110,16 +110,26 @@ Return ONLY valid JSON in this exact format:
     },
     {
       "order": 2,
+      "type": "transition",
+      "sceneId": null,
+      "channel": null,
+      "visualType": "broll",
+      "brollDescription": "Lifestyle environment showing the persona's world (NOT the first channel scene) — e.g., cozy apartment morning, walking through a neighborhood, etc.",
+      "narration": "Meet [persona name], a [brief description]. [1-2 sentences about their lifestyle or what they value].",
+      "estimatedDuration": 8
+    },
+    {
+      "order": 3,
       "type": "scene",
       "sceneId": <scene_id_number>,
       "channel": "<channel_name>",
       "visualType": "scene_capture",
       "brollDescription": null,
-      "narration": "Narration for this scene...",
+      "narration": "Narration for this scene — focus on what happens in the channel, do NOT re-introduce persona by name...",
       "estimatedDuration": 15
     },
     {
-      "order": 3,
+      "order": 4,
       "type": "transition",
       "sceneId": null,
       "channel": null,
@@ -133,7 +143,7 @@ Return ONLY valid JSON in this exact format:
 
 Segment types:
 - "intro" — Opening (2-3 sentences, ~10 seconds), always first, uses b-roll visual. Sets up the BRAND and mentions the Salesforce partnership (e.g., "[Brand], together with Salesforce, is transforming..."). Do NOT introduce or name the persona here. Must be long enough for the logo animation overlay.
-- "scene" — Maps to a PocketSIC scene, uses scene_capture visual. The FIRST scene segment is where the persona should be introduced by name.
+- "scene" — Maps to a PocketSIC scene, uses scene_capture visual. The narration should focus ONLY on what happens in the channel — do NOT introduce the persona by name in any scene segment (the persona is introduced in the preceding persona_intro transition).
   SPECIAL RULE FOR WEBSITE/CHAT SCENES: If a scene's channel is "Website", "Web Chat", "Agentforce", "Chat", or similar, structure the narration in TWO parts: (1) First describe the personalized homepage/web experience — the tailored content, recommendations, or curated experience the customer sees when they arrive. (2) Then transition to them starting a chat: "She has a question about [something relevant] and starts a chat with the ${brandName} agent" or similar. This two-part narration matches the video capture which shows the homepage first, then opens the chat. Do NOT jump straight into the chat conversation — always mention the personalized web experience first.
 - "transition" — Brief bridge between scenes, uses b-roll
 - "outro" — Closing (3-4 sentences, ~12-15 seconds), always last, uses b-roll. Must reinforce the Salesforce partnership with a closing line like "This is how [Brand] and Salesforce are transforming..." or "Together with Salesforce, [Brand] is redefining..."

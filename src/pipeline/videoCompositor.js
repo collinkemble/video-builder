@@ -784,14 +784,72 @@ async function concatBrollClips(sourcePaths, outputPath, targetDuration, workDir
  */
 async function applyIntroLogoOverlay(inputPath, outputPath, brandLogoUrl, workDir) {
   // Download brand logo
+  const rawLogoPath = path.join(workDir, 'brand_logo_raw');
   const brandLogoPath = path.join(workDir, 'brand_logo.png');
   console.log(`[Compositor] Downloading brand logo: ${brandLogoUrl.substring(0, 80)}...`);
 
   const resp = await fetch(brandLogoUrl);
   if (!resp.ok) throw new Error(`Failed to download brand logo: HTTP ${resp.status}`);
   const buffer = Buffer.from(await resp.arrayBuffer());
-  fs.writeFileSync(brandLogoPath, buffer);
-  console.log(`[Compositor] Brand logo downloaded: ${(buffer.length / 1024).toFixed(0)}KB`);
+
+  // Detect if the logo is SVG (by URL extension or content sniff)
+  const urlLower = brandLogoUrl.toLowerCase();
+  const isSvg = urlLower.endsWith('.svg') || urlLower.includes('.svg?') ||
+    (buffer.length < 500000 && buffer.toString('utf8', 0, Math.min(buffer.length, 500)).includes('<svg'));
+
+  if (isSvg) {
+    // SVG logos must be rasterized to PNG — FFmpeg cannot decode SVG.
+    // Use the Chrome/Chromium binary (already on Heroku via buildpack) to
+    // render the SVG to PNG via a tiny HTML wrapper.
+    console.log('[Compositor] SVG logo detected — rasterizing to PNG via headless browser...');
+    const svgPath = rawLogoPath + '.svg';
+    fs.writeFileSync(svgPath, buffer);
+
+    // Create a minimal HTML file that renders the SVG at high res on a transparent background
+    const htmlPath = path.join(workDir, 'svg_render.html');
+    const htmlContent = `<!DOCTYPE html><html><head><style>body{margin:0;padding:0;background:transparent;display:flex;align-items:center;justify-content:center;width:800px;height:800px;}img{max-width:100%;max-height:100%;object-fit:contain;}</style></head><body><img src="file://${svgPath}"></body></html>`;
+    fs.writeFileSync(htmlPath, htmlContent);
+
+    // Try to find Chrome binary
+    const chromePaths = [
+      process.env.CHROME_BIN,
+      process.env.GOOGLE_CHROME_BIN,
+      '/app/.chrome-for-testing/chrome-linux64/chrome',
+      '/usr/bin/google-chrome',
+      '/usr/bin/chromium-browser',
+    ].filter(Boolean);
+
+    let chromeBin = null;
+    for (const cp of chromePaths) {
+      if (fs.existsSync(cp)) { chromeBin = cp; break; }
+    }
+
+    if (chromeBin) {
+      try {
+        execSync(
+          `"${chromeBin}" --headless --disable-gpu --no-sandbox --default-background-color=00000000 ` +
+          `--window-size=800,800 --screenshot="${brandLogoPath}" "file://${htmlPath}"`,
+          { timeout: 15000, stdio: 'pipe' }
+        );
+        console.log(`[Compositor] SVG rasterized to PNG: ${(fs.statSync(brandLogoPath).size / 1024).toFixed(0)}KB`);
+      } catch (chromeErr) {
+        console.warn(`[Compositor] Chrome SVG rasterization failed: ${chromeErr.message}`);
+        // Fallback: write the raw SVG as-is and let FFmpeg try (will likely fail)
+        fs.writeFileSync(brandLogoPath, buffer);
+      }
+    } else {
+      console.warn('[Compositor] No Chrome binary found for SVG rasterization — writing raw file');
+      fs.writeFileSync(brandLogoPath, buffer);
+    }
+
+    // Clean up temp files
+    try { fs.unlinkSync(svgPath); } catch (_) {}
+    try { fs.unlinkSync(htmlPath); } catch (_) {}
+  } else {
+    // Non-SVG (PNG, JPG, WebP) — write directly, FFmpeg can handle these
+    fs.writeFileSync(brandLogoPath, buffer);
+  }
+  console.log(`[Compositor] Brand logo ready: ${(fs.statSync(brandLogoPath).size / 1024).toFixed(0)}KB`);
 
   // Salesforce logo and plus symbols — located at the app root
   const appRoot = path.join(__dirname, '..', '..');

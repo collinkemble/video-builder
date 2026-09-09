@@ -170,7 +170,9 @@ B-ROLL UNIQUENESS RULES (CRITICAL):
 - Do NOT repeat or closely paraphrase the same description. Each b-roll clip is generated as a separate video — if descriptions are similar, the clips look identical and the video appears to repeat itself.
 - NEVER repeat the same action or prop across different b-roll clips. Each clip must show a FUNDAMENTALLY DIFFERENT activity.
 - NEVER include delivery trucks, shipping vehicles, or logistics imagery — these create ugly shots with fake text on them.
-- NEVER describe branded products with visible logos, labels, or text (e.g., "a Heineken bottle" or "bottles with the brand logo"). AI-generated text and logos always look fake and wrong. Instead describe UNBRANDED versions: "elegant glass beer bottles with amber liquid and no labels", "plain premium packaging with clean minimal design". Focus on the PRODUCT CATEGORY and AESTHETIC, not the brand name on the product.
+- NEVER use the brand name "${brandName}" in ANY brollDescription field. The brollDescription is sent directly to an AI image/video generator, and if it sees a brand name it will generate fake logos and text that look terrible. Use ONLY generic product category descriptions instead.
+- NEVER describe branded products with visible logos, labels, or text (e.g., "a Heineken bottle" or "bottles with the brand logo"). AI-generated text and logos always look fake and wrong. Instead describe UNBRANDED versions: "elegant glass bottles with amber liquid and no labels", "plain premium packaging with clean minimal design". Focus on the PRODUCT CATEGORY and AESTHETIC, not the brand name on the product.
+- NEVER mention specific product names, trademarks, or brand-identifying terms in brollDescription. For example: instead of "Heineken beer" say "premium craft beer"; instead of "Nike shoes" say "sleek running shoes"; instead of "BMW dashboard" say "luxury car interior".
 - NEVER use generic descriptions — be hyper-specific about the exact visual scene, camera angle, and mood. Each description must paint a distinct cinematic picture that is relevant to this brand's industry and persona.
 
 DURATION RULES:

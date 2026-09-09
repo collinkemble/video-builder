@@ -44,6 +44,44 @@ CRITICAL RULES YOU MUST FOLLOW:
 8. Focus on MOOD and ATMOSPHERE — the visual should evoke the feeling of the brand without showing people.`;
 
 /**
+ * Sanitize a b-roll prompt to remove brand names and product-specific references
+ * that cause AI models to generate fake logos/text. The visual model should focus
+ * on the CATEGORY of product (e.g., "beer", "car") without knowing the specific
+ * brand, so it can't invent branding.
+ *
+ * @param {string} text - Text to sanitize
+ * @param {string} brandName - Brand name to strip
+ * @returns {string} Sanitized text
+ */
+function sanitizeBrollPrompt(text, brandName) {
+  if (!text) return text;
+  let clean = text;
+
+  // Remove the brand name (case-insensitive, with optional possessive/plural)
+  if (brandName) {
+    const escaped = brandName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    // Remove brand name and trailing "'s", "'s", "s", or standalone
+    clean = clean.replace(new RegExp(`${escaped}(?:'s|'s|s)?\\s*`, 'gi'), '');
+    // Also remove "a [Brand]" or "the [Brand]" patterns
+    clean = clean.replace(new RegExp(`(a|the|an)\\s+${escaped}`, 'gi'), '$1');
+  }
+
+  // Replace specific branded product descriptions with unbranded ones
+  // Beer / beverage industry
+  clean = clean.replace(/\bbeer\s+bottle(s)?\b/gi, 'elegant glass bottle$1 with amber liquid and no labels');
+  clean = clean.replace(/\bbeer\s+can(s)?\b/gi, 'plain metallic can$1 with no labels or text');
+  clean = clean.replace(/\bbeer\s+glass(es)?\b/gi, 'glass$1 of golden amber liquid');
+  clean = clean.replace(/\bpint(s)?\s+of\s+beer\b/gi, 'glass$1 of golden amber liquid');
+  clean = clean.replace(/\bbeer\s+tap(s)?\b/gi, 'plain polished tap$1');
+  clean = clean.replace(/\bbranded\s+(bottle|can|package|product)(s)?\b/gi, 'plain unbranded $1$2');
+
+  // Clean up double spaces from removals
+  clean = clean.replace(/\s{2,}/g, ' ').trim();
+
+  return clean;
+}
+
+/**
  * Poll a Veo video operation until done.
  * @returns {Promise<object>} The completed operation
  */
@@ -101,19 +139,24 @@ async function generateBrollVideo({ description, brandName, brandDescription = '
     personaPromptHint = 'IMPORTANT: You MUST feature the exact person from the provided reference image as the main character in this clip. Match their face, hair, skin tone, body type, and facial features precisely from the reference image. However, ADAPT their clothing and outfit to match the scene — if the scene involves exercise, dress them in athletic wear; if a formal event, dress them formally; if casual, dress them casually. The person\'s IDENTITY stays the same but their WARDROBE should fit the activity and setting described. ';
   }
 
-  // Build brand/persona context to ground the visual in the right world
+  // Build brand/persona context — sanitized to avoid AI generating fake logos.
+  // We tell the model what KIND of brand (industry) without naming it, so it
+  // cannot invent branding.  The brand name is deliberately stripped.
   let brandContext = '';
   if (brandDescription) {
-    brandContext += `Brand context: ${brandName || 'brand'} — ${brandDescription}. `;
+    brandContext += `Brand context: a premium brand — ${sanitizeBrollPrompt(brandDescription, brandName)}. `;
   }
   if (personaDescription) {
-    brandContext += `The story follows: ${personaDescription}. `;
+    brandContext += `The story follows: ${sanitizeBrollPrompt(personaDescription, brandName)}. `;
   }
+
+  // Sanitize the visual description itself — strip brand name and branded product refs
+  const cleanDescription = sanitizeBrollPrompt(description, brandName);
 
   // Use different rules depending on whether we have a persona reference image
   const rules = personaImageUrl ? VIDEO_PROMPT_RULES_WITH_PERSONA : VIDEO_PROMPT_RULES_NO_PERSONA;
 
-  const prompt = `${contextHint}${personaPromptHint}${brandContext}Professional cinematic b-roll footage for a ${brandName || 'brand'} customer experience video: ${description}.\n${rules}`;
+  const prompt = `${contextHint}${personaPromptHint}${brandContext}Professional cinematic b-roll footage for a premium brand customer experience video: ${cleanDescription}.\n${rules}`;
 
   const modelName = 'veo-3.1-generate-preview';
 
@@ -250,7 +293,10 @@ async function generateBrollVideo({ description, brandName, brandDescription = '
 async function generateBrollImage({ description, brandName, outputDir }) {
   const ai = getGenAI();
 
-  const prompt = `Professional, cinematic b-roll photograph for a ${brandName || 'brand'} customer experience video: ${description}.
+  // Sanitize to remove brand names and product references that cause fake logos
+  const cleanDescription = sanitizeBrollPrompt(description, brandName);
+
+  const prompt = `Professional, cinematic b-roll photograph for a premium brand customer experience video: ${cleanDescription}.
 Style: Clean, modern, high-quality stock photography. Warm, inviting lighting. Shallow depth of field.
 CRITICAL RULES YOU MUST FOLLOW:
 1. ABSOLUTELY NO screens of any kind — no phone screens, laptop screens, tablet screens, computer monitors, TV screens, smartwatch screens, or any digital display.

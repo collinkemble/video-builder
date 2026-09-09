@@ -24,7 +24,7 @@ CRITICAL RULES YOU MUST FOLLOW:
 2. ABSOLUTELY NO close-ups of devices — do not show any device screen from an angle where you can see what is displayed.
 3. DO NOT generate images of people looking at screens, typing on keyboards, or using touchscreens in close-up.
 4. Feature the person from the reference image as the MAIN character. Show them in lifestyle moments: walking, shopping, enjoying products, in beautiful environments. IMPORTANT: Dress the person in clothing appropriate for the scene — if they are exercising, put them in athletic wear; if at a formal event, put them in formal attire; if outdoors hiking, put them in outdoor gear. Do NOT keep them in whatever outfit they are wearing in the reference image if it does not match the activity. Their face and identity stay the same, but their wardrobe MUST fit the scene.
-5. ABSOLUTELY NO text, logos, or branding of any kind anywhere in the scene. This is the MOST IMPORTANT rule. Do NOT generate any logos, brand names, labels, signs, writing, lettering, watermarks, emblems, crests, medallions, coat of arms, monograms, symbols, stars, or text on ANY surface — not on products, bottles, glasses, cups, mugs, packaging, clothing, storefronts, vehicles, or backgrounds. All surfaces must be completely clean, smooth, and unbranded. Glasses must be PLAIN CLEAR GLASS with no etching, no frosted logos, no embossed designs, no printed emblems. Bottles must have NO labels, NO neck tags, NO foil with text. Packaging must be PLAIN solid colors only. AI-generated text and logos always look wrong and ruin the video. Show generic, elegant, completely plain versions of products instead.
+5. Every surface in the scene must be COMPLETELY CLEAN AND SMOOTH. This is the MOST IMPORTANT rule. All glasses must be perfectly plain, smooth, transparent glass — like simple kitchen tumblers or plain pint glasses you'd buy unprinted from a store. All bottles must be completely bare glass with zero printing or paper on them. All packaging must be plain solid single colors. All clothing must be solid colors. All storefronts and signs must be out of focus or show abstract shapes only. Think of this as a "stock footage" world where no brands exist — every object is a generic, unprinted, clean version of itself.
 6. Slow cinematic motion only — no rapid movement.
 7. ABSOLUTELY NO morphing between people — the person must remain the SAME throughout. Do NOT transition one person into a different person.
 8. Show only ONE person (the reference person) per shot. Never add random other people.
@@ -38,7 +38,7 @@ CRITICAL RULES YOU MUST FOLLOW:
 2. ABSOLUTELY NO screens of any kind — no phone screens, laptop screens, tablet screens, computer monitors, TV screens, smartwatch screens, or any digital display showing content.
 3. ABSOLUTELY NO close-ups of devices.
 4. INSTEAD focus on: beautiful environments, storefronts, product displays, nature scenes, cityscapes, architecture, atmospheric lighting, textures, objects related to the brand.
-5. ABSOLUTELY NO text, logos, or branding of any kind anywhere in the scene. This is the MOST IMPORTANT rule. Do NOT generate any logos, brand names, labels, signs, writing, lettering, watermarks, emblems, crests, medallions, coat of arms, monograms, symbols, stars, or text on ANY surface — not on products, bottles, glasses, cups, mugs, packaging, clothing, storefronts, vehicles, or backgrounds. All surfaces must be completely clean, smooth, and unbranded. Glasses must be PLAIN CLEAR GLASS with no etching, no frosted logos, no embossed designs, no printed emblems. Bottles must have NO labels, NO neck tags, NO foil with text. Packaging must be PLAIN solid colors only. AI-generated text and logos always look wrong and ruin the video. Show generic, elegant, completely plain versions of products instead.
+5. Every surface in the scene must be COMPLETELY CLEAN AND SMOOTH. This is the MOST IMPORTANT rule. All glasses must be perfectly plain, smooth, transparent glass — like simple kitchen tumblers or plain pint glasses you'd buy unprinted from a store. All bottles must be completely bare glass with zero printing or paper on them. All packaging must be plain solid single colors. All clothing must be solid colors. All storefronts and signs must be out of focus or show abstract shapes only. Think of this as a "stock footage" world where no brands exist — every object is a generic, unprinted, clean version of itself.
 6. Slow cinematic motion only — no rapid movement.
 7. NO delivery trucks, shipping vehicles, or logistics imagery.
 8. Focus on MOOD and ATMOSPHERE — the visual should evoke the feeling of the brand without showing people.`;
@@ -57,54 +57,70 @@ function sanitizeBrollPrompt(text, brandName) {
   if (!text) return text;
   let clean = text;
 
-  // Remove the brand name (case-insensitive, with optional possessive/plural)
+  // ═══ STEP 1: Remove entire negative-instruction sentences ═══
+  // Sentences containing "no logo", "no text", "should be no", "without text" etc.
+  // are counterproductive — telling AI "no logos" makes it think about logos.
+  // The RULES section already handles these constraints — strip them from the description.
+  clean = clean.replace(/[^.!?]*\b(no|without|don't|do not|should not|shouldn't|never|avoid)\b[^.!?]*(logo|text|brand|label|emblem|writing|lettering|generated|watermark)[^.!?]*[.!?]?\s*/gi, '');
+  clean = clean.replace(/[^.!?]*\b(unlabeled|unbranded|unmarked|plain)\b[^.!?]*(glass|bottle|can|cup|mug|package)[^.!?]*[.!?]?\s*/gi, '');
+
+  // ═══ STEP 2: Remove the brand name ═══
   if (brandName) {
     const escaped = brandName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    // Remove brand name and trailing "'s", "'s", "s", or standalone
     clean = clean.replace(new RegExp(`${escaped}(?:'s|'s|s)?\\s*`, 'gi'), '');
-    // Also remove "a [Brand]" or "the [Brand]" patterns
     clean = clean.replace(new RegExp(`(a|the|an)\\s+${escaped}`, 'gi'), '$1');
   }
 
-  // ── Beer / beverage industry ──
-  // Compound phrases first (more specific patterns before general ones)
-  clean = clean.replace(/\bbeer\s+bottle(s)?\b/gi, 'elegant plain glass bottle$1 with amber liquid, completely unlabeled, no text');
-  clean = clean.replace(/\bbeer\s+can(s)?\b/gi, 'plain solid-colored metallic can$1 with no labels, text, or printing');
-  clean = clean.replace(/\bbeer\s+glass(es)?\b/gi, 'plain clear glass$1 filled with golden amber liquid, no etching, no logos, no emblems on the glass');
-  clean = clean.replace(/\bglass(es)?\s+of\s+beer\b/gi, 'plain clear glass$1 of golden amber liquid with no markings or emblems');
-  clean = clean.replace(/\bpint(s)?\s+of\s+beer\b/gi, 'plain clear glass$1 of golden amber liquid with no markings or emblems');
-  clean = clean.replace(/\bbeer\s+tap(s)?\b/gi, 'plain polished metal tap$1 with no brand markings');
-  clean = clean.replace(/\bcraft\s+beer(s)?\b/gi, 'golden amber beverage$1');
+  // ═══ STEP 3: Replace product terms with PURELY POSITIVE descriptions ═══
+  // Key insight: NO negative language. Only describe what we WANT to see.
+
+  // Beer / beverage industry — avoid the word "beer" entirely as it triggers branded imagery
+  clean = clean.replace(/\bbeer\s+bottle(s)?\b/gi, 'elegant plain glass bottle$1 filled with amber liquid');
+  clean = clean.replace(/\bbeer\s+can(s)?\b/gi, 'sleek solid-colored metallic can$1');
+  clean = clean.replace(/\bbeer\s+glass(es)?\b/gi, 'simple smooth clear drinking glass$1 filled with golden liquid');
+  clean = clean.replace(/\bglass(es)?\s+of\s+beer\b/gi, 'simple smooth clear drinking glass$1 of golden liquid');
+  clean = clean.replace(/\bpint(s)?\s+of\s+beer\b/gi, 'simple smooth clear drinking glass$1 of golden liquid');
+  clean = clean.replace(/\bbeer\s+tap(s)?\b/gi, 'polished metal draft tap$1');
+  clean = clean.replace(/\bcraft\s+beer(s)?\b/gi, 'golden amber drink$1');
   clean = clean.replace(/\bbeer\s+garden\b/gi, 'outdoor dining patio');
   clean = clean.replace(/\bbeer\s+bar\b/gi, 'upscale bar counter');
-  // Standalone "beer(s)" — replace with unbranded description
-  clean = clean.replace(/\bbeer(s)?\b/gi, 'golden amber beverage$1');
-  // "brewery" / "brew" references
-  clean = clean.replace(/\bbrewer(y|ies)\b/gi, 'beverage production facility');
-  clean = clean.replace(/\bbrew(s|ed|ing)?\b/gi, 'craft beverage$1');
+  clean = clean.replace(/\bbeer(s)?\b/gi, 'golden amber drink$1');
+  clean = clean.replace(/\bbrewer(y|ies)\b/gi, 'beverage venue');
+  clean = clean.replace(/\bbrew(s|ed|ing)?\b/gi, 'artisan drink$1');
+  clean = clean.replace(/\bale(s)?\b/gi, 'amber drink$1');
+  clean = clean.replace(/\blager(s)?\b/gi, 'golden drink$1');
+  clean = clean.replace(/\bstout(s)?\b/gi, 'dark beverage$1');
+  clean = clean.replace(/\bIPA(s)?\b/g, 'craft drink$1');
 
-  // ── General product terms ──
-  clean = clean.replace(/\bbranded\s+(bottle|can|package|product|glass|cup)(s)?\b/gi, 'plain unbranded $1$2 with no text or markings');
+  // Wine / spirits
+  clean = clean.replace(/\bwine\s+bottle(s)?\b/gi, 'elegant dark glass bottle$1');
+  clean = clean.replace(/\bwine\s+glass(es)?\b/gi, 'clear crystal stemmed glass$1');
+  clean = clean.replace(/\bspirit\s+bottle(s)?\b/gi, 'premium glass bottle$1');
+  clean = clean.replace(/\bliquor\s+bottle(s)?\b/gi, 'premium glass bottle$1');
+  clean = clean.replace(/\bcocktail\s+glass(es)?\b/gi, 'elegant stemmed glass$1');
+
+  // Soda / soft drinks
+  clean = clean.replace(/\bsoda\s+(can|bottle)(s)?\b/gi, 'sleek solid-colored $1$2');
+  clean = clean.replace(/\bsoft\s+drink(s)?\b/gi, 'refreshing carbonated beverage$1');
+
+  // General product terms — strip words that prime branding
+  clean = clean.replace(/\bbranded\b/gi, 'elegant');
   clean = clean.replace(/\blogo(s)?\b/gi, '');
   clean = clean.replace(/\bbrand(ed|ing)?\b/gi, '');
   clean = clean.replace(/\blabel(s|ed)?\b/gi, '');
+  clean = clean.replace(/\bemblem(s)?\b/gi, '');
+  clean = clean.replace(/\bcrest(s)?\b/gi, '');
+  clean = clean.replace(/\bwatermark(s)?\b/gi, '');
+  clean = clean.replace(/\bmonogram(s)?\b/gi, '');
 
-  // ── Wine / spirits ──
-  clean = clean.replace(/\bwine\s+bottle(s)?\b/gi, 'elegant dark glass bottle$1 with no label');
-  clean = clean.replace(/\bwine\s+glass(es)?\b/gi, 'clear crystal wine glass$1 with no markings');
-  clean = clean.replace(/\bspirit\s+bottle(s)?\b/gi, 'premium glass bottle$1 with no label or text');
-  clean = clean.replace(/\bliquor\s+bottle(s)?\b/gi, 'premium glass bottle$1 with no label or text');
+  // Fashion / apparel
+  clean = clean.replace(/\bbranded\s+(shirt|shoe|sneaker|jacket|bag|hat|cap)(s)?\b/gi, 'plain $1$2');
 
-  // ── Soda / soft drinks ──
-  clean = clean.replace(/\bsoda\s+(can|bottle)(s)?\b/gi, 'plain solid-colored $1$2 with no text or labels');
-  clean = clean.replace(/\bsoft\s+drink(s)?\b/gi, 'refreshing carbonated beverage$1');
-
-  // ── Fashion / apparel ──
-  clean = clean.replace(/\bbranded\s+(shirt|shoe|sneaker|jacket|bag|hat|cap)(s)?\b/gi, 'plain $1$2 with no visible branding');
-
-  // Clean up double spaces and orphaned punctuation from removals
+  // ═══ STEP 4: Clean up ═══
   clean = clean.replace(/\s{2,}/g, ' ');
   clean = clean.replace(/\s+([,.])/g, '$1');
+  clean = clean.replace(/\.\s*\./g, '.'); // collapsed double periods
+  clean = clean.replace(/,\s*,/g, ',');
   clean = clean.trim();
 
   return clean;
@@ -332,7 +348,7 @@ CRITICAL RULES YOU MUST FOLLOW:
 2. ABSOLUTELY NO close-ups of devices showing screen content.
 3. DO NOT show people looking at screens or using touchscreens in close-up.
 4. INSTEAD focus on: people's faces, emotions, hands, shopping, outdoor scenes, storefronts, lifestyle moments, environments, nature, cityscapes.
-5. ABSOLUTELY NO text, logos, or branding of any kind. Do NOT generate any logos, brand names, labels, signs, writing, lettering, emblems, crests, medallions, symbols, stars, or text on ANY surface — not on products, bottles, glasses, cups, mugs, packaging, clothing, storefronts, vehicles, or backgrounds. All glasses must be PLAIN CLEAR GLASS with no etching, no frosted logos, no embossed designs. All bottles must have NO labels, NO neck tags. All products must be PLAIN and UNBRANDED — solid colors only, no fake logos. All surfaces must be clean and completely text-free.`;
+5. Every surface in the scene must be COMPLETELY CLEAN AND SMOOTH. This is the MOST IMPORTANT rule. All glasses must be perfectly plain, smooth, transparent glass — like simple kitchen tumblers or plain pint glasses you'd buy unprinted from a store. All bottles must be completely bare glass with zero printing or paper on them. All packaging must be plain solid single colors. All clothing must be solid colors. Think of this as a "stock footage" world where no brands exist — every object is a generic, unprinted, clean version of itself.`;
 
   // Image generation models — ordered newest to oldest
   // gemini-2.0-flash models sunset June 1 2026

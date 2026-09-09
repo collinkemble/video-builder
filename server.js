@@ -921,22 +921,69 @@ app.post('/api/videos/:id/generate-script', async (req, res) => {
 
     const video = rows[0];
     const sceneData = typeof video.scene_data === 'string' ? JSON.parse(video.scene_data || '{}') : (video.scene_data || {});
-    // Sort scenes by ID ascending — PocketSIC IDs are auto-increment and represent journey order
-    const scenes = (sceneData.scenes || []).slice().sort((a, b) => {
-      const idA = a.id || a.sceneId || 0;
-      const idB = b.id || b.sceneId || 0;
-      return idA - idB;
-    });
+
+    // Order scenes using CX Summary keyword matching (same logic as orchestrator.js)
+    const rawScenes = (sceneData.scenes || []).slice();
+    const cxSummary = sceneData.cx_summary || '';
+    let scenes;
+    if (cxSummary && rawScenes.length > 1) {
+      const cxLower = cxSummary.toLowerCase();
+      const channelKeywords = {
+        insta: ['instagram', 'insta'],
+        site: ['website', 'e-commerce', 'ecommerce', 'web site', 'online'],
+        email: ['email', 'e-mail'],
+        imessage: ['imessage', 'i-message', 'sms', 'text message', 'text '],
+        retailcloud: ['retail cloud', 'in-store', 'in store', 'store visit', ' pos ', ' pos,', 'associate', 'clienteling'],
+        autocloud: ['auto cloud', 'autocloud', 'dealership', 'showroom'],
+        slack: ['slack'],
+        whatsapp: ['whatsapp', 'whats app'],
+        tiktok: ['tiktok', 'tik tok'],
+        facebook: ['facebook'],
+        x: ['twitter', ' x '],
+        sms: ['sms'],
+        loyalty: ['loyalty'],
+        portal: ['portal', 'self-service'],
+      };
+      const scenesWithPos = rawScenes.map(s => {
+        const ch = (s.channel || s.channel_type || '').toLowerCase();
+        let minPos = Infinity;
+        const keywords = channelKeywords[ch] || [ch];
+        for (const kw of keywords) {
+          const pos = cxLower.indexOf(kw);
+          if (pos !== -1 && pos < minPos) minPos = pos;
+        }
+        return { scene: s, pos: minPos };
+      });
+      const matched = scenesWithPos.filter(sp => sp.pos !== Infinity).length;
+      if (matched >= rawScenes.length / 2) {
+        scenesWithPos.sort((a, b) => {
+          if (a.pos === Infinity && b.pos === Infinity) return 0;
+          if (a.pos === Infinity) return 1;
+          if (b.pos === Infinity) return -1;
+          return a.pos - b.pos;
+        });
+        scenes = scenesWithPos.map(sp => sp.scene);
+      } else {
+        scenes = rawScenes;
+      }
+    } else {
+      scenes = rawScenes;
+    }
 
     if (scenes.length === 0) {
       return res.status(400).json({ error: 'No scenes found. Import a PocketSIC project first.' });
     }
 
+    // Mark video as scripting and respond immediately to avoid Heroku 30s router timeout
+    await query('UPDATE videos SET status = ?, error = NULL, updated_at = NOW() WHERE id = ?', ['scripting', req.params.id]);
+    res.json({ success: true, status: 'scripting', message: 'Script generation started' });
+
+    // Run script generation in background (do NOT await)
     const scriptWriterData = video.scriptwriter_data
       ? (typeof video.scriptwriter_data === 'string' ? JSON.parse(video.scriptwriter_data) : video.scriptwriter_data)
       : null;
 
-    const script = await generateScript({
+    generateScript({
       brandName: video.brand_name || sceneData.brand_name || 'Brand',
       brandDescription: sceneData.brand_description || '',
       personaName: sceneData.persona_name || '',
@@ -950,12 +997,13 @@ app.post('/api/videos/:id/generate-script', async (req, res) => {
       durationTarget: video.duration_target || 180,
       language: video.language || 'English',
       scriptWriterData,
+    }).then(async (script) => {
+      await query('UPDATE videos SET narration_script = ?, status = ?, updated_at = NOW() WHERE id = ?', [JSON.stringify(script), 'draft', req.params.id]);
+      console.log(`[Script] Generation complete for video ${req.params.id}`);
+    }).catch(async (err) => {
+      console.error(`[Script] Generation failed for video ${req.params.id}:`, err);
+      await query('UPDATE videos SET status = ?, error = ?, updated_at = NOW() WHERE id = ?', ['error', 'Script generation failed: ' + err.message, req.params.id]);
     });
-
-    // Save script to video record
-    await query('UPDATE videos SET narration_script = ?, updated_at = NOW() WHERE id = ?', [JSON.stringify(script), req.params.id]);
-
-    res.json({ success: true, script });
   } catch (err) {
     console.error('Script generation failed:', err);
     res.status(500).json({ error: 'Script generation failed: ' + err.message });

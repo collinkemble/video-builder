@@ -2614,6 +2614,27 @@ function dismissNewSectionBanner() {
   if (banner) banner.remove();
 }
 
+// Poll until script generation completes (status leaves 'scripting')
+async function pollForScriptCompletion(videoId, email) {
+  const maxAttempts = 120; // 120 × 2s = 4 minutes max
+  for (let i = 0; i < maxAttempts; i++) {
+    await new Promise(r => setTimeout(r, 2000));
+    const statusResp = await fetch(`/api/videos/${videoId}?email=${encodeURIComponent(email)}`);
+    if (!statusResp.ok) continue;
+    const video = await statusResp.json();
+    if (video.status === 'scripting') continue; // still generating
+    if (video.status === 'error') {
+      throw new Error(video.error || 'Script generation failed');
+    }
+    // Script generation done — return the script
+    if (video.narration_script && video.narration_script.segments && video.narration_script.segments.length > 0) {
+      return video.narration_script;
+    }
+    // Status changed but no script yet — might be a race, keep polling briefly
+  }
+  throw new Error('Script generation timed out. Please try again.');
+}
+
 async function generateScriptOnly() {
   if (!currentVideoId) return;
   const email = document.getElementById('user-email').textContent;
@@ -2622,6 +2643,7 @@ async function generateScriptOnly() {
   btn.textContent = '⏳ Generating...';
 
   try {
+    // Kick off script generation (returns immediately)
     const resp = await fetch(`/api/videos/${currentVideoId}/generate-script`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -2631,8 +2653,11 @@ async function generateScriptOnly() {
     const data = await resp.json();
     if (!resp.ok) throw new Error(data.error || 'Failed to generate script');
 
+    // Poll until script generation completes
+    const script = await pollForScriptCompletion(currentVideoId, email);
+
     // Render the new script
-    renderScript(data.script);
+    renderScript(script);
     document.getElementById('save-script-btn').classList.add('hidden');
 
     // Auto-start full video generation now that script is ready
@@ -2660,6 +2685,7 @@ async function autoGenerateScript(videoId) {
   empty.classList.remove('hidden');
 
   try {
+    // Kick off script generation (returns immediately)
     const resp = await fetch(`/api/videos/${videoId}/generate-script`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -2669,7 +2695,10 @@ async function autoGenerateScript(videoId) {
     const data = await resp.json();
     if (!resp.ok) throw new Error(data.error || 'Failed to generate script');
 
-    renderScript(data.script);
+    // Poll until script generation completes
+    const script = await pollForScriptCompletion(videoId, email);
+
+    renderScript(script);
     document.getElementById('save-script-btn').classList.add('hidden');
 
     // Auto-start full video generation now that script is ready

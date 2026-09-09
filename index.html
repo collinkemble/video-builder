@@ -2615,22 +2615,35 @@ function dismissNewSectionBanner() {
 }
 
 // Poll until script generation completes (status leaves 'scripting')
-async function pollForScriptCompletion(videoId, email) {
+async function pollForScriptCompletion(videoId, email, btn) {
   const maxAttempts = 120; // 120 × 2s = 4 minutes max
+  let dots = 0;
   for (let i = 0; i < maxAttempts; i++) {
     await new Promise(r => setTimeout(r, 2000));
-    const statusResp = await fetch(`/api/videos/${videoId}?email=${encodeURIComponent(email)}`);
-    if (!statusResp.ok) continue;
-    const video = await statusResp.json();
-    if (video.status === 'scripting') continue; // still generating
-    if (video.status === 'error') {
-      throw new Error(video.error || 'Script generation failed');
+    // Animate the button to show progress
+    dots = (dots + 1) % 4;
+    if (btn) btn.textContent = '⏳ Generating' + '.'.repeat(dots);
+    try {
+      const statusResp = await fetch(`/api/videos/${videoId}?email=${encodeURIComponent(email)}`);
+      if (!statusResp.ok) continue;
+      const video = await statusResp.json();
+      if (video.status === 'scripting') continue; // still generating
+      if (video.status === 'error') {
+        throw new Error(video.error || 'Script generation failed');
+      }
+      // Script generation done — return the script
+      if (video.narration_script && video.narration_script.segments && video.narration_script.segments.length > 0) {
+        return video.narration_script;
+      }
+      // Status is no longer 'scripting' but no script found — return null so caller can handle
+      return null;
+    } catch (fetchErr) {
+      // Network error during polling — keep trying
+      if (fetchErr.message && (fetchErr.message.includes('Script generation failed') || fetchErr.message.includes('error'))) {
+        throw fetchErr; // Re-throw actual generation errors
+      }
+      continue;
     }
-    // Script generation done — return the script
-    if (video.narration_script && video.narration_script.segments && video.narration_script.segments.length > 0) {
-      return video.narration_script;
-    }
-    // Status changed but no script yet — might be a race, keep polling briefly
   }
   throw new Error('Script generation timed out. Please try again.');
 }
@@ -2654,16 +2667,23 @@ async function generateScriptOnly() {
     if (!resp.ok) throw new Error(data.error || 'Failed to generate script');
 
     // Poll until script generation completes
-    const script = await pollForScriptCompletion(currentVideoId, email);
+    const script = await pollForScriptCompletion(currentVideoId, email, btn);
 
-    // Render the new script
-    renderScript(script);
-    document.getElementById('save-script-btn').classList.add('hidden');
+    if (script) {
+      // Render the new script
+      renderScript(script);
+      document.getElementById('save-script-btn').classList.add('hidden');
 
-    // Auto-start full video generation now that script is ready
-    btn.disabled = false;
-    btn.textContent = '🔄 Regenerate Script';
-    startGeneration(true); // force=true since user just regenerated script
+      // Auto-start full video generation now that script is ready
+      btn.disabled = false;
+      btn.textContent = '🔄 Regenerate Script';
+      startGeneration(true); // force=true since user just regenerated script
+    } else {
+      // Script generation completed but couldn't retrieve script — reload the video
+      btn.disabled = false;
+      btn.textContent = '🔄 Regenerate Script';
+      loadVideo(currentVideoId);
+    }
     return;
   } catch (err) {
     alert(err.message);
@@ -2696,15 +2716,22 @@ async function autoGenerateScript(videoId) {
     if (!resp.ok) throw new Error(data.error || 'Failed to generate script');
 
     // Poll until script generation completes
-    const script = await pollForScriptCompletion(videoId, email);
+    const script = await pollForScriptCompletion(videoId, email, btn);
 
-    renderScript(script);
-    document.getElementById('save-script-btn').classList.add('hidden');
+    if (script) {
+      renderScript(script);
+      document.getElementById('save-script-btn').classList.add('hidden');
 
-    // Auto-start full video generation now that script is ready
-    btn.disabled = false;
-    btn.textContent = '🔄 Regenerate Script';
-    startGeneration(false); // first generation, no existing video to confirm
+      // Auto-start full video generation now that script is ready
+      btn.disabled = false;
+      btn.textContent = '🔄 Regenerate Script';
+      startGeneration(false); // first generation, no existing video to confirm
+    } else {
+      // Script generation completed but couldn't retrieve — reload the video
+      btn.disabled = false;
+      btn.textContent = '🔄 Regenerate Script';
+      loadVideo(videoId);
+    }
     return;
   } catch (err) {
     empty.innerHTML = `<p style="color: #C23934; font-size: 14px;">Failed to generate script: ${esc(err.message)}</p>`;

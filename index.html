@@ -2682,7 +2682,7 @@ async function generateScriptOnly() {
       // Script generation completed but couldn't retrieve script — reload the video
       btn.disabled = false;
       btn.textContent = '🔄 Regenerate Script';
-      loadVideo(currentVideoId);
+      viewVideo(currentVideoId);
     }
     return;
   } catch (err) {
@@ -2730,7 +2730,7 @@ async function autoGenerateScript(videoId) {
       // Script generation completed but couldn't retrieve — reload the video
       btn.disabled = false;
       btn.textContent = '🔄 Regenerate Script';
-      loadVideo(videoId);
+      viewVideo(videoId);
     }
     return;
   } catch (err) {

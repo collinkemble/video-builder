@@ -351,11 +351,9 @@ CRITICAL RULES YOU MUST FOLLOW:
 5. Every surface in the scene must be COMPLETELY CLEAN AND SMOOTH. This is the MOST IMPORTANT rule. All glasses must be perfectly plain, smooth, transparent glass — like simple kitchen tumblers or plain pint glasses you'd buy unprinted from a store. All bottles must be completely bare glass with zero printing or paper on them. All packaging must be plain solid single colors. All clothing must be solid colors. Think of this as a "stock footage" world where no brands exist — every object is a generic, unprinted, clean version of itself.`;
 
   // Image generation models — ordered newest to oldest
-  // gemini-2.0-flash models sunset June 1 2026
   const modelNames = [
-    'gemini-3.1-flash-image-preview',
+    process.env.GEMINI_IMAGE_MODEL || 'gemini-3.1-flash-image',
     'gemini-2.5-flash-image',
-    'gemini-2.0-flash-exp-image-generation',
   ];
 
   for (const modelName of modelNames) {

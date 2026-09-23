@@ -24,7 +24,7 @@ function getGenAI() {
  */
 async function generateScript({ brandName, brandDescription, personaName, personaDescription, synopsis, scenes, durationTarget = 180, language = 'English', scriptWriterData = null, customInstructions = '' }) {
   const ai = getGenAI();
-  const model = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
+  const model = process.env.GEMINI_MODEL || 'gemini-3.6-flash';
 
   const sceneList = scenes.map((s, i) =>
     `  ${i + 1}. Scene ID ${s.id} — Channel: ${s.channel}${s.content_summary ? ` — ${s.content_summary}` : ''}`

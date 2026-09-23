@@ -445,7 +445,7 @@ app.post('/api/generate', async (req, res) => {
     return res.status(400).json({ error: 'Missing "contents" in request body' });
   }
 
-  const model = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
+  const model = process.env.GEMINI_MODEL || 'gemini-3.6-flash';
   const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:streamGenerateContent?alt=sse&key=${apiKey}`;
 
   res.setHeader('Content-Type', 'text/event-stream');
@@ -1425,9 +1425,8 @@ RULES:
 
     // Try image generation models — ordered newest to oldest
     const modelNames = [
-      'gemini-3.1-flash-image-preview',
+      process.env.GEMINI_IMAGE_MODEL || 'gemini-3.1-flash-image',
       'gemini-2.5-flash-image',
-      'gemini-2.0-flash-exp-image-generation',
     ];
 
     let imageBuffer = null;

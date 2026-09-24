@@ -1,5 +1,7 @@
 const { GoogleGenAI } = require('@google/genai');
 
+const GEMINI_FALLBACK_MODELS = ['gemini-3.6-flash', 'gemini-3.5-flash'];
+
 let genai = null;
 
 function getGenAI() {
@@ -24,7 +26,7 @@ function getGenAI() {
  */
 async function generateScript({ brandName, brandDescription, personaName, personaDescription, synopsis, scenes, durationTarget = 180, language = 'English', scriptWriterData = null, customInstructions = '' }) {
   const ai = getGenAI();
-  const model = process.env.GEMINI_MODEL || 'gemini-3.6-flash';
+  const primaryModel = process.env.GEMINI_MODEL || 'gemini-3.7-flash';
 
   const sceneList = scenes.map((s, i) =>
     `  ${i + 1}. Scene ID ${s.id} — Channel: ${s.channel}${s.content_summary ? ` — ${s.content_summary}` : ''}`
@@ -193,14 +195,49 @@ CRITICAL ORDERING RULE: Scene segments MUST appear in the EXACT same order as th
 
   const fullPrompt = prompt + langSuffix;
 
-  const response = await ai.models.generateContent({
-    model,
-    contents: fullPrompt,
-    config: {
-      responseMimeType: 'application/json',
-      temperature: 0.7,
-    },
-  });
+  // Retry + fallback model chain
+  const modelsToTry = [primaryModel, ...GEMINI_FALLBACK_MODELS.filter(m => m !== primaryModel)];
+  let response;
+  let lastError;
+
+  for (const modelName of modelsToTry) {
+    let succeeded = false;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        console.log(`[ScriptGenerator] Trying model=${modelName} attempt=${attempt}/3`);
+        response = await ai.models.generateContent({
+          model: modelName,
+          contents: fullPrompt,
+          config: {
+            responseMimeType: 'application/json',
+            temperature: 0.7,
+          },
+        });
+        if (modelName !== primaryModel) {
+          console.log(`[ScriptGenerator] Succeeded with fallback model ${modelName}`);
+        }
+        succeeded = true;
+        break;
+      } catch (err) {
+        lastError = err;
+        const errMsg = err.message || String(err);
+        const isRetryable = /429|503|overloaded|exceeded|rate.limit|resource.exhausted|unavailable/i.test(errMsg);
+        if (isRetryable && attempt < 3) {
+          const backoff = Math.pow(2, attempt) * 1000; // 2s, 4s
+          console.warn(`[ScriptGenerator] Retryable error from ${modelName} (attempt ${attempt}/3): ${errMsg}. Retrying in ${backoff}ms...`);
+          await new Promise(r => setTimeout(r, backoff));
+          continue;
+        }
+        console.warn(`[ScriptGenerator] ${modelName} failed (attempt ${attempt}/3): ${errMsg}. Moving to next model.`);
+        break;
+      }
+    }
+    if (succeeded) break;
+  }
+
+  if (!response) {
+    throw lastError || new Error('All Gemini models failed for script generation');
+  }
 
   let text = response.text.trim();
 

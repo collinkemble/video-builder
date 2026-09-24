@@ -11,6 +11,8 @@
 
 const { GoogleGenAI } = require('@google/genai');
 
+const GEMINI_FALLBACK_MODELS = ['gemini-3.6-flash', 'gemini-3.5-flash'];
+
 /**
  * Parse a natural-language editing instruction into concrete segment changes.
  *
@@ -66,51 +68,75 @@ RULES:
 
 Respond with ONLY the JSON array, no markdown formatting or explanation.`;
 
-  try {
-    const modelName = process.env.GEMINI_MODEL || 'gemini-3.6-flash';
-    const result = await ai.models.generateContent({
-      model: modelName,
-      contents: prompt,
-      config: {
-        responseMimeType: 'application/json',
-        temperature: 0.3,
-      },
-    });
-    const text = (result.text || '').trim();
+  const primaryModel = process.env.GEMINI_MODEL || 'gemini-3.7-flash';
+  const modelsToTry = [primaryModel, ...GEMINI_FALLBACK_MODELS.filter(m => m !== primaryModel)];
+  let lastError;
 
-    // Parse the JSON — handle potential markdown wrapping
-    let jsonStr = text;
-    if (jsonStr.startsWith('```')) {
-      jsonStr = jsonStr.replace(/^```(?:json)?\s*/, '').replace(/\s*```$/, '');
-    }
+  for (const modelName of modelsToTry) {
+    let succeeded = false;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        console.log(`[SmartEdit] Trying model=${modelName} attempt=${attempt}/3`);
+        const result = await ai.models.generateContent({
+          model: modelName,
+          contents: prompt,
+          config: {
+            responseMimeType: 'application/json',
+            temperature: 0.3,
+          },
+        });
+        const text = (result.text || '').trim();
 
-    const changes = JSON.parse(jsonStr);
+        // Parse the JSON — handle potential markdown wrapping
+        let jsonStr = text;
+        if (jsonStr.startsWith('```')) {
+          jsonStr = jsonStr.replace(/^```(?:json)?\s*/, '').replace(/\s*```$/, '');
+        }
 
-    if (!Array.isArray(changes)) {
-      throw new Error('LLM returned non-array response');
-    }
+        const changes = JSON.parse(jsonStr);
 
-    // Validate each change
-    const validChanges = changes.filter(c => {
-      if (!c.order || typeof c.order !== 'number') return false;
-      // Ensure the order exists in segments
-      const seg = segments.find(s => s.order === c.order);
-      if (!seg) return false;
-      // Don't allow b-roll regeneration on scene captures
-      if (seg.visualType === 'scene_capture' && c.regenerateBroll) {
-        c.regenerateBroll = false;
+        if (!Array.isArray(changes)) {
+          throw new Error('LLM returned non-array response');
+        }
+
+        // Validate each change
+        const validChanges = changes.filter(c => {
+          if (!c.order || typeof c.order !== 'number') return false;
+          // Ensure the order exists in segments
+          const seg = segments.find(s => s.order === c.order);
+          if (!seg) return false;
+          // Don't allow b-roll regeneration on scene captures
+          if (seg.visualType === 'scene_capture' && c.regenerateBroll) {
+            c.regenerateBroll = false;
+          }
+          // Must have at least one action
+          return c.narration || c.brollDescription || c.regenerateVoiceover || c.regenerateBroll;
+        });
+
+        console.log(`[SmartEdit] Instruction: "${instruction}" → ${validChanges.length} change(s)`);
+        if (modelName !== primaryModel) {
+          console.log(`[SmartEdit] Succeeded with fallback model ${modelName}`);
+        }
+        return validChanges;
+
+      } catch (err) {
+        lastError = err;
+        const errMsg = err.message || String(err);
+        const isRetryable = /429|503|overloaded|exceeded|rate.limit|resource.exhausted|unavailable/i.test(errMsg);
+        if (isRetryable && attempt < 3) {
+          const backoff = Math.pow(2, attempt) * 1000; // 2s, 4s
+          console.warn(`[SmartEdit] Retryable error from ${modelName} (attempt ${attempt}/3): ${errMsg}. Retrying in ${backoff}ms...`);
+          await new Promise(r => setTimeout(r, backoff));
+          continue;
+        }
+        console.warn(`[SmartEdit] ${modelName} failed (attempt ${attempt}/3): ${errMsg}. Moving to next model.`);
+        break;
       }
-      // Must have at least one action
-      return c.narration || c.brollDescription || c.regenerateVoiceover || c.regenerateBroll;
-    });
-
-    console.log(`[SmartEdit] Instruction: "${instruction}" → ${validChanges.length} change(s)`);
-    return validChanges;
-
-  } catch (err) {
-    console.error(`[SmartEdit] Parse failed: ${err.message}`);
-    throw new Error(`Failed to interpret edit instruction: ${err.message}`);
+    }
   }
+
+  console.error(`[SmartEdit] All models exhausted. Last error: ${lastError?.message}`);
+  throw new Error(`Failed to interpret edit instruction: ${lastError?.message || 'All models failed'}`);
 }
 
 module.exports = { parseEditInstruction };

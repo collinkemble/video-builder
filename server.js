@@ -434,6 +434,8 @@ app.get('/api/users/:userId/items', async (req, res) => {
 // SHARED ROUTES — Gemini Streaming Proxy
 // ═══════════════════════════════════════════════
 
+const GEMINI_FALLBACK_MODELS = ['gemini-3.6-flash', 'gemini-3.5-flash'];
+
 app.post('/api/generate', async (req, res) => {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
@@ -445,8 +447,8 @@ app.post('/api/generate', async (req, res) => {
     return res.status(400).json({ error: 'Missing "contents" in request body' });
   }
 
-  const model = process.env.GEMINI_MODEL || 'gemini-3.6-flash';
-  const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:streamGenerateContent?alt=sse&key=${apiKey}`;
+  const primaryModel = process.env.GEMINI_MODEL || 'gemini-3.7-flash';
+  const modelsToTry = [primaryModel, ...GEMINI_FALLBACK_MODELS.filter(m => m !== primaryModel)];
 
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
@@ -455,82 +457,124 @@ app.post('/api/generate', async (req, res) => {
 
   res.write(': keepalive\n\n');
 
-  try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 270000);
+  let success = false;
 
-    const geminiResp = await fetch(geminiUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ contents, generationConfig }),
-      signal: controller.signal,
-    });
+  for (const model of modelsToTry) {
+    if (success) break;
 
-    clearTimeout(timeout);
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:streamGenerateContent?alt=sse&key=${apiKey}`;
 
-    if (!geminiResp.ok) {
-      const errData = await geminiResp.json().catch(() => ({}));
-      const errMsg = errData.error?.message || `Gemini API returned ${geminiResp.status}`;
-      res.write(`data: ${JSON.stringify({ error: errMsg })}\n\n`);
-      res.write('data: [DONE]\n\n');
-      return res.end();
-    }
+      try {
+        console.log(`[Gemini Proxy] Trying model=${model} attempt=${attempt}/3`);
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 270000);
 
-    let allText = '';
-    const reader = geminiResp.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = '';
+        const geminiResp = await fetch(geminiUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ contents, generationConfig }),
+          signal: controller.signal,
+        });
 
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
+        clearTimeout(timeout);
 
-      buffer += decoder.decode(value, { stream: true });
+        if (!geminiResp.ok) {
+          const errData = await geminiResp.json().catch(() => ({}));
+          const errMsg = errData.error?.message || `Gemini API returned ${geminiResp.status}`;
+          const status = geminiResp.status;
 
-      const lines = buffer.split('\n');
-      buffer = lines.pop() || '';
+          // Retryable status codes: 503 (overloaded) and 429 (rate limit)
+          if ((status === 503 || status === 429) && attempt < 3) {
+            const backoff = Math.pow(2, attempt) * 1000; // 2s, 4s
+            console.warn(`[Gemini Proxy] ${status} from ${model} (attempt ${attempt}/3): ${errMsg}. Retrying in ${backoff}ms...`);
+            await new Promise(r => setTimeout(r, backoff));
+            continue;
+          }
 
-      for (const line of lines) {
-        if (line.startsWith('data: ')) {
-          const dataStr = line.slice(6).trim();
-          if (dataStr === '[DONE]') continue;
+          // Non-retryable or final attempt — try next model
+          console.warn(`[Gemini Proxy] ${status} from ${model} (attempt ${attempt}/3): ${errMsg}. Moving to next model.`);
+          break;
+        }
 
-          try {
-            const chunk = JSON.parse(dataStr);
-            const textPart = chunk.candidates?.[0]?.content?.parts?.[0]?.text || '';
-            if (textPart) {
-              allText += textPart;
-              res.write(`: chunk received\n\n`);
+        // Success — stream the response
+        let allText = '';
+        const reader = geminiResp.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || '';
+
+          for (const line of lines) {
+            if (line.startsWith('data: ')) {
+              const dataStr = line.slice(6).trim();
+              if (dataStr === '[DONE]') continue;
+
+              try {
+                const chunk = JSON.parse(dataStr);
+                const textPart = chunk.candidates?.[0]?.content?.parts?.[0]?.text || '';
+                if (textPart) {
+                  allText += textPart;
+                  res.write(`: chunk received\n\n`);
+                }
+              } catch (e) {
+                // Skip non-JSON lines
+              }
             }
-          } catch (e) {
-            // Skip non-JSON lines
           }
         }
+
+        const finalResponse = {
+          candidates: [{
+            content: {
+              parts: [{ text: allText }],
+              role: 'model'
+            },
+            finishReason: 'STOP'
+          }]
+        };
+
+        res.write(`data: ${JSON.stringify(finalResponse)}\n\n`);
+        res.write('data: [DONE]\n\n');
+        res.end();
+        success = true;
+        if (model !== primaryModel) {
+          console.log(`[Gemini Proxy] Succeeded with fallback model ${model}`);
+        }
+        break;
+
+      } catch (err) {
+        if (err.name === 'AbortError') {
+          console.error(`[Gemini Proxy] Request timed out for ${model} attempt ${attempt}`);
+          break; // Don't retry timeouts, try next model
+        }
+
+        const errMsg = err.message || String(err);
+        const isRetryable = /429|503|overloaded|exceeded|rate.limit|resource.exhausted|unavailable/i.test(errMsg);
+
+        if (isRetryable && attempt < 3) {
+          const backoff = Math.pow(2, attempt) * 1000;
+          console.warn(`[Gemini Proxy] Retryable error from ${model} (attempt ${attempt}/3): ${errMsg}. Retrying in ${backoff}ms...`);
+          await new Promise(r => setTimeout(r, backoff));
+          continue;
+        }
+
+        console.warn(`[Gemini Proxy] ${model} failed (attempt ${attempt}/3): ${errMsg}. Moving to next model.`);
+        break;
       }
     }
+  }
 
-    const finalResponse = {
-      candidates: [{
-        content: {
-          parts: [{ text: allText }],
-          role: 'model'
-        },
-        finishReason: 'STOP'
-      }]
-    };
-
-    res.write(`data: ${JSON.stringify(finalResponse)}\n\n`);
-    res.write('data: [DONE]\n\n');
-    res.end();
-
-  } catch (err) {
-    if (err.name === 'AbortError') {
-      console.error('[Gemini Proxy] Request timed out');
-      res.write(`data: ${JSON.stringify({ error: 'Request timed out. Try a shorter prompt.' })}\n\n`);
-    } else {
-      console.error('[Gemini Proxy] Error:', err.message);
-      res.write(`data: ${JSON.stringify({ error: 'Failed to reach Gemini API' })}\n\n`);
-    }
+  if (!success) {
+    console.error(`[Gemini Proxy] All models exhausted: ${modelsToTry.join(', ')}`);
+    res.write(`data: ${JSON.stringify({ error: 'All Gemini models failed. Please try again later.' })}\n\n`);
     res.write('data: [DONE]\n\n');
     res.end();
   }

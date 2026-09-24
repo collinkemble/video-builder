@@ -427,7 +427,7 @@ CRITICAL RULES YOU MUST FOLLOW:
   // Image generation models — ordered newest to oldest
   const modelNames = [
     process.env.GEMINI_IMAGE_MODEL || 'gemini-3.1-flash-image',
-    'gemini-2.5-flash-image',
+    process.env.GEMINI_IMAGE_MODEL || 'gemini-3.1-flash-image',
   ];
 
   for (const modelName of modelNames) {

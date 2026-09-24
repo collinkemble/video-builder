@@ -430,13 +430,23 @@
         <p class="font-bold mb-4" style="font-size: 15px; color: #032D60;">Video Settings</p>
         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
           <div>
-            <label class="block text-xs font-bold mb-1" style="color: #032D60;">Name <span style="color: #ea001e;">*</span></label>
+            <label class="block text-xs font-bold mb-1" style="color: #032D60;">Video Name <span style="color: #ea001e;">*</span></label>
             <input id="edit-name" type="text" class="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm">
           </div>
           <div>
             <label class="block text-xs font-bold mb-1" style="color: #032D60;">Brand Name</label>
             <input id="edit-brand" type="text" class="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm" placeholder="e.g. NTO">
           </div>
+        </div>
+
+        <!-- Toggle for More Settings -->
+        <button id="toggle-more-settings" onclick="toggleMoreSettings()" class="cursor-pointer" style="margin-top: 12px; background: none; border: none; color: #0176D3; font-size: 13px; font-weight: 600; padding: 4px 0; display: flex; align-items: center; gap: 6px;">
+          <span id="toggle-more-settings-icon">▶</span> More Settings
+        </button>
+
+        <!-- Collapsible settings section -->
+        <div id="more-settings-section" style="display: none;">
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 12px;">
           <div>
             <label class="block text-xs font-bold mb-1" style="color: #032D60;">Voice</label>
             <div class="flex items-center gap-2">
@@ -516,6 +526,7 @@
           <textarea id="edit-description" rows="3" class="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm" placeholder="Add a description for the public player page..." style="resize: vertical; min-height: 60px;"></textarea>
           <p class="mt-1" style="font-size: 11px; color: #6B7280;">Shown below the video on the public player page.</p>
         </div>
+        </div><!-- end #more-settings-section -->
 
         <div id="save-settings-bar" class="hidden" style="margin-top: 14px; display: none;">
           <div class="flex items-center justify-between" style="background: #FFFBEB; border: 1px solid #F59E0B; border-radius: 10px; padding: 10px 16px;">
@@ -524,65 +535,66 @@
           </div>
         </div>
 
-        <!-- Public Player Page Section -->
-        <div style="margin-top: 20px; border-top: 1px solid #E5E7EB; padding-top: 20px;">
-          <div class="flex items-center justify-between mb-3">
-            <p class="font-bold" style="font-size: 15px; color: #032D60;">Public Player Page</p>
-            <label class="flex items-center gap-2 cursor-pointer" style="user-select: none;">
-              <span id="public-toggle-label" style="font-size: 12px; color: #6B7280;">Disabled</span>
-              <div style="position: relative; width: 44px; height: 24px;">
-                <input type="checkbox" id="edit-public-enabled" onchange="togglePublicEnabled()" style="opacity: 0; position: absolute; width: 44px; height: 24px; cursor: pointer; z-index: 1; margin: 0;">
-                <div id="public-toggle-track" style="position: absolute; top: 0; left: 0; width: 44px; height: 24px; background: #D1D5DB; border-radius: 12px; transition: background 0.2s;"></div>
-                <div id="public-toggle-knob" style="position: absolute; top: 2px; left: 2px; width: 20px; height: 20px; background: white; border-radius: 50%; box-shadow: 0 1px 3px rgba(0,0,0,0.2); transition: transform 0.2s;"></div>
-              </div>
-            </label>
+      </div>
+
+      <!-- Public Player Page Section — separate card, always visible -->
+      <div class="mb-6" style="background: white; border-radius: 12px; padding: 24px; box-shadow: 0 1px 3px rgba(0,0,0,0.08);">
+        <div class="flex items-center justify-between mb-3">
+          <p class="font-bold" style="font-size: 15px; color: #032D60;">Public Player Page</p>
+          <label class="flex items-center gap-2 cursor-pointer" style="user-select: none;">
+            <span id="public-toggle-label" style="font-size: 12px; color: #6B7280;">Disabled</span>
+            <div style="position: relative; width: 44px; height: 24px;">
+              <input type="checkbox" id="edit-public-enabled" onchange="togglePublicEnabled()" style="opacity: 0; position: absolute; width: 44px; height: 24px; cursor: pointer; z-index: 1; margin: 0;">
+              <div id="public-toggle-track" style="position: absolute; top: 0; left: 0; width: 44px; height: 24px; background: #D1D5DB; border-radius: 12px; transition: background 0.2s;"></div>
+              <div id="public-toggle-knob" style="position: absolute; top: 2px; left: 2px; width: 20px; height: 20px; background: white; border-radius: 50%; box-shadow: 0 1px 3px rgba(0,0,0,0.2); transition: transform 0.2s;"></div>
+            </div>
+          </label>
+        </div>
+
+        <div id="public-settings-panel" style="display: none;">
+          <!-- Share URL -->
+          <div style="background: #EFF6FF; border: 1px solid #BFDBFE; border-radius: 10px; padding: 14px; margin-bottom: 14px;">
+            <label class="block text-xs font-bold mb-2" style="color: #1E40AF;">Share Link</label>
+            <div class="flex items-center gap-2">
+              <input id="public-share-url" type="text" readonly class="flex-1 px-3 py-2 rounded-lg border border-blue-200 bg-white text-sm" style="color: #1E40AF; font-family: monospace;">
+              <button onclick="copyShareUrl()" id="copy-share-btn" class="px-3 py-2 text-sm font-bold text-white rounded-lg cursor-pointer" style="background: #0176D3; white-space: nowrap;">📋 Copy</button>
+              <a id="public-preview-link" href="#" target="_blank" class="px-3 py-2 text-sm font-bold rounded-lg cursor-pointer" style="background: #E5E7EB; color: #374151; white-space: nowrap; text-decoration: none;">↗ Open</a>
+            </div>
           </div>
 
-          <div id="public-settings-panel" style="display: none;">
-            <!-- Share URL -->
-            <div style="background: #EFF6FF; border: 1px solid #BFDBFE; border-radius: 10px; padding: 14px; margin-bottom: 14px;">
-              <label class="block text-xs font-bold mb-2" style="color: #1E40AF;">Share Link</label>
-              <div class="flex items-center gap-2">
-                <input id="public-share-url" type="text" readonly class="flex-1 px-3 py-2 rounded-lg border border-blue-200 bg-white text-sm" style="color: #1E40AF; font-family: monospace;">
-                <button onclick="copyShareUrl()" id="copy-share-btn" class="px-3 py-2 text-sm font-bold text-white rounded-lg cursor-pointer" style="background: #0176D3; white-space: nowrap;">📋 Copy</button>
-                <a id="public-preview-link" href="#" target="_blank" class="px-3 py-2 text-sm font-bold rounded-lg cursor-pointer" style="background: #E5E7EB; color: #374151; white-space: nowrap; text-decoration: none;">↗ Open</a>
-              </div>
-            </div>
+          <!-- QR Code -->
+          <div style="background: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 10px; padding: 14px; margin-bottom: 14px; text-align: center;">
+            <label class="block text-xs font-bold mb-2" style="color: #032D60;">QR Code</label>
+            <img id="public-qr-code" alt="QR Code" style="margin: 0 auto; width: 160px; height: 160px; border-radius: 8px;">
+            <p class="mt-2" style="font-size: 11px; color: #6B7280;">Scan to open the public player page.</p>
+          </div>
 
-            <!-- QR Code -->
-            <div style="background: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 10px; padding: 14px; margin-bottom: 14px; text-align: center;">
-              <label class="block text-xs font-bold mb-2" style="color: #032D60;">QR Code</label>
-              <img id="public-qr-code" alt="QR Code" style="margin: 0 auto; width: 160px; height: 160px; border-radius: 8px;">
-              <p class="mt-2" style="font-size: 11px; color: #6B7280;">Scan to open the public player page.</p>
-            </div>
-
-            <!-- Password Protection -->
-            <div style="background: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 10px; padding: 14px;">
-              <div class="flex items-center justify-between mb-2">
-                <label class="text-xs font-bold" style="color: #032D60;">Password Protection</label>
-                <label class="flex items-center gap-2 cursor-pointer" style="user-select: none;">
-                  <span id="password-toggle-label" style="font-size: 12px; color: #6B7280;">Off</span>
-                  <div style="position: relative; width: 36px; height: 20px;">
-                    <input type="checkbox" id="edit-password-enabled" onchange="togglePasswordProtection()" style="opacity: 0; position: absolute; width: 36px; height: 20px; cursor: pointer; z-index: 1; margin: 0;">
-                    <div id="password-toggle-track" style="position: absolute; top: 0; left: 0; width: 36px; height: 20px; background: #D1D5DB; border-radius: 10px; transition: background 0.2s;"></div>
-                    <div id="password-toggle-knob" style="position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; background: white; border-radius: 50%; box-shadow: 0 1px 2px rgba(0,0,0,0.2); transition: transform 0.2s;"></div>
-                  </div>
-                </label>
-              </div>
-
-              <div id="password-fields" style="display: none; margin-top: 10px;">
-                <div>
-                  <label class="block text-xs font-bold mb-1" style="color: #032D60;">Password</label>
-                  <input id="edit-public-password" type="password" class="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm" placeholder="Enter password" autocomplete="new-password">
+          <!-- Password Protection -->
+          <div style="background: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 10px; padding: 14px;">
+            <div class="flex items-center justify-between mb-2">
+              <label class="text-xs font-bold" style="color: #032D60;">Password Protection</label>
+              <label class="flex items-center gap-2 cursor-pointer" style="user-select: none;">
+                <span id="password-toggle-label" style="font-size: 12px; color: #6B7280;">Off</span>
+                <div style="position: relative; width: 36px; height: 20px;">
+                  <input type="checkbox" id="edit-password-enabled" onchange="togglePasswordProtection()" style="opacity: 0; position: absolute; width: 36px; height: 20px; cursor: pointer; z-index: 1; margin: 0;">
+                  <div id="password-toggle-track" style="position: absolute; top: 0; left: 0; width: 36px; height: 20px; background: #D1D5DB; border-radius: 10px; transition: background 0.2s;"></div>
+                  <div id="password-toggle-knob" style="position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; background: white; border-radius: 50%; box-shadow: 0 1px 2px rgba(0,0,0,0.2); transition: transform 0.2s;"></div>
                 </div>
-                <p class="mt-2" style="font-size: 11px; color: #6B7280;">Viewers will need this password to watch the video. Leave blank to keep the existing one.</p>
+              </label>
+            </div>
+
+            <div id="password-fields" style="display: none; margin-top: 10px;">
+              <div>
+                <label class="block text-xs font-bold mb-1" style="color: #032D60;">Password</label>
+                <input id="edit-public-password" type="password" class="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm" placeholder="Enter password" autocomplete="new-password">
               </div>
+              <p class="mt-2" style="font-size: 11px; color: #6B7280;">Viewers will need this password to watch the video. Leave blank to keep the existing one.</p>
             </div>
           </div>
+        </div>
 
-          <div id="public-disabled-hint" style="margin-top: 4px;">
-            <p style="font-size: 12px; color: #9CA3AF;">Enable to create a shareable link for external viewers.</p>
-          </div>
+        <div id="public-disabled-hint" style="margin-top: 4px;">
+          <p style="font-size: 12px; color: #9CA3AF;">Enable to create a shareable link for external viewers.</p>
         </div>
       </div>
 
@@ -3356,6 +3368,24 @@ async function startGeneration(force = false) {
 // ═══════════════════════════════════════════════
 // Video Settings Save
 // ═══════════════════════════════════════════════
+// ═══════════════════════════════════════════════
+// Toggle More Settings
+// ═══════════════════════════════════════════════
+function toggleMoreSettings() {
+  const section = document.getElementById('more-settings-section');
+  const icon = document.getElementById('toggle-more-settings-icon');
+  const btn = document.getElementById('toggle-more-settings');
+  if (section.style.display === 'none') {
+    section.style.display = 'block';
+    icon.textContent = '▼';
+    btn.innerHTML = '<span id="toggle-more-settings-icon">▼</span> Hide Settings';
+  } else {
+    section.style.display = 'none';
+    icon.textContent = '▶';
+    btn.innerHTML = '<span id="toggle-more-settings-icon">▶</span> More Settings';
+  }
+}
+
 function checkSettingsChanged() {
   const orig = window._origSettings;
   if (!orig) return;

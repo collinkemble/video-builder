@@ -203,7 +203,7 @@ async function generateBrollVideo({ description, brandName, brandDescription = '
 
   const prompt = `${contextHint}${personaPromptHint}${brandContext}Professional cinematic b-roll footage for a premium brand customer experience video: ${cleanDescription}.\n${rules}`;
 
-  const modelName = 'veo-3.1-generate-preview';
+  const modelName = process.env.VEO_MODEL || 'veo-3.1-fast-generate-preview';
 
   try {
     console.log(`[B-Roll Video] Generating 8s clip with ${modelName}: "${description.substring(0, 60)}..."${personaImageUrl ? ' (with persona reference image)' : ''}`);
@@ -308,7 +308,8 @@ async function generateBrollVideo({ description, brandName, brandDescription = '
 
     const stats = fs.statSync(outputPath);
     console.log(`[B-Roll Video] Generated: ${outputPath} (8s, ${(stats.size / 1024).toFixed(1)}KB)`);
-    return outputPath;
+    // Return both file path and video reference (for extend API chaining)
+    return { filePath: outputPath, videoRef: generatedVideo.video };
 
   } catch (err) {
     const errMsg = err.message || String(err);
@@ -325,6 +326,79 @@ async function generateBrollVideo({ description, brandName, brandDescription = '
   return null;
 }
 
+
+// ════════════════════════════════════════════════════════════════
+// B-Roll VIDEO EXTEND (Veo Extend API) — chain clips for continuity
+// ════════════════════════════════════════════════════════════════
+
+/**
+ * Extend an existing Veo-generated video by ~7 seconds using the Veo Extend API.
+ * Each extension adds approximately 7 seconds of continuous footage that maintains
+ * visual coherence with the previous clip.
+ *
+ * Constraints:
+ *   - Resolution locked to 720p (extend API requirement)
+ *   - Max 20 extensions per chain (~148 seconds total)
+ *   - Only works with Veo-generated MP4s
+ *   - Each extension is sequential (depends on previous clip)
+ *
+ * @param {object} params
+ * @param {object} params.videoRef - Video reference from previous generation (operation.response.generatedVideos[0].video)
+ * @param {string} params.prompt - Continuation prompt for the extended footage
+ * @param {string} params.outputDir - Directory to save the extended clip
+ * @param {number} params.extensionNumber - Which extension this is (1-based, for logging)
+ * @returns {Promise<{filePath: string, videoRef: object}|null>} Extended clip path + video ref for next extension, or null on failure
+ */
+async function extendBrollVideo({ videoRef, prompt, outputDir, extensionNumber = 1 }) {
+  const ai = getGenAI();
+  const modelName = process.env.VEO_MODEL || 'veo-3.1-fast-generate-preview';
+
+  try {
+    console.log(`[B-Roll Extend] Extension #${extensionNumber} with ${modelName}: "${prompt.substring(0, 60)}..."`);
+
+    let operation = await ai.models.generateVideos({
+      model: modelName,
+      prompt,
+      video: videoRef,
+      config: {
+        numberOfVideos: 1,
+        resolution: '720p',
+      },
+    });
+
+    operation = await pollVeoOperation(ai, operation, `extend-${extensionNumber}`, 180000);
+
+    if (!operation.done) {
+      console.warn(`[B-Roll Extend] Extension #${extensionNumber} timed out.`);
+      return null;
+    }
+
+    const generatedVideo = operation.response?.generatedVideos?.[0];
+    if (!generatedVideo || !generatedVideo.video) {
+      console.warn(`[B-Roll Extend] Extension #${extensionNumber} completed but no video in response.`);
+      return null;
+    }
+
+    // Download the extended video
+    const filename = `broll_extended_${extensionNumber}_${Date.now()}.mp4`;
+    const outputPath = path.join(outputDir || os.tmpdir(), filename);
+
+    await ai.files.download({
+      file: generatedVideo.video,
+      downloadPath: outputPath,
+    });
+
+    const stats = fs.statSync(outputPath);
+    console.log(`[B-Roll Extend] Extension #${extensionNumber} done: ${outputPath} (${(stats.size / 1024).toFixed(1)}KB)`);
+    return { filePath: outputPath, videoRef: generatedVideo.video };
+
+  } catch (err) {
+    const errMsg = err.message || String(err);
+    console.warn(`[B-Roll Extend] Extension #${extensionNumber} failed: ${errMsg}`);
+    if (err.status) console.warn(`[B-Roll Extend] HTTP status: ${err.status}`);
+    return null;
+  }
+}
 
 // ════════════════════════════════════════════════════════════════
 // B-Roll IMAGE generation (Gemini Imagen) — fallback path
@@ -458,28 +532,30 @@ function truncate(str, maxLen) {
 
 /**
  * Generate a b-roll asset (video clip preferred, image fallback).
+ * Returns { filePath, videoRef } for video clips (videoRef enables extend API chaining),
+ * or { filePath, videoRef: null } for image fallbacks.
+ *
  * @param {object} params
  * @param {string} params.description - What the clip should show
  * @param {string} params.brandName - Brand name for context
  * @param {string} params.outputDir - Directory to save the clip
- * @param {number} params.targetDuration - Desired clip length in seconds (default 8)
  * @param {string} params.personaImageUrl - Optional persona image URL for character consistency
- * @returns {Promise<string>} Path to MP4 video or PNG image
+ * @returns {Promise<{filePath: string, videoRef: object|null}>} File path + video ref for chaining
  */
 async function generateBroll({ description, brandName, brandDescription = '', personaDescription = '', outputDir, segmentType = '', segmentChannel = '', personaImageUrl = null }) {
   // Try video generation first (Veo) — generates 8s clips
-  const videoPath = await generateBrollVideo({ description, brandName, brandDescription, personaDescription, outputDir, segmentType, segmentChannel, personaImageUrl });
-  if (videoPath) return videoPath;
+  const videoResult = await generateBrollVideo({ description, brandName, brandDescription, personaDescription, outputDir, segmentType, segmentChannel, personaImageUrl });
+  if (videoResult) return videoResult;  // { filePath, videoRef }
 
   // Wait before retrying to avoid rate-limit (429) cascading failures
   console.log(`[B-Roll] Retry 2: waiting 5s before simplified prompt (no persona)...`);
   await new Promise(r => setTimeout(r, 5000));
-  const retryPath = await generateBrollVideo({
+  const retryResult = await generateBrollVideo({
     description: `Cinematic lifestyle footage: ${description.substring(0, 100)}`,
     brandName, brandDescription, personaDescription, outputDir, segmentType, segmentChannel,
     personaImageUrl: null,  // Drop persona ref on retry — it can cause failures
   });
-  if (retryPath) return retryPath;
+  if (retryResult) return retryResult;
 
   // Third attempt with longer delay — ultra-minimal prompt
   console.log(`[B-Roll] Retry 3: waiting 10s before minimal prompt...`);
@@ -489,16 +565,17 @@ async function generateBroll({ description, brandName, brandDescription = '', pe
     : segmentType === 'outro'
     ? `Warm cinematic closing shot. Slow pull-back camera movement. Beautiful sunset or golden hour lighting. No text. No screens.`
     : `Smooth cinematic b-roll footage. Slow camera movement. Beautiful lighting. ${description.substring(0, 60)}. No text. No screens.`;
-  const retry3Path = await generateBrollVideo({
+  const retry3Result = await generateBrollVideo({
     description: minimalDesc,
     brandName, outputDir, segmentType, segmentChannel,
     personaImageUrl: null,
   });
-  if (retry3Path) return retry3Path;
+  if (retry3Result) return retry3Result;
 
   // Fallback to image generation (Gemini Imagen)
   console.warn(`[B-Roll] All 3 Veo attempts failed for ${segmentType || 'broll'} segment. Falling back to static image.`);
-  return await generateBrollImage({ description, brandName, outputDir });
+  const imagePath = await generateBrollImage({ description, brandName, outputDir });
+  return { filePath: imagePath, videoRef: null };
 }
 
 /**
@@ -546,6 +623,22 @@ function calcClipsNeeded(seg, timestamps, allSegments) {
 
 /**
  * Generate all b-roll assets for a video.
+ *
+ * NEW APPROACH (Veo Extend API):
+ *   For segments needing >8s of footage, instead of generating N independent clips
+ *   and FFmpeg-concatenating them, we generate 1 initial 8s clip and then EXTEND it
+ *   N-1 times using the Veo Extend API. Each extension adds ~7s of continuous footage
+ *   that maintains visual coherence with the previous clip. The final extended clip
+ *   is the SINGLE output for that segment — no FFmpeg concat needed.
+ *
+ *   Cross-segment parallelism is preserved (MAX_CONCURRENT=5 segments in parallel).
+ *   Within a segment, extensions run sequentially (each depends on the previous clip).
+ *
+ *   FALLBACK: If an extend call fails mid-chain, we keep what we have (initial clip
+ *   + successful extensions as one continuous clip) and fall back to independent clip
+ *   generation for the missing footage. The compositor's FFmpeg concat handles mixing
+ *   the extended clip with any independent fallback clips.
+ *
  * @param {Array} segments - B-roll segments from script
  * @param {string} brandName
  * @param {string} outputDir
@@ -560,6 +653,8 @@ function calcClipsNeeded(seg, timestamps, allSegments) {
 async function generateAllBroll(segments, brandName, outputDir, onProgress, personaImageUrl = null, timestamps = null, allSegments = null, brandDescription = '', personaDescription = '') {
   let videoCount = 0;
   let imageCount = 0;
+  let extendCount = 0;
+  let extendFailCount = 0;
 
   // Calculate total clips needed across all segments
   const segmentClipCounts = segments.map(seg => ({
@@ -567,109 +662,191 @@ async function generateAllBroll(segments, brandName, outputDir, onProgress, pers
     clipsNeeded: calcClipsNeeded(seg, timestamps, allSegments),
   }));
 
-  const totalClips = segmentClipCounts.reduce((sum, s) => sum + s.clipsNeeded, 0);
-
-  console.log(`[B-Roll] Generating ${totalClips} clips for ${segments.length} segments (staggered, max 5 concurrent)...${personaImageUrl ? ' (with persona reference image)' : ''}`);
+  const totalSegments = segments.length;
+  console.log(`[B-Roll] Generating b-roll for ${totalSegments} segments (extend API for multi-clip, max 5 concurrent)...${personaImageUrl ? ' (with persona reference image)' : ''}`);
   let completed = 0;
 
-  // Build a flat list of all clip tasks with their segment info
-  const allClipTasks = [];
-  const variationStyles = [
-    null,  // First clip uses the original description unchanged
-    'Show a COMPLETELY DIFFERENT scene and setting — different location, different activity, different mood. Do NOT repeat any action or prop from the previous shot.',
-    'Show an OUTDOOR establishing shot — wide angle, environmental, no close-ups of objects. Completely different from previous clips.',
-    'Show a warm CLOSE-UP of hands or a facial expression — intimate, emotional moment. No props, no objects, no packages.',
-  ];
+  /**
+   * Generate b-roll for a single segment using extend API chaining.
+   * Returns array of media file paths for this segment.
+   */
+  async function generateSegmentBroll(seg, clipsNeeded) {
+    const desc = seg.brollDescription || 'Professional lifestyle image';
+    const usePersona = !!personaImageUrl;
 
-  for (const { seg, clipsNeeded } of segmentClipCounts) {
-    for (let c = 0; c < clipsNeeded; c++) {
-      let desc = seg.brollDescription || 'Professional lifestyle image';
-      if (c > 0 && c < variationStyles.length) {
-        desc = `${variationStyles[c]} General theme: ${desc.substring(0, 80)}`;
-      } else if (c >= variationStyles.length) {
-        desc = `Cinematic environmental wide shot — cityscape, nature, or architecture. Unrelated to previous clips. Theme context: ${desc.substring(0, 60)}`;
-      }
-      const usePersona = personaImageUrl && c === 0;
-      allClipTasks.push({
-        segOrder: seg.order,
-        segType: seg.type || '',
-        segChannel: seg.channel || '',
-        description: desc,
-        personaImageUrl: usePersona ? personaImageUrl : null,
-      });
+    // ── Step 1: Generate initial 8s clip ──
+    const initialResult = await generateBroll({
+      description: desc,
+      brandName,
+      brandDescription,
+      personaDescription,
+      outputDir,
+      segmentType: seg.type || '',
+      segmentChannel: seg.channel || '',
+      personaImageUrl: usePersona ? personaImageUrl : null,
+    });
+
+    if (!initialResult || !initialResult.filePath) {
+      console.warn(`[B-Roll] Segment ${seg.order}: initial clip generation failed completely`);
+      return [];
     }
-    console.log(`[B-Roll] Segment order=${seg.order} (${seg.type || 'broll'}): ${clipsNeeded} clip(s) — "${seg.brollDescription?.substring(0, 50)}..."`);
+
+    const mediaPaths = [initialResult.filePath];
+    if (initialResult.filePath.endsWith('.mp4')) {
+      videoCount++;
+    } else {
+      imageCount++;
+    }
+
+    // Single clip needed — done
+    if (clipsNeeded <= 1) {
+      return mediaPaths;
+    }
+
+    // ── Step 2: Extend the clip for additional footage ──
+    // Only extend if we got a video with a videoRef (not an image fallback)
+    if (!initialResult.videoRef) {
+      console.log(`[B-Roll] Segment ${seg.order}: no videoRef (image fallback), falling back to independent clips for remaining ${clipsNeeded - 1} clips`);
+      // Fall back to independent clip generation for remaining clips
+      const fallbackPaths = await generateFallbackClips(seg, clipsNeeded - 1, desc);
+      mediaPaths.push(...fallbackPaths);
+      return mediaPaths;
+    }
+
+    // Chain extensions sequentially
+    let currentVideoRef = initialResult.videoRef;
+    const MAX_EXTENSIONS = 20; // Veo limit
+    const extensionsNeeded = Math.min(clipsNeeded - 1, MAX_EXTENSIONS);
+
+    console.log(`[B-Roll] Segment ${seg.order}: extending initial clip ${extensionsNeeded} time(s) for continuous footage`);
+
+    for (let ext = 0; ext < extensionsNeeded; ext++) {
+      // Small delay between extensions to be gentle on the API
+      if (ext > 0) {
+        await new Promise(r => setTimeout(r, 2000));
+      }
+
+      // Build continuation prompt — keep it coherent with the original
+      const continuationPrompt = `Continue the same cinematic scene smoothly. Maintain the same visual style, lighting, color palette, and camera movement. ${sanitizeBrollPrompt(desc, brandName).substring(0, 120)}`;
+
+      const extResult = await extendBrollVideo({
+        videoRef: currentVideoRef,
+        prompt: continuationPrompt,
+        outputDir,
+        extensionNumber: ext + 1,
+      });
+
+      if (!extResult) {
+        console.warn(`[B-Roll] Segment ${seg.order}: extend #${ext + 1} failed — falling back to independent clips for remaining ${extensionsNeeded - ext} clips`);
+        extendFailCount++;
+        // Fall back to independent generation for remaining clips
+        const fallbackPaths = await generateFallbackClips(seg, extensionsNeeded - ext, desc);
+        mediaPaths.push(...fallbackPaths);
+        break;
+      }
+
+      extendCount++;
+      videoCount++;
+      mediaPaths.push(extResult.filePath);
+      currentVideoRef = extResult.videoRef;
+      console.log(`[B-Roll] Segment ${seg.order}: extend #${ext + 1}/${extensionsNeeded} done — continuous clip chain growing`);
+    }
+
+    return mediaPaths;
   }
 
-  // Run clips with controlled concurrency (max 5 at a time, 2s stagger between launches)
-  // to stay under the Veo rate limit.
+  /**
+   * Fallback: generate independent clips (old approach) when extend fails.
+   */
+  async function generateFallbackClips(seg, count, desc) {
+    const variationStyles = [
+      'Show a COMPLETELY DIFFERENT scene and setting — different location, different activity, different mood.',
+      'Show an OUTDOOR establishing shot — wide angle, environmental, no close-ups of objects.',
+      'Show a warm CLOSE-UP of hands or a facial expression — intimate, emotional moment.',
+    ];
+
+    const paths = [];
+    for (let i = 0; i < count; i++) {
+      // Small delay between independent clips
+      if (i > 0) await new Promise(r => setTimeout(r, 3000));
+
+      let fallbackDesc = desc;
+      if (i < variationStyles.length) {
+        fallbackDesc = `${variationStyles[i]} General theme: ${desc.substring(0, 80)}`;
+      } else {
+        fallbackDesc = `Cinematic environmental wide shot — cityscape, nature, or architecture. Theme: ${desc.substring(0, 60)}`;
+      }
+
+      try {
+        const result = await generateBroll({
+          description: fallbackDesc,
+          brandName,
+          brandDescription,
+          personaDescription,
+          outputDir,
+          segmentType: seg.type || '',
+          segmentChannel: seg.channel || '',
+          personaImageUrl: null,  // No persona on fallback clips
+        });
+        if (result && result.filePath) {
+          paths.push(result.filePath);
+          if (result.filePath.endsWith('.mp4')) videoCount++;
+          else imageCount++;
+        }
+      } catch (err) {
+        console.warn(`[B-Roll] Fallback clip ${i + 1}/${count} for segment ${seg.order} failed: ${err.message}`);
+      }
+    }
+    return paths;
+  }
+
+  // ── Run segments with controlled concurrency (max 5 segments in parallel) ──
   const MAX_CONCURRENT = 5;
   const STAGGER_MS = 2000;
-  const clipResults = new Array(allClipTasks.length);
+  const segmentResults = new Array(segmentClipCounts.length);
   let nextIdx = 0;
 
-  async function runNext() {
+  async function runNextSegment() {
     const idx = nextIdx++;
-    if (idx >= allClipTasks.length) return;
-    const task = allClipTasks[idx];
+    if (idx >= segmentClipCounts.length) return;
+    const { seg, clipsNeeded } = segmentClipCounts[idx];
+
+    console.log(`[B-Roll] Segment order=${seg.order} (${seg.type || 'broll'}): ${clipsNeeded} clip(s) — "${seg.brollDescription?.substring(0, 50)}..."`);
+
     try {
-      const mediaPath = await generateBroll({
-        description: task.description,
-        brandName,
-        brandDescription,
-        personaDescription,
-        outputDir,
-        segmentType: task.segType,
-        segmentChannel: task.segChannel,
-        personaImageUrl: task.personaImageUrl,
-      });
-      clipResults[idx] = { segOrder: task.segOrder, mediaPath };
+      const mediaPaths = await generateSegmentBroll(seg, clipsNeeded);
+      segmentResults[idx] = { order: seg.order, mediaPaths };
       completed++;
-      if (mediaPath.endsWith('.mp4')) {
-        videoCount++;
-      } else {
-        imageCount++;
-      }
-      console.log(`[B-Roll] ${completed}/${totalClips} done: ${mediaPath.endsWith('.mp4') ? 'VIDEO' : 'IMAGE'} → ${path.basename(mediaPath)}`);
-      if (onProgress) onProgress(Math.min(completed, totalClips), totalClips);
+      console.log(`[B-Roll] Segment ${seg.order} complete: ${mediaPaths.length} clip(s) (${completed}/${totalSegments} segments done)`);
+      if (onProgress) onProgress(Math.min(completed, totalSegments), totalSegments);
     } catch (err) {
-      console.error(`[B-Roll] Clip ${idx} (seg ${task.segOrder}) failed: ${err.message}`);
-      clipResults[idx] = null;
+      console.error(`[B-Roll] Segment ${seg.order} failed: ${err.message}`);
+      segmentResults[idx] = null;
     }
-    // Continue with next task
-    await runNext();
+
+    // Continue with next segment
+    await runNextSegment();
   }
 
-  // Launch initial batch of workers with staggered starts
+  // Launch initial batch with staggered starts
   const workers = [];
-  for (let w = 0; w < Math.min(MAX_CONCURRENT, allClipTasks.length); w++) {
+  for (let w = 0; w < Math.min(MAX_CONCURRENT, segmentClipCounts.length); w++) {
     if (w > 0) await new Promise(r => setTimeout(r, STAGGER_MS));
-    workers.push(runNext());
+    workers.push(runNextSegment());
   }
   await Promise.all(workers);
 
-  // Group results back by segment order
-  const segmentMediaMap = {};
-  for (const result of clipResults) {
-    if (!result) continue;
-    if (!segmentMediaMap[result.segOrder]) segmentMediaMap[result.segOrder] = [];
-    segmentMediaMap[result.segOrder].push(result.mediaPath);
-  }
+  // Build results
+  const results = segmentResults
+    .filter(r => r !== null && r.mediaPaths.length > 0)
+    .map(r => ({
+      order: r.order,
+      mediaPaths: r.mediaPaths,
+      imagePath: r.mediaPaths[0],  // Backward compat — primary clip
+    }));
 
-  const results = segmentClipCounts
-    .map(({ seg }) => {
-      const mediaPaths = segmentMediaMap[seg.order] || [];
-      if (mediaPaths.length === 0) return null;
-      return {
-        order: seg.order,
-        mediaPaths,
-        imagePath: mediaPaths[0],  // Backward compat — primary clip
-      };
-    })
-    .filter(r => r !== null);
-
-  console.log(`[B-Roll] Complete: ${videoCount} video clips, ${imageCount} still images out of ${totalClips} total clips for ${segments.length} segments`);
+  console.log(`[B-Roll] Complete: ${videoCount} video clips (${extendCount} via extend API, ${extendFailCount} extend failures), ${imageCount} still images for ${totalSegments} segments`);
   return results;
 }
 
-module.exports = { generateBrollImage, generateBrollVideo, generateBroll, generateAllBroll, calcClipsNeeded };
+module.exports = { generateBrollImage, generateBrollVideo, extendBrollVideo, generateBroll, generateAllBroll, calcClipsNeeded };

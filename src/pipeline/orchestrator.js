@@ -839,11 +839,11 @@ async function regenerateSegments(videoId, userId, changes) {
       // Resolve persona image
       let personaImageUrl = video.persona_image_url || null;
 
-      const { generateBroll, calcClipsNeeded } = require('./brollGenerator');
+      const { generateBroll, extendBrollVideo, calcClipsNeeded } = require('./brollGenerator');
       const { spawn } = require('child_process');
       const ffmpegPath = process.env.FFMPEG_PATH || 'ffmpeg';
 
-      // Variation styles for multi-clip segments (same as full pipeline)
+      // Variation styles for multi-clip segments (fallback when extend API fails)
       const variationStyles = [
         null,  // First clip uses the original description unchanged
         'Show a COMPLETELY DIFFERENT scene and setting — different location, different activity, different mood. Do NOT repeat any action or prop from the previous shot.',
@@ -1035,40 +1035,99 @@ async function regenerateSegments(videoId, userId, changes) {
           const clipsNeeded = calcClipsNeeded(seg, timestamps, script.segments);
           console.log(`[Regen] Segment ${c.order}: ${duration.toFixed(1)}s → generating ${clipsNeeded} clip(s)`);
 
-          // Generate clips SEQUENTIALLY to avoid Veo rate limits during regen
-          // (full pipeline uses parallel because it has many segments, but regen
-          // focuses on 1-2 segments so sequential avoids rate-limit fallback to images)
+          // Generate initial clip, then use Veo Extend API to chain continuous footage.
+          // Falls back to independent clip generation if extend fails.
           const mediaPaths = [];
-          for (let ci = 0; ci < clipsNeeded; ci++) {
-            let desc = seg.brollDescription || 'Professional lifestyle image';
-            if (ci > 0 && ci < variationStyles.length) {
-              desc = `${variationStyles[ci]} General theme: ${desc.substring(0, 80)}`;
-            } else if (ci >= variationStyles.length) {
-              desc = `Cinematic environmental wide shot — cityscape, nature, or architecture. Unrelated to previous clips. Theme context: ${desc.substring(0, 60)}`;
-            }
+          const desc = seg.brollDescription || 'Professional lifestyle image';
+          const bName = video.brand_name || sceneData.brand_name || 'Brand';
 
-            // Only first clip gets persona reference for consistency
-            const usePersona = personaImageUrl && ci === 0;
+          // Step 1: Generate initial clip
+          const initialResult = await generateBroll({
+            description: desc,
+            brandName: bName,
+            brandDescription: sceneData.brand_description || '',
+            personaDescription: sceneData.persona_description || '',
+            outputDir: workDir,
+            segmentType: seg.type || '',
+            segmentChannel: seg.channel || '',
+            personaImageUrl: personaImageUrl || null,
+          });
 
-            // Small delay between clips to avoid rate limiting (skip for first clip)
-            if (ci > 0) {
-              console.log(`[Regen] Waiting 3s before generating clip ${ci + 1}/${clipsNeeded}...`);
-              await new Promise(r => setTimeout(r, 3000));
-            }
-
-            const mediaPath = await generateBroll({
-              description: desc,
-              brandName: video.brand_name || sceneData.brand_name || 'Brand',
-              brandDescription: sceneData.brand_description || '',
-              personaDescription: sceneData.persona_description || '',
-              outputDir: workDir,
-              segmentType: seg.type || '',
-              segmentChannel: seg.channel || '',
-              personaImageUrl: usePersona ? personaImageUrl : null,
-            });
-            mediaPaths.push(mediaPath);
-            console.log(`[Regen] Clip ${ci + 1}/${clipsNeeded}: ${mediaPath ? (mediaPath.endsWith('.mp4') ? 'VIDEO' : 'IMAGE') : 'FAILED'}`);
+          if (initialResult && initialResult.filePath) {
+            mediaPaths.push(initialResult.filePath);
+            console.log(`[Regen] Initial clip: ${initialResult.filePath.endsWith('.mp4') ? 'VIDEO' : 'IMAGE'}${initialResult.videoRef ? ' (extend-capable)' : ''}`);
           }
+
+          // Step 2: Extend for additional clips (if initial was a video with videoRef)
+          if (clipsNeeded > 1 && initialResult && initialResult.videoRef) {
+            let currentVideoRef = initialResult.videoRef;
+            const extensionsNeeded = Math.min(clipsNeeded - 1, 20); // Max 20 extensions
+
+            console.log(`[Regen] Extending initial clip ${extensionsNeeded} time(s) for continuous footage...`);
+
+            for (let ext = 0; ext < extensionsNeeded; ext++) {
+              if (ext > 0) await new Promise(r => setTimeout(r, 2000));
+
+              const continuationPrompt = `Continue the same cinematic scene smoothly. Maintain the same visual style, lighting, and camera movement. ${desc.substring(0, 120)}`;
+
+              const extResult = await extendBrollVideo({
+                videoRef: currentVideoRef,
+                prompt: continuationPrompt,
+                outputDir: workDir,
+                extensionNumber: ext + 1,
+              });
+
+              if (!extResult) {
+                console.warn(`[Regen] Extend #${ext + 1} failed — falling back to independent clips for remaining ${extensionsNeeded - ext}`);
+                // Fall back to independent clips for remaining
+                for (let fi = 0; fi < extensionsNeeded - ext; fi++) {
+                  if (fi > 0) await new Promise(r => setTimeout(r, 3000));
+                  let fallbackDesc = desc;
+                  if (fi < variationStyles.length && variationStyles[fi]) {
+                    fallbackDesc = `${variationStyles[fi]} General theme: ${desc.substring(0, 80)}`;
+                  }
+                  const fbResult = await generateBroll({
+                    description: fallbackDesc,
+                    brandName: bName,
+                    brandDescription: sceneData.brand_description || '',
+                    personaDescription: sceneData.persona_description || '',
+                    outputDir: workDir,
+                    segmentType: seg.type || '',
+                    segmentChannel: seg.channel || '',
+                    personaImageUrl: null,
+                  });
+                  if (fbResult && fbResult.filePath) mediaPaths.push(fbResult.filePath);
+                }
+                break;
+              }
+
+              mediaPaths.push(extResult.filePath);
+              currentVideoRef = extResult.videoRef;
+              console.log(`[Regen] Extend #${ext + 1}/${extensionsNeeded} done`);
+            }
+          } else if (clipsNeeded > 1 && initialResult && !initialResult.videoRef) {
+            // No videoRef (image fallback) — generate remaining clips independently
+            console.log(`[Regen] No videoRef for extend — generating ${clipsNeeded - 1} independent clips`);
+            for (let ci = 1; ci < clipsNeeded; ci++) {
+              if (ci > 1) await new Promise(r => setTimeout(r, 3000));
+              let fallbackDesc = desc;
+              if (ci < variationStyles.length && variationStyles[ci]) {
+                fallbackDesc = `${variationStyles[ci]} General theme: ${desc.substring(0, 80)}`;
+              }
+              const fbResult = await generateBroll({
+                description: fallbackDesc,
+                brandName: bName,
+                brandDescription: sceneData.brand_description || '',
+                personaDescription: sceneData.persona_description || '',
+                outputDir: workDir,
+                segmentType: seg.type || '',
+                segmentChannel: seg.channel || '',
+                personaImageUrl: null,
+              });
+              if (fbResult && fbResult.filePath) mediaPaths.push(fbResult.filePath);
+            }
+          }
+
           const validPaths = mediaPaths.filter(p => p);
 
           if (validPaths.length === 0) {

@@ -747,9 +747,14 @@ async function generateAllBroll(segments, brandName, outputDir, onProgress, pers
 
       extendCount++;
       videoCount++;
-      mediaPaths.push(extResult.filePath);
+      // Veo Extend returns the FULL combined video (original + extensions merged).
+      // Replace mediaPaths[0] with each successive extension — the last one
+      // contains the complete chain. Delete the now-superseded intermediate file.
+      const prevPath = mediaPaths[0];
+      mediaPaths[0] = extResult.filePath;
+      try { if (prevPath && fs.existsSync(prevPath)) fs.unlinkSync(prevPath); } catch {}
       currentVideoRef = extResult.videoRef;
-      console.log(`[B-Roll] Segment ${seg.order}: extend #${ext + 1}/${extensionsNeeded} done — continuous clip chain growing`);
+      console.log(`[B-Roll] Segment ${seg.order}: extend #${ext + 1}/${extensionsNeeded} done — full chain now in single file`);
     }
 
     return mediaPaths;

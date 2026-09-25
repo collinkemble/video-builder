@@ -2623,51 +2623,63 @@ async function start() {
     console.warn('  Features requiring a database will not work until JAWSDB_URL is configured');
   }
 
-  // ─── MySQL → PostgreSQL data migration (one-time, env-gated) ───
+  // ─── Data migration from R2 URL (one-time, env-gated) ───
   if (isPostgres && process.env.RUN_DATA_MIGRATION === 'true') {
-    console.log('Starting MySQL → PostgreSQL data migration...');
-    try {
-      const mysql = require('mysql2/promise');
-      const srcUrl = process.env.JAWSDB_URL;
-      if (srcUrl) {
-        const src = await mysql.createConnection(srcUrl);
+    const dataUrl = process.env.MIGRATION_DATA_URL;
+    if (dataUrl) {
+      console.log('Starting data migration from URL:', dataUrl);
+      try {
+        const https = require('https');
+        const zlib = require('zlib');
+        const rawData = await new Promise((resolve, reject) => {
+          https.get(dataUrl, { timeout: 120000 }, (res) => {
+            const chunks = [];
+            res.on('data', c => chunks.push(c));
+            res.on('end', () => {
+              const buf = Buffer.concat(chunks);
+              try { resolve(JSON.parse(zlib.gunzipSync(buf).toString())); }
+              catch (e2) { resolve(JSON.parse(buf.toString())); }
+            });
+            res.on('error', reject);
+          }).on('error', reject);
+        });
+        console.log('Downloaded data, tables:', Object.keys(rawData).join(', '));
         const pgPool = getPool();
         const tables = ['users', 'api_keys', 'videos', 'video_jobs', 'app_connections', 'feedback', 'shared_videos'];
+        for (const table of [...tables].reverse()) {
+          try { await pgPool.query(`DELETE FROM "${table}"`); } catch (e) { console.error(`  Clear ${table}:`, e.message); }
+        }
         for (const table of tables) {
-          try {
-            const [rows] = await src.query(`SELECT * FROM ${table}`);
-            console.log(`Migrating ${table}: ${rows.length} rows`);
-            for (const row of rows) {
-              const cols = Object.keys(row);
-              const vals = Object.values(row);
-              const placeholders = cols.map((_, i) => `$${i + 1}`).join(',');
-              const colList = cols.map(c => `"${c}"`).join(',');
-              try {
-                const onConflict = (table === 'users') ? ' ON CONFLICT (email) DO NOTHING' :
-                                   (table === 'api_keys') ? ' ON CONFLICT (key_hash) DO NOTHING' : '';
-                await pgPool.query(
-                  `INSERT INTO ${table} (${colList}) VALUES (${placeholders})${onConflict}`,
-                  vals
-                );
-              } catch (e) {
-                if (e.code !== '23505') console.error(`  Row error in ${table}:`, e.message);
-              }
+          const rows = rawData[table] || [];
+          console.log(`Importing ${table}: ${rows.length} rows`);
+          if (rows.length === 0) continue;
+          let inserted = 0;
+          for (const row of rows) {
+            const cols = Object.keys(row);
+            const vals = Object.values(row);
+            const placeholders = cols.map((_, i) => `$${i + 1}`).join(',');
+            const colList = cols.map(c => `"${c}"`).join(',');
+            const onConflict = (table === 'users') ? ' ON CONFLICT (email) DO NOTHING' :
+                               (table === 'api_keys') ? ' ON CONFLICT (key_hash) DO NOTHING' :
+                               (table === 'app_connections') ? ' ON CONFLICT (user_id, app_slug) DO NOTHING' : '';
+            try {
+              await pgPool.query(`INSERT INTO "${table}" (${colList}) VALUES (${placeholders})${onConflict}`, vals);
+              inserted++;
+            } catch (e) {
+              if (e.code !== '23505') console.error(`  Row error in ${table}:`, e.message);
             }
-          } catch (e) {
-            console.error(`  Table ${table} migration error:`, e.message);
           }
+          console.log(`  → ${inserted}/${rows.length} inserted`);
         }
         // Reset sequences - skip video_jobs (UUID id)
         for (const table of ['users', 'api_keys', 'videos', 'app_connections', 'feedback', 'shared_videos']) {
-          try {
-            await pgPool.query(`SELECT setval(pg_get_serial_sequence('${table}', 'id'), COALESCE((SELECT MAX(id) FROM ${table}), 1))`);
-          } catch (e) { /* ignore */ }
+          try { await pgPool.query(`SELECT setval(pg_get_serial_sequence('${table}', 'id'), COALESCE((SELECT MAX(id) FROM "${table}"), 1))`); }
+          catch (e) { /* no serial */ }
         }
-        await src.end();
         console.log('✓ Data migration completed');
+      } catch (e) {
+        console.error('Data migration error:', e.message);
       }
-    } catch (e) {
-      console.error('Data migration error:', e.message);
     }
   }
 

@@ -1101,9 +1101,13 @@ async function regenerateSegments(videoId, userId, changes) {
                 break;
               }
 
-              mediaPaths.push(extResult.filePath);
+              // Veo Extend returns the FULL combined video (original + extensions merged).
+              // Replace mediaPaths[0] with the latest — it contains the complete chain.
+              const prevPath = mediaPaths[0];
+              mediaPaths[0] = extResult.filePath;
+              try { if (prevPath && fs.existsSync(prevPath)) fs.unlinkSync(prevPath); } catch {}
               currentVideoRef = extResult.videoRef;
-              console.log(`[Regen] Extend #${ext + 1}/${extensionsNeeded} done`);
+              console.log(`[Regen] Extend #${ext + 1}/${extensionsNeeded} done — full chain now in single file`);
             }
           } else if (clipsNeeded > 1 && initialResult && !initialResult.videoRef) {
             // No videoRef (image fallback) — generate remaining clips independently

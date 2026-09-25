@@ -118,7 +118,44 @@ function verifySessionToken(token) {
 
 // ─── Middleware ───
 app.use(cors());
-app.use(express.json({ limit: '5mb' }));
+app.use(express.json({ limit: '50mb' }));
+
+// ─── TEMPORARY: Data import endpoint for MySQL→PG migration ───
+const IMPORT_SECRET = process.env.DATA_IMPORT_SECRET;
+app.post('/api/_import-data', async (req, res) => {
+  if (!IMPORT_SECRET || req.headers['x-import-secret'] !== IMPORT_SECRET) {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
+  try {
+    const { table, rows, onConflict } = req.body;
+    if (!table || !rows || !Array.isArray(rows) || rows.length === 0) {
+      return res.status(400).json({ error: 'table and rows[] required' });
+    }
+    const pool = getPool();
+    await pool.query(`DELETE FROM "${table}"`);
+    let inserted = 0;
+    for (const row of rows) {
+      const cols = Object.keys(row);
+      const vals = Object.values(row);
+      const placeholders = cols.map((_, i) => `$${i + 1}`).join(',');
+      const colList = cols.map(c => `"${c}"`).join(',');
+      const conflict = onConflict || '';
+      try {
+        await pool.query(`INSERT INTO "${table}" (${colList}) VALUES (${placeholders})${conflict}`, vals);
+        inserted++;
+      } catch (e) {
+        console.error(`Import error [${table}]:`, e.message);
+      }
+    }
+    try {
+      await pool.query(`SELECT setval(pg_get_serial_sequence('${table}', 'id'), COALESCE((SELECT MAX(id) FROM "${table}"), 1))`);
+    } catch (e) { /* no serial sequence */ }
+    res.json({ ok: true, table, inserted, total: rows.length });
+  } catch (err) {
+    console.error('Import error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
 
 // Force HTTPS in production (Heroku sets x-forwarded-proto)
 app.use((req, res, next) => {

@@ -127,12 +127,12 @@ app.post('/api/_import-data', async (req, res) => {
     return res.status(403).json({ error: 'Forbidden' });
   }
   try {
-    const { table, rows, onConflict } = req.body;
+    const { table, rows, onConflict, skipDelete } = req.body;
     if (!table || !rows || !Array.isArray(rows) || rows.length === 0) {
       return res.status(400).json({ error: 'table and rows[] required' });
     }
     const pool = getPool();
-    await pool.query(`DELETE FROM "${table}"`);
+    if (!skipDelete) await pool.query(`DELETE FROM "${table}"`);
     let inserted = 0;
     for (const row of rows) {
       const cols = Object.keys(row);

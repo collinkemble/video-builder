@@ -6,7 +6,7 @@ const path = require('path');
 const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
-const { query } = require('./src/db/connection');
+const { query, isPostgres, getPool } = require('./src/db/connection');
 const { migrate } = require('./src/db/migrate');
 const { runPipeline, getPipelineStatus, regenerateSegments, getQueueInfo } = require('./src/pipeline/orchestrator');
 const { generateScript } = require('./src/pipeline/scriptGenerator');
@@ -180,10 +180,23 @@ async function getOrCreateUser(email) {
 
 // Returns public app configuration for the frontend (Magic key, cookie domain).
 // No auth required — the frontend fetches this on load.
-app.get('/api/auth/config', (req, res) => {
+app.get('/api/auth/config', async (req, res) => {
+  const ssoEmail = req.headers['x-forwarded-user'];
+  let ssoSessionToken = null;
+  if (ssoEmail) {
+    const user = await getOrCreateUser(ssoEmail);
+    const secret = process.env.JWT_SECRET || 'dev-secret';
+    ssoSessionToken = jwt.sign(
+      { userId: user.id, email: ssoEmail },
+      secret,
+      { expiresIn: '7d', subject: `videobuilder-session:${user.id}` }
+    );
+  }
   res.json({
     magicPublishableKey: process.env.MAGIC_PUBLISHABLE_KEY || process.env.VITE_MAGIC_LINK_KEY || null,
     cookieDomain: process.env.COOKIE_DOMAIN || null,
+    ssoSessionToken,
+    ssoEmail,
   });
 });
 
@@ -2571,6 +2584,54 @@ async function start() {
   } catch (err) {
     console.error('⚠️  Database migration failed:', err.message);
     console.warn('  Features requiring a database will not work until JAWSDB_URL is configured');
+  }
+
+  // ─── MySQL → PostgreSQL data migration (one-time, env-gated) ───
+  if (isPostgres && process.env.RUN_DATA_MIGRATION === 'true') {
+    console.log('Starting MySQL → PostgreSQL data migration...');
+    try {
+      const mysql = require('mysql2/promise');
+      const srcUrl = process.env.JAWSDB_URL;
+      if (srcUrl) {
+        const src = await mysql.createConnection(srcUrl);
+        const pgPool = getPool();
+        const tables = ['users', 'api_keys', 'videos', 'video_jobs', 'app_connections', 'feedback', 'shared_videos'];
+        for (const table of tables) {
+          try {
+            const [rows] = await src.query(`SELECT * FROM ${table}`);
+            console.log(`Migrating ${table}: ${rows.length} rows`);
+            for (const row of rows) {
+              const cols = Object.keys(row);
+              const vals = Object.values(row);
+              const placeholders = cols.map((_, i) => `$${i + 1}`).join(',');
+              const colList = cols.map(c => `"${c}"`).join(',');
+              try {
+                const onConflict = (table === 'users') ? ' ON CONFLICT (email) DO NOTHING' :
+                                   (table === 'api_keys') ? ' ON CONFLICT (key_hash) DO NOTHING' : '';
+                await pgPool.query(
+                  `INSERT INTO ${table} (${colList}) VALUES (${placeholders})${onConflict}`,
+                  vals
+                );
+              } catch (e) {
+                if (e.code !== '23505') console.error(`  Row error in ${table}:`, e.message);
+              }
+            }
+          } catch (e) {
+            console.error(`  Table ${table} migration error:`, e.message);
+          }
+        }
+        // Reset sequences - skip video_jobs (UUID id)
+        for (const table of ['users', 'api_keys', 'videos', 'app_connections', 'feedback', 'shared_videos']) {
+          try {
+            await pgPool.query(`SELECT setval(pg_get_serial_sequence('${table}', 'id'), COALESCE((SELECT MAX(id) FROM ${table}), 1))`);
+          } catch (e) { /* ignore */ }
+        }
+        await src.end();
+        console.log('✓ Data migration completed');
+      }
+    } catch (e) {
+      console.error('Data migration error:', e.message);
+    }
   }
 
   const server = app.listen(PORT, () => {

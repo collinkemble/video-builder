@@ -1194,6 +1194,13 @@ async function initAndCheckAuth() {
     const magicKey = config.magicPublishableKey;
     cookieDomain = config.cookieDomain || null;
     if (magicKey) magic = new Magic(magicKey);
+
+    // Step 0: SSO auto-login
+    if (config.ssoSessionToken) {
+      setCookie('sessionToken', config.ssoSessionToken, cookieDomain);
+      showApp(config.ssoEmail);
+      return;
+    }
   } catch (err) {
     console.warn('Config fetch failed:', err.message);
   }
@@ -1302,7 +1309,11 @@ async function handleLogin() {
 }
 
 async function handleLogout() {
-  await magic.user.logout();
+  try {
+    if (magic && await magic.user.isLoggedIn()) {
+      await magic.user.logout();
+    }
+  } catch (e) { /* ignore */ }
   deleteCookie('didToken', cookieDomain);
   deleteCookie('sessionToken', cookieDomain);
   document.getElementById('app-section').style.display = 'none';

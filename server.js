@@ -2604,10 +2604,36 @@ async function recoverStaleJobs() {
   }
 }
 
+// Seed API key from environment variable on startup (for fresh databases)
+async function seedApiKey() {
+  const seedKey = process.env.SEED_API_KEY;
+  if (!seedKey) return;
+  try {
+    const keyHash = hashApiKey(seedKey);
+    const existing = await query('SELECT id FROM api_keys WHERE key_hash = ?', [keyHash]);
+    if (existing.length > 0) return;
+    let adminRows = await query('SELECT id FROM users WHERE is_admin = true LIMIT 1');
+    let userId;
+    if (adminRows.length > 0) {
+      userId = adminRows[0].id;
+    } else {
+      const adminEmail = (process.env.ADMIN_EMAILS || '').split(',')[0]?.trim() || 'admin@salesforce.com';
+      const result = await query('INSERT INTO users (email, name, is_admin) VALUES (?, ?, true)', [adminEmail, 'Admin']);
+      userId = result.insertId;
+    }
+    await query('INSERT INTO api_keys (user_id, name, key_prefix, key_hash) VALUES (?, ?, ?, ?)',
+      [userId, 'DemoForge Integration', seedKey.substring(0, 8), keyHash]);
+    console.log('✓ SEED_API_KEY registered');
+  } catch (e) {
+    console.warn('⚠️  Failed to seed API key:', e.message);
+  }
+}
+
 async function start() {
   try {
     await migrate();
     console.log('✓ Database ready');
+    await seedApiKey();
 
     // Auto-add language column if missing (for existing databases)
     try {

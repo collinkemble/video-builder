@@ -7,7 +7,7 @@
     "start": "node server.js",
     "dev": "node server.js",
     "migrate": "node src/db/migrate.js",
-    "heroku-postbuild": "rm -rf node_modules/.puppeteer-cache/chrome && echo 'Installing Chrome...' && npx puppeteer browsers install chrome 2>&1 && echo 'Chrome install done' && node -e \"const p=require('puppeteer');console.log('Chrome at:',p.executablePath())\" || echo 'Chrome install failed'"
+    "heroku-postbuild": "echo 'Verifying Chrome...' && node -e \"const p=require('puppeteer');const fs=require('fs');const ep=p.executablePath();console.log('Chrome at:',ep);if(!fs.existsSync(ep)){console.log('Not found, installing...');require('child_process').execSync('npx puppeteer browsers install chrome',{stdio:'inherit'});console.log('Installed at:',p.executablePath())}else{console.log('Chrome OK')}\" || echo 'Chrome verify failed'"
   },
   "keywords": [
     "salesforce",

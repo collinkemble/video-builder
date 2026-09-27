@@ -7,7 +7,7 @@
     "start": "node server.js",
     "dev": "node server.js",
     "migrate": "node src/db/migrate.js",
-    "heroku-postbuild": "npx puppeteer browsers install chrome"
+    "heroku-postbuild": "rm -rf $HOME/.cache/puppeteer/chrome && npx puppeteer browsers install chrome"
   },
   "keywords": [
     "salesforce",

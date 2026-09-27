@@ -1,4 +1,4 @@
-const puppeteer = require('puppeteer-core');
+const puppeteer = require('puppeteer');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
@@ -1027,6 +1027,19 @@ function findFfmpegPath() {
 function findChromePath() {
   if (process.env.GOOGLE_CHROME_BIN) return process.env.GOOGLE_CHROME_BIN;
   if (process.env.CHROME_BIN) return process.env.CHROME_BIN;
+
+  // Check Puppeteer's cache directory (installed via heroku-postbuild)
+  try {
+    const cacheDir = process.env.PUPPETEER_CACHE_DIR || '/app/.cache/puppeteer';
+    const chromeDir = require('path').join(cacheDir, 'chrome');
+    if (fs.existsSync(chromeDir)) {
+      const versions = fs.readdirSync(chromeDir).filter(d => !d.startsWith('.'));
+      for (const ver of versions) {
+        const chromePath = require('path').join(chromeDir, ver, 'chrome-linux64', 'chrome');
+        if (fs.existsSync(chromePath)) return chromePath;
+      }
+    }
+  } catch { /* puppeteer cache not found */ }
 
   const candidates = [
     '/app/.chrome-for-testing/chrome-linux64/chrome',

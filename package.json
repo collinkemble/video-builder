@@ -6,7 +6,8 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node server.js",
-    "migrate": "node src/db/migrate.js"
+    "migrate": "node src/db/migrate.js",
+    "heroku-postbuild": "npx puppeteer browsers install chrome"
   },
   "keywords": [
     "salesforce",
@@ -29,6 +30,6 @@
     "multer": "^1.4.5-lts.1",
     "mysql2": "^3.11.0",
     "pg": "^8.13.0",
-    "puppeteer-core": "^23.0.0"
+    "puppeteer": "^23.0.0"
   }
 }

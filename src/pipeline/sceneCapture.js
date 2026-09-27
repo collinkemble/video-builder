@@ -1028,19 +1028,42 @@ function findChromePath() {
   if (process.env.GOOGLE_CHROME_BIN) return process.env.GOOGLE_CHROME_BIN;
   if (process.env.CHROME_BIN) return process.env.CHROME_BIN;
 
-  // Check Puppeteer's cache directory (installed via heroku-postbuild)
+  // Ask Puppeteer directly — it knows where it installed Chrome
   try {
-    const cacheDir = process.env.PUPPETEER_CACHE_DIR || '/app/.cache/puppeteer';
-    const chromeDir = require('path').join(cacheDir, 'chrome');
-    if (fs.existsSync(chromeDir)) {
-      const versions = fs.readdirSync(chromeDir).filter(d => !d.startsWith('.'));
-      for (const ver of versions) {
-        const chromePath = require('path').join(chromeDir, ver, 'chrome-linux64', 'chrome');
-        if (fs.existsSync(chromePath)) return chromePath;
-      }
+    const pptrPath = puppeteer.executablePath();
+    if (pptrPath && fs.existsSync(pptrPath)) {
+      console.log(`[Chrome] Found via puppeteer.executablePath(): ${pptrPath}`);
+      return pptrPath;
     }
-  } catch { /* puppeteer cache not found */ }
+  } catch (e) {
+    console.warn(`[Chrome] puppeteer.executablePath() failed: ${e.message}`);
+  }
 
+  // Scan common Puppeteer cache directories (multiple possible locations on Heroku Fir)
+  const cacheDirs = [
+    process.env.PUPPETEER_CACHE_DIR,
+    '/app/.cache/puppeteer',
+    path.join(os.homedir(), '.cache', 'puppeteer'),
+    '/layers/heroku_nodejs/npm_cache/.cache/puppeteer',
+  ].filter(Boolean);
+
+  for (const cacheDir of cacheDirs) {
+    try {
+      const chromeDir = path.join(cacheDir, 'chrome');
+      if (fs.existsSync(chromeDir)) {
+        const versions = fs.readdirSync(chromeDir).filter(d => !d.startsWith('.'));
+        for (const ver of versions) {
+          const chromePath = path.join(chromeDir, ver, 'chrome-linux64', 'chrome');
+          if (fs.existsSync(chromePath)) {
+            console.log(`[Chrome] Found in cache: ${chromePath}`);
+            return chromePath;
+          }
+        }
+      }
+    } catch { /* cache dir not found */ }
+  }
+
+  // Legacy buildpack paths
   const candidates = [
     '/app/.chrome-for-testing/chrome-linux64/chrome',
     '/app/.apt/usr/bin/google-chrome',
@@ -1053,15 +1076,48 @@ function findChromePath() {
   }
 
   try {
-    const result = execSync('which google-chrome-stable || which google-chrome || which chromium-browser', { encoding: 'utf-8' }).trim();
-    if (result) return result;
+    const result = execSync('which google-chrome-stable || which google-chrome || which chromium-browser 2>/dev/null || find / -name chrome -type f 2>/dev/null | head -1', { encoding: 'utf-8', timeout: 10000 }).trim();
+    if (result) {
+      console.log(`[Chrome] Found via which/find: ${result}`);
+      return result;
+    }
   } catch { /* not found */ }
 
   throw new Error('Chrome not found. Ensure the Google Chrome buildpack is installed on Heroku.');
 }
 
+/**
+ * Ensure Chrome is installed via Puppeteer. On Heroku Fir (CNB buildpacks),
+ * the heroku-postbuild install may not persist to the runtime container.
+ * This installs on first launch if needed.
+ */
+let chromeInstallAttempted = false;
+async function ensureChrome() {
+  if (chromeInstallAttempted) return;
+  chromeInstallAttempted = true;
+
+  try {
+    findChromePath();
+    return; // Already available
+  } catch {
+    // Chrome not found — install it now
+    console.log('[Chrome] Not found, installing via Puppeteer...');
+    try {
+      execSync('npx puppeteer browsers install chrome', {
+        encoding: 'utf-8',
+        timeout: 120000,
+        stdio: 'pipe',
+      });
+      console.log('[Chrome] Installation complete');
+    } catch (installErr) {
+      console.error('[Chrome] Installation failed:', installErr.message);
+    }
+  }
+}
+
 async function launchBrowser() {
   await ensureEmojiFont();
+  await ensureChrome();
   const executablePath = findChromePath();
   console.log(`Launching Chrome from: ${executablePath}`);
 

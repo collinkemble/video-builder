@@ -7,7 +7,7 @@
     "start": "node server.js",
     "dev": "node server.js",
     "migrate": "node src/db/migrate.js",
-    "heroku-postbuild": "echo 'Verifying Chrome...' && node -e \"const p=require('puppeteer');const fs=require('fs');const ep=p.executablePath();console.log('Chrome at:',ep);if(!fs.existsSync(ep)){console.log('Not found, installing...');require('child_process').execSync('npx puppeteer browsers install chrome',{stdio:'inherit'});console.log('Installed at:',p.executablePath())}else{console.log('Chrome OK')}\" || echo 'Chrome verify failed'"
+    "heroku-postbuild": "rm -rf /home/heroku/.cache/puppeteer ~/.cache/puppeteer && npx puppeteer browsers install chrome"
   },
   "keywords": [
     "salesforce",
@@ -16,11 +16,6 @@
   "license": "MIT",
   "engines": {
     "node": ">=18.0.0"
-  },
-  "allowScripts": {
-    "puppeteer": true,
-    "@google/genai": true,
-    "protobufjs": true
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.600.0",
@@ -35,6 +30,6 @@
     "multer": "^1.4.5-lts.1",
     "mysql2": "^3.11.0",
     "pg": "^8.13.0",
-    "puppeteer": "^23.0.0"
+    "puppeteer": "^25.3.0"
   }
 }

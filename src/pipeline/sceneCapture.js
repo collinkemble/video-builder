@@ -1126,6 +1126,8 @@ async function launchBrowser() {
       '--disable-extensions',
       '--disable-background-networking',
       '--disable-default-apps',
+      '--single-process',
+      '--disable-renderer-backgrounding',
       '--js-flags=--max-old-space-size=256',
     ],
     defaultViewport: null,

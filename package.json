@@ -17,6 +17,11 @@
   "engines": {
     "node": ">=18.0.0"
   },
+  "allowScripts": {
+    "puppeteer": true,
+    "@google/genai": true,
+    "protobufjs": true
+  },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.600.0",
     "@aws-sdk/s3-request-presigner": "^3.600.0",

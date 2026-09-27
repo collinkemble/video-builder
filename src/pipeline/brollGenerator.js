@@ -543,39 +543,56 @@ function truncate(str, maxLen) {
  * @returns {Promise<{filePath: string, videoRef: object|null}>} File path + video ref for chaining
  */
 async function generateBroll({ description, brandName, brandDescription = '', personaDescription = '', outputDir, segmentType = '', segmentChannel = '', personaImageUrl = null }) {
-  // Try video generation first (Veo) — generates 8s clips
-  const videoResult = await generateBrollVideo({ description, brandName, brandDescription, personaDescription, outputDir, segmentType, segmentChannel, personaImageUrl });
-  if (videoResult) return videoResult;  // { filePath, videoRef }
+  const MAX_ATTEMPTS = 5;
+  const BASE_DELAY_MS = 5000; // Exponential backoff: 5s, 10s, 20s, 40s between retries
 
-  // Wait before retrying to avoid rate-limit (429) cascading failures
-  console.log(`[B-Roll] Retry 2: waiting 5s before simplified prompt (no persona)...`);
-  await new Promise(r => setTimeout(r, 5000));
-  const retryResult = await generateBrollVideo({
-    description: `Cinematic lifestyle footage: ${description.substring(0, 100)}`,
-    brandName, brandDescription, personaDescription, outputDir, segmentType, segmentChannel,
-    personaImageUrl: null,  // Drop persona ref on retry — it can cause failures
-  });
-  if (retryResult) return retryResult;
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    // Backoff delay before retries (not before first attempt)
+    if (attempt > 1) {
+      const delay = BASE_DELAY_MS * Math.pow(2, attempt - 2); // 5s, 10s, 20s, 40s
+      console.log(`[B-Roll] Attempt ${attempt}/${MAX_ATTEMPTS}: waiting ${delay / 1000}s before retry...`);
+      await new Promise(r => setTimeout(r, delay));
+    }
 
-  // Third attempt with longer delay — ultra-minimal prompt
-  console.log(`[B-Roll] Retry 3: waiting 10s before minimal prompt...`);
-  await new Promise(r => setTimeout(r, 10000));
-  const minimalDesc = segmentType === 'intro'
-    ? `Beautiful cinematic opening shot. Slow camera movement across a stunning ${brandName || 'modern'} environment. Warm golden lighting. No text. No screens.`
-    : segmentType === 'outro'
-    ? `Warm cinematic closing shot. Slow pull-back camera movement. Beautiful sunset or golden hour lighting. No text. No screens.`
-    : `Smooth cinematic b-roll footage. Slow camera movement. Beautiful lighting. ${description.substring(0, 60)}. No text. No screens.`;
-  const retry3Result = await generateBrollVideo({
-    description: minimalDesc,
-    brandName, outputDir, segmentType, segmentChannel,
-    personaImageUrl: null,
-  });
-  if (retry3Result) return retry3Result;
+    // Progressively simplify prompts on retries
+    let desc = description;
+    let usePersona = personaImageUrl;
+    let passBrandDesc = brandDescription;
+    let passPersonaDesc = personaDescription;
 
-  // Fallback to image generation (Gemini Imagen)
-  console.warn(`[B-Roll] All 3 Veo attempts failed for ${segmentType || 'broll'} segment. Falling back to static image.`);
-  const imagePath = await generateBrollImage({ description, brandName, outputDir });
-  return { filePath: imagePath, videoRef: null };
+    if (attempt === 2) {
+      // Drop persona, simplify prompt
+      desc = `Cinematic lifestyle footage: ${description.substring(0, 100)}`;
+      usePersona = null;
+    } else if (attempt >= 3) {
+      // Ultra-minimal prompt — no persona, no brand/persona descriptions
+      usePersona = null;
+      passBrandDesc = '';
+      passPersonaDesc = '';
+      desc = segmentType === 'intro'
+        ? `Beautiful cinematic opening shot. Slow camera movement across a stunning ${brandName || 'modern'} environment. Warm golden lighting. No text. No screens.`
+        : segmentType === 'outro'
+        ? `Warm cinematic closing shot. Slow pull-back camera movement. Beautiful sunset or golden hour lighting. No text. No screens.`
+        : `Smooth cinematic b-roll footage. Slow camera movement. Beautiful lighting. ${description.substring(0, 60)}. No text. No screens.`;
+    }
+
+    const result = await generateBrollVideo({
+      description: desc,
+      brandName,
+      brandDescription: passBrandDesc,
+      personaDescription: passPersonaDesc,
+      outputDir,
+      segmentType,
+      segmentChannel,
+      personaImageUrl: usePersona,
+    });
+
+    if (result) return result;
+    console.warn(`[B-Roll] Attempt ${attempt}/${MAX_ATTEMPTS} failed for ${segmentType || 'broll'} segment`);
+  }
+
+  // ALL attempts exhausted — fail hard, no image fallback
+  throw new Error(`B-roll video generation failed after ${MAX_ATTEMPTS} attempts for ${segmentType || 'broll'} segment. Description: "${description.substring(0, 80)}"`);
 }
 
 /**
@@ -833,13 +850,23 @@ async function generateAllBroll(segments, brandName, outputDir, onProgress, pers
     await runNextSegment();
   }
 
-  // Launch initial batch with staggered starts
-  const workers = [];
-  for (let w = 0; w < Math.min(MAX_CONCURRENT, segmentClipCounts.length); w++) {
-    if (w > 0) await new Promise(r => setTimeout(r, STAGGER_MS));
-    workers.push(runNextSegment());
-  }
-  await Promise.all(workers);
+  // Launch initial batch with staggered starts, with overall stage timeout
+  const BROLL_STAGE_TIMEOUT_MS = 15 * 60 * 1000; // 15 minutes max for entire b-roll stage
+
+  const workersPromise = (async () => {
+    const workers = [];
+    for (let w = 0; w < Math.min(MAX_CONCURRENT, segmentClipCounts.length); w++) {
+      if (w > 0) await new Promise(r => setTimeout(r, STAGGER_MS));
+      workers.push(runNextSegment());
+    }
+    await Promise.all(workers);
+  })();
+
+  const timeoutPromise = new Promise((_, reject) =>
+    setTimeout(() => reject(new Error(`B-roll generation timed out after ${BROLL_STAGE_TIMEOUT_MS / 60000} minutes`)), BROLL_STAGE_TIMEOUT_MS)
+  );
+
+  await Promise.race([workersPromise, timeoutPromise]);
 
   // Build results
   const results = segmentResults

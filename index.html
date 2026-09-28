@@ -1709,7 +1709,29 @@ async function viewVideo(id, skipPush) {
       startStatusPolling(id);
     } else {
       stopStatusPolling();
-      document.getElementById('pipeline-progress').classList.add('hidden');
+      // For failed/completed videos, fetch and show pipeline steps so user can
+      // see which step errored (or that all steps completed) even after refresh
+      if (video.status === 'failed' || video.status === 'completed') {
+        try {
+          const jobsResp = await fetch(`/api/videos/${id}/status?email=${encodeURIComponent(email)}`);
+          if (jobsResp.ok) {
+            const statusData = await jobsResp.json();
+            if (statusData.jobs && statusData.jobs.length > 0) {
+              document.getElementById('pipeline-progress').classList.remove('hidden');
+              renderPipelineSteps(statusData.jobs);
+            } else {
+              document.getElementById('pipeline-progress').classList.add('hidden');
+            }
+          } else {
+            document.getElementById('pipeline-progress').classList.add('hidden');
+          }
+        } catch (err) {
+          console.log('Failed to load pipeline status:', err.message);
+          document.getElementById('pipeline-progress').classList.add('hidden');
+        }
+      } else {
+        document.getElementById('pipeline-progress').classList.add('hidden');
+      }
     }
 
     // Metadata

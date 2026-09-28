@@ -1068,7 +1068,7 @@ async function regenerateSegments(videoId, userId, changes) {
             for (let ext = 0; ext < extensionsNeeded; ext++) {
               if (ext > 0) await new Promise(r => setTimeout(r, 2000));
 
-              const continuationPrompt = `Continue the same cinematic scene smoothly. Maintain the same visual style, lighting, and camera movement. ${desc.substring(0, 120)}`;
+              const continuationPrompt = `Continue the same cinematic scene smoothly. Maintain the same visual style, lighting, and camera movement. CRITICAL: If a person is visible, they must NOT be talking, speaking, or moving their lips — mouth stays closed. ${desc.substring(0, 120)}`;
 
               const extResult = await extendBrollVideo({
                 videoRef: currentVideoRef,

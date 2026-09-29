@@ -91,8 +91,8 @@ app.get('/api/diag-logs', (req, res) => {
 });
 
 // ─── JWT Session Tokens ───
-const JWT_SECRET = process.env.JWT_SECRET || (process.env.MAGIC_LINK_SECRET
-  ? crypto.createHash('sha256').update('video-builder-session:' + process.env.MAGIC_LINK_SECRET).digest('hex')
+const JWT_SECRET = process.env.JWT_SECRET || (process.env.SESSION_SECRET
+  ? crypto.createHash('sha256').update('video-builder-session:' + process.env.SESSION_SECRET).digest('hex')
   : 'dev-jwt-secret');
 const JWT_EXPIRY = '30d';
 
@@ -100,7 +100,7 @@ const JWT_EXPIRY = '30d';
 // Each app derives its JWT secret from the shared MAGIC_LINK_SECRET with a unique prefix.
 const CROSS_APP_SECRETS = (() => {
   const secrets = [JWT_SECRET];
-  const magicSecret = process.env.MAGIC_LINK_SECRET || process.env.MAGIC_SECRET_KEY;
+  const magicSecret = process.env.SESSION_SECRET || process.env.MAGIC_SECRET_KEY;
   if (magicSecret) {
     const prefixes = ['demoforge-session:', 'pocketsic-session:', 'saleo-session:', 'brandkit-session:', 'orgbuilder-session:', 'scriptwriter-session:', 'installer-session:'];
     for (const prefix of prefixes) {
@@ -239,7 +239,7 @@ app.get('/api/auth/config', async (req, res) => {
     );
   }
   res.json({
-    magicPublishableKey: process.env.MAGIC_PUBLISHABLE_KEY || process.env.VITE_MAGIC_LINK_KEY || null,
+    /* Magic SDK removed — SSO-only auth */
     cookieDomain: process.env.COOKIE_DOMAIN || null,
     ssoSessionToken,
     ssoEmail,
@@ -2131,7 +2131,7 @@ app.post('/api/videos/:id/share/confirm', async (req, res) => {
 // ═══════════════════════════════════════════════
 
 // JWT secret for short-lived watch tokens (scoped to individual videos)
-const WATCH_JWT_SECRET = crypto.createHash('sha256').update('watch-token:' + (process.env.MAGIC_LINK_SECRET || 'dev')).digest('hex');
+const WATCH_JWT_SECRET = crypto.createHash('sha256').update('watch-token:' + (process.env.SESSION_SECRET || 'dev')).digest('hex');
 
 // Rate limiting for password attempts (in-memory, per video)
 const _watchAttempts = {};

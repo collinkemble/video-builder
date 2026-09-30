@@ -3387,6 +3387,21 @@ async function saveVideoSettings() {
     if (result.tinyUrl) {
       document.getElementById('public-share-url').value = result.tinyUrl;
       document.getElementById('public-qr-code').src = `https://api.qrserver.com/v1/create-qr-code/?size=160x160&data=${encodeURIComponent(result.tinyUrl)}&bgcolor=F8FAFC&color=032D60`;
+    } else if (publicEnabled) {
+      // TinyURL may have been generated asynchronously — refetch after a short delay
+      setTimeout(async () => {
+        try {
+          const email2 = document.getElementById('user-email').textContent;
+          const r2 = await fetch(`/api/videos/${currentVideoId}?email=${encodeURIComponent(email2)}`);
+          if (r2.ok) {
+            const { video: v2 } = await r2.json();
+            if (v2 && v2.tiny_url) {
+              document.getElementById('public-share-url').value = v2.tiny_url;
+              document.getElementById('public-qr-code').src = `https://api.qrserver.com/v1/create-qr-code/?size=160x160&data=${encodeURIComponent(v2.tiny_url)}&bgcolor=F8FAFC&color=032D60`;
+            }
+          }
+        } catch (_) {}
+      }, 3000);
     }
 
     window._origSettings = { name, brand: brandName, language, voice: voiceId, duration: String(durationTarget), music: musicTrackId, 'custom-instructions': customInstructions, description };

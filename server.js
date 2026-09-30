@@ -87,6 +87,58 @@ async function generateTinyUrlForVideo(videoId) {
   return tinyUrl;
 }
 
+// ─── Video Proxy Sync ───
+const VIDEO_SYNC_SECRET = process.env.VIDEO_SYNC_SECRET || '';
+
+/**
+ * Push a video's public data to the proxy app so it can serve
+ * the public player page outside the private space.
+ * Non-blocking — failures are logged but don't break the flow.
+ */
+async function syncVideoToProxy(videoId) {
+  if (!VIDEO_PROXY_BASE_URL || !VIDEO_SYNC_SECRET) return;
+  try {
+    const rows = await query(
+      'SELECT id, name, brand_name, brand_logo_url, description, video_url, thumbnail_url, status, public_enabled, public_password, tiny_url FROM videos WHERE id = ?',
+      [videoId]
+    );
+    if (rows.length === 0) return;
+
+    const video = rows[0];
+    const body = JSON.stringify({ secret: VIDEO_SYNC_SECRET, ...video });
+    const url = new URL(`${VIDEO_PROXY_BASE_URL}/video/sync`);
+
+    const lib = url.protocol === 'https:' ? https : http;
+    await new Promise((resolve, reject) => {
+      const req = lib.request(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
+        timeout: 10000,
+      }, (resp) => {
+        let data = '';
+        resp.on('data', c => data += c);
+        resp.on('end', () => {
+          if (resp.statusCode === 200) {
+            console.log(`[Proxy Sync] Video ${videoId} synced`);
+            resolve();
+          } else {
+            console.warn(`[Proxy Sync] Video ${videoId} sync failed: HTTP ${resp.statusCode} ${data.substring(0, 200)}`);
+            resolve(); // don't reject — non-fatal
+          }
+        });
+      });
+      req.on('error', (err) => {
+        console.warn(`[Proxy Sync] Video ${videoId} sync error: ${err.message}`);
+        resolve();
+      });
+      req.write(body);
+      req.end();
+    });
+  } catch (err) {
+    console.warn(`[Proxy Sync] Video ${videoId} sync error: ${err.message}`);
+  }
+}
+
 // ─── Dynamic App URLs (env-driven for staging/prod) ───
 const APP_URL_MAP = {
   'https://demoforge.aubreydemo.com':        toBrowserUrl(process.env.DEMOFORGE_URL)        || 'https://demoforge.aubreydemo.com',
@@ -1024,6 +1076,11 @@ app.put('/api/videos/:id', async (req, res) => {
       } else if (current) {
         tinyUrl = current.tiny_url;
       }
+    }
+
+    // Sync public video data to proxy (non-blocking)
+    if (publicEnabled !== undefined) {
+      syncVideoToProxy(parseInt(req.params.id)).catch(() => {});
     }
 
     res.json({ success: true, tinyUrl });
@@ -2822,10 +2879,11 @@ async function start() {
     }
   }
 
-  // ─── Auto-backfill TinyURLs for existing public videos (one-time, non-blocking) ───
+  // ─── Auto-backfill TinyURLs + sync public videos to proxy (one-time, non-blocking) ───
   if (VIDEO_PROXY_BASE_URL) {
     (async () => {
       try {
+        // Backfill TinyURLs for videos missing them
         const vids = await query(
           'SELECT id FROM videos WHERE public_enabled = ? AND (tiny_url IS NULL OR tiny_url = ?)',
           [isPostgres ? true : 1, '']
@@ -2840,8 +2898,24 @@ async function start() {
           }
           console.log(`[TinyURL] Backfill done: ${ok}/${vids.length} succeeded`);
         }
+
+        // Sync ALL public videos to proxy
+        const allPublic = await query(
+          'SELECT id FROM videos WHERE public_enabled = ?',
+          [isPostgres ? true : 1]
+        );
+        if (allPublic.length > 0 && VIDEO_SYNC_SECRET) {
+          console.log(`[Proxy Sync] Syncing ${allPublic.length} public video(s) to proxy...`);
+          let synced = 0;
+          for (const v of allPublic) {
+            await syncVideoToProxy(v.id);
+            synced++;
+            await new Promise(r => setTimeout(r, 300));
+          }
+          console.log(`[Proxy Sync] Done: ${synced}/${allPublic.length} synced`);
+        }
       } catch (e) {
-        console.warn('[TinyURL] Backfill error (non-fatal):', e.message);
+        console.warn('[TinyURL/Sync] Backfill error (non-fatal):', e.message);
       }
     })();
   }

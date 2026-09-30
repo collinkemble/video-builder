@@ -22,8 +22,12 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 const BUILD_VERSION = 'v187-tinyurl-proxy';
 
-// ─── Video Proxy Base URL (for TinyURL generation) ───
+// ─── Video Proxy Base URL ───
 const VIDEO_PROXY_BASE_URL = (process.env.VIDEO_PROXY_BASE_URL || '').replace(/\/+$/, '');
+
+// ─── PocketSIC scene channels to exclude from Video Builder ───
+// These scene types are not suitable for video rendering (e.g. data dashboards)
+const EXCLUDED_SCENE_CHANNELS = ['data360'];
 
 // ─── Staging Banner ───
 const STAGING_BANNER_HTML = '<div style="background:#f59e0b;color:#000;text-align:center;padding:4px;font-size:12px;font-weight:700;position:fixed;top:0;left:0;right:0;z-index:99999;">⚠️ STAGING ENVIRONMENT</div><div style="height:28px;"></div>';
@@ -2007,6 +2011,10 @@ app.get('/api/pocketsic/projects/:id/scenes', async (req, res) => {
     }
 
     const data = await pResp.json();
+    // Filter out excluded scene types (e.g. data360) that Video Builder can't render
+    if (data.scenes && Array.isArray(data.scenes)) {
+      data.scenes = data.scenes.filter(s => !EXCLUDED_SCENE_CHANNELS.includes((s.channel || s.channel_type || '').toLowerCase()));
+    }
     res.json(data);
   } catch (err) {
     console.error('PocketSIC scenes proxy failed:', err);

@@ -1649,8 +1649,9 @@ function renderScenes(sceneData) {
   const empty = document.getElementById('scenes-empty');
   const count = document.getElementById('scene-count');
 
+  const EXCLUDED_CHANNELS = ['data360'];
   const data = typeof sceneData === 'string' ? JSON.parse(sceneData || '{}') : (sceneData || {});
-  const scenes = data.scenes || [];
+  const scenes = (data.scenes || []).filter(s => !EXCLUDED_CHANNELS.includes((s.channel || s.channel_type || '').toLowerCase()));
 
   count.textContent = scenes.length + ' scene' + (scenes.length !== 1 ? 's' : '');
 

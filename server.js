@@ -2822,6 +2822,30 @@ async function start() {
     }
   }
 
+  // ─── Auto-backfill TinyURLs for existing public videos (one-time, non-blocking) ───
+  if (VIDEO_PROXY_BASE_URL) {
+    (async () => {
+      try {
+        const vids = await query(
+          'SELECT id FROM videos WHERE public_enabled = ? AND (tiny_url IS NULL OR tiny_url = ?)',
+          [isPostgres ? true : 1, '']
+        );
+        if (vids.length > 0) {
+          console.log(`[TinyURL] Backfilling ${vids.length} public videos...`);
+          let ok = 0;
+          for (const v of vids) {
+            const url = await generateTinyUrlForVideo(v.id);
+            if (url) ok++;
+            await new Promise(r => setTimeout(r, 600));
+          }
+          console.log(`[TinyURL] Backfill done: ${ok}/${vids.length} succeeded`);
+        }
+      } catch (e) {
+        console.warn('[TinyURL] Backfill error (non-fatal):', e.message);
+      }
+    })();
+  }
+
   const server = app.listen(PORT, () => {
     console.log(`Video Builder running on http://localhost:${PORT}`);
     if (!process.env.GEMINI_API_KEY) {

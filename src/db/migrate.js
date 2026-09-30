@@ -70,6 +70,7 @@ async function migrate() {
         "ALTER TABLE videos ADD COLUMN public_enabled TINYINT(1) DEFAULT 0",
         "ALTER TABLE videos ADD COLUMN public_username VARCHAR(255) DEFAULT NULL",
         "ALTER TABLE videos ADD COLUMN public_password VARCHAR(255) DEFAULT NULL",
+        "ALTER TABLE videos ADD COLUMN tiny_url VARCHAR(255) DEFAULT NULL",
       ];
 
       const allAlters = [...sharedAlters, ...appAlters];

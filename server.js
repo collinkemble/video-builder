@@ -15,10 +15,15 @@ const { deleteVideoAssets } = require('./src/utils/r2');
 const { parseEditInstruction } = require('./src/pipeline/smartEditParser');
 
 const fs = require('fs');
+const https = require('https');
+const http = require('http');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const BUILD_VERSION = 'v186-pipeline-visibility';
+const BUILD_VERSION = 'v187-tinyurl-proxy';
+
+// ─── Video Proxy Base URL (for TinyURL generation) ───
+const VIDEO_PROXY_BASE_URL = (process.env.VIDEO_PROXY_BASE_URL || '').replace(/\/+$/, '');
 
 // ─── Staging Banner ───
 const STAGING_BANNER_HTML = '<div style="background:#f59e0b;color:#000;text-align:center;padding:4px;font-size:12px;font-weight:700;position:fixed;top:0;left:0;right:0;z-index:99999;">⚠️ STAGING ENVIRONMENT</div><div style="height:28px;"></div>';
@@ -34,6 +39,52 @@ try {
 function toBrowserUrl(url) {
   if (!url) return url;
   return url.replace(/\.herokuapp\.com\b/, '.herokuapp-internal.com');
+}
+
+// ─── TinyURL Helper ───
+/**
+ * Create a TinyURL short link for a given long URL.
+ * Uses the free legacy API endpoint (no account needed).
+ * Returns the short URL string, or null on failure.
+ */
+async function createTinyUrl(longUrl) {
+  return new Promise((resolve) => {
+    const apiUrl = `https://tinyurl.com/api-create.php?url=${encodeURIComponent(longUrl)}`;
+    https.get(apiUrl, { timeout: 10000 }, (resp) => {
+      let data = '';
+      resp.on('data', (chunk) => { data += chunk; });
+      resp.on('end', () => {
+        const url = data.trim();
+        if (url.startsWith('https://tinyurl.com/') || url.startsWith('http://tinyurl.com/')) {
+          resolve(url);
+        } else {
+          console.error('[TinyURL] Unexpected response:', url.substring(0, 200));
+          resolve(null);
+        }
+      });
+    }).on('error', (err) => {
+      console.error('[TinyURL] Request failed:', err.message);
+      resolve(null);
+    });
+  });
+}
+
+/**
+ * Generate a TinyURL for a video's proxy page and store it.
+ * Returns the tiny_url or null if generation failed / not configured.
+ */
+async function generateTinyUrlForVideo(videoId) {
+  if (!VIDEO_PROXY_BASE_URL) {
+    console.warn('[TinyURL] VIDEO_PROXY_BASE_URL not configured — skipping');
+    return null;
+  }
+  const proxyUrl = `${VIDEO_PROXY_BASE_URL}/video/${videoId}`;
+  const tinyUrl = await createTinyUrl(proxyUrl);
+  if (tinyUrl) {
+    await query('UPDATE videos SET tiny_url = ? WHERE id = ?', [tinyUrl, videoId]);
+    console.log(`[TinyURL] Created for video ${videoId}: ${tinyUrl}`);
+  }
+  return tinyUrl;
 }
 
 // ─── Dynamic App URLs (env-driven for staging/prod) ───
@@ -653,7 +704,7 @@ app.get('/api/videos', async (req, res) => {
     const videos = await query(
       `SELECT id, name, brand_name, pocketsic_project_name, status,
               video_url, thumbnail_url, duration_actual, error, language,
-              public_enabled, shared_by, shared_at, created_at, updated_at
+              public_enabled, tiny_url, shared_by, shared_at, created_at, updated_at
        FROM videos WHERE user_id = ? ORDER BY updated_at DESC`,
       [user.id]
     );
@@ -964,7 +1015,18 @@ app.put('/api/videos/:id', async (req, res) => {
       await query(`UPDATE videos SET ${sets.join(', ')} WHERE id = ?`, params);
     }
 
-    res.json({ success: true });
+    // Auto-generate TinyURL when public page is enabled
+    let tinyUrl = null;
+    if (publicEnabled) {
+      const [current] = await query('SELECT tiny_url FROM videos WHERE id = ?', [req.params.id]);
+      if (current && !current.tiny_url) {
+        tinyUrl = await generateTinyUrlForVideo(parseInt(req.params.id));
+      } else if (current) {
+        tinyUrl = current.tiny_url;
+      }
+    }
+
+    res.json({ success: true, tinyUrl });
   } catch (err) {
     console.error('Failed to update video:', err);
     res.status(500).json({ error: 'Failed to update video' });
@@ -2132,6 +2194,48 @@ app.post('/api/videos/:id/share/confirm', async (req, res) => {
 
 // JWT secret for short-lived watch tokens (scoped to individual videos)
 const WATCH_JWT_SECRET = crypto.createHash('sha256').update('watch-token:' + (process.env.SESSION_SECRET || 'dev')).digest('hex');
+
+// ─── TinyURL Backfill Endpoint (admin only) ───
+app.post('/api/videos/backfill-tinyurls', async (req, res) => {
+  try {
+    const { email } = req.body;
+    if (!email || !isAdmin(email)) {
+      return res.status(403).json({ error: 'Admin access required' });
+    }
+
+    if (!VIDEO_PROXY_BASE_URL) {
+      return res.status(400).json({ error: 'VIDEO_PROXY_BASE_URL not configured' });
+    }
+
+    // Find all public-enabled videos without a tiny_url
+    const videos = await query(
+      'SELECT id FROM videos WHERE public_enabled = ? AND (tiny_url IS NULL OR tiny_url = ?)',
+      [isPostgres ? true : 1, '']
+    );
+
+    console.log(`[TinyURL Backfill] Found ${videos.length} videos to process`);
+
+    let success = 0;
+    let failed = 0;
+    for (const v of videos) {
+      const url = await generateTinyUrlForVideo(v.id);
+      if (url) {
+        success++;
+      } else {
+        failed++;
+      }
+      // Small delay between API calls to avoid rate limiting
+      if (videos.length > 1) {
+        await new Promise(r => setTimeout(r, 500));
+      }
+    }
+
+    res.json({ total: videos.length, success, failed });
+  } catch (err) {
+    console.error('[TinyURL Backfill] Error:', err);
+    res.status(500).json({ error: 'Backfill failed' });
+  }
+});
 
 // Rate limiting for password attempts (in-memory, per video)
 const _watchAttempts = {};

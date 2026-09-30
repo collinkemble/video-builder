@@ -1490,9 +1490,11 @@ async function viewVideo(id, skipPush) {
     document.getElementById('edit-public-enabled').checked = publicEnabled;
     updatePublicToggleUI(publicEnabled);
 
-    const shareUrl = `${window.location.origin}/watch/${video.id}`;
+    // Prefer TinyURL (short proxy link) over the internal /watch/:id URL
+    const shareUrl = video.tiny_url || `${window.location.origin}/watch/${video.id}`;
     document.getElementById('public-share-url').value = shareUrl;
-    document.getElementById('public-preview-link').href = shareUrl;
+    // Preview link should open the internal player page (always works from within the network)
+    document.getElementById('public-preview-link').href = `${window.location.origin}/watch/${video.id}`;
 
     // Generate QR code for the share URL via API
     document.getElementById('public-qr-code').src = `https://api.qrserver.com/v1/create-qr-code/?size=160x160&data=${encodeURIComponent(shareUrl)}&bgcolor=F8FAFC&color=032D60`;
@@ -3379,6 +3381,13 @@ async function saveVideoSettings() {
       body: JSON.stringify(body),
     });
     if (!resp.ok) throw new Error('Save failed');
+    const result = await resp.json();
+
+    // If server generated a TinyURL, update the share link immediately
+    if (result.tinyUrl) {
+      document.getElementById('public-share-url').value = result.tinyUrl;
+      document.getElementById('public-qr-code').src = `https://api.qrserver.com/v1/create-qr-code/?size=160x160&data=${encodeURIComponent(result.tinyUrl)}&bgcolor=F8FAFC&color=032D60`;
+    }
 
     window._origSettings = { name, brand: brandName, language, voice: voiceId, duration: String(durationTarget), music: musicTrackId, 'custom-instructions': customInstructions, description };
     document.getElementById('detail-breadcrumb').textContent = name;

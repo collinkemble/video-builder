@@ -15,6 +15,14 @@ async function migrate() {
       await pool.query(schema);
       console.log('✓ PostgreSQL schema applied');
 
+      // Add columns that may be missing from existing tables
+      const pgMigrations = [
+        "ALTER TABLE videos ADD COLUMN IF NOT EXISTS tiny_url VARCHAR(255) DEFAULT NULL",
+      ];
+      for (const stmt of pgMigrations) {
+        try { await pool.query(stmt); } catch (e) { /* column may already exist */ }
+      }
+
       // Auto-promote admin users from ADMIN_EMAILS env var
       const adminEmails = (process.env.ADMIN_EMAILS || '').split(',').map(e => e.trim()).filter(Boolean);
       if (adminEmails.length > 0) {

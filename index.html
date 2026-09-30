@@ -1182,6 +1182,7 @@ async function initAndCheckAuth() {
     const configResp = await fetch('/api/auth/config');
     const config = await configResp.json();
     cookieDomain = config.cookieDomain || null;
+    window._videoProxyBaseUrl = config.videoProxyBaseUrl || null;
 
     // SSO auto-login
     const ssoToken = config.ssoToken || config.ssoSessionToken;
@@ -1490,10 +1491,11 @@ async function viewVideo(id, skipPush) {
     document.getElementById('edit-public-enabled').checked = publicEnabled;
     updatePublicToggleUI(publicEnabled);
 
-    // Prefer TinyURL (short proxy link) over the internal /watch/:id URL
-    const shareUrl = video.tiny_url || `${window.location.origin}/watch/${video.id}`;
+    // Use proxy URL for external sharing, fallback to internal /watch/:id
+    const proxyBase = window._videoProxyBaseUrl;
+    const shareUrl = proxyBase ? `${proxyBase}/video/${video.id}` : `${window.location.origin}/watch/${video.id}`;
     document.getElementById('public-share-url').value = shareUrl;
-    // Preview link should open the internal player page (always works from within the network)
+    // Preview link opens the internal player page (always works from within the network)
     document.getElementById('public-preview-link').href = `${window.location.origin}/watch/${video.id}`;
 
     // Generate QR code for the share URL via API
@@ -3381,28 +3383,6 @@ async function saveVideoSettings() {
       body: JSON.stringify(body),
     });
     if (!resp.ok) throw new Error('Save failed');
-    const result = await resp.json();
-
-    // If server generated a TinyURL, update the share link immediately
-    if (result.tinyUrl) {
-      document.getElementById('public-share-url').value = result.tinyUrl;
-      document.getElementById('public-qr-code').src = `https://api.qrserver.com/v1/create-qr-code/?size=160x160&data=${encodeURIComponent(result.tinyUrl)}&bgcolor=F8FAFC&color=032D60`;
-    } else if (publicEnabled) {
-      // TinyURL may have been generated asynchronously — refetch after a short delay
-      setTimeout(async () => {
-        try {
-          const email2 = document.getElementById('user-email').textContent;
-          const r2 = await fetch(`/api/videos/${currentVideoId}?email=${encodeURIComponent(email2)}`);
-          if (r2.ok) {
-            const { video: v2 } = await r2.json();
-            if (v2 && v2.tiny_url) {
-              document.getElementById('public-share-url').value = v2.tiny_url;
-              document.getElementById('public-qr-code').src = `https://api.qrserver.com/v1/create-qr-code/?size=160x160&data=${encodeURIComponent(v2.tiny_url)}&bgcolor=F8FAFC&color=032D60`;
-            }
-          }
-        } catch (_) {}
-      }, 3000);
-    }
 
     window._origSettings = { name, brand: brandName, language, voice: voiceId, duration: String(durationTarget), music: musicTrackId, 'custom-instructions': customInstructions, description };
     document.getElementById('detail-breadcrumb').textContent = name;

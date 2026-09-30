@@ -346,6 +346,7 @@ app.get('/api/auth/config', async (req, res) => {
     cookieDomain: process.env.COOKIE_DOMAIN || null,
     ssoSessionToken,
     ssoEmail,
+    videoProxyBaseUrl: VIDEO_PROXY_BASE_URL || null,
   });
 });
 
@@ -1067,23 +1068,12 @@ app.put('/api/videos/:id', async (req, res) => {
       await query(`UPDATE videos SET ${sets.join(', ')} WHERE id = ?`, params);
     }
 
-    // Auto-generate TinyURL when public page is enabled
-    let tinyUrl = null;
-    if (publicEnabled) {
-      const [current] = await query('SELECT tiny_url FROM videos WHERE id = ?', [req.params.id]);
-      if (current && !current.tiny_url) {
-        tinyUrl = await generateTinyUrlForVideo(parseInt(req.params.id));
-      } else if (current) {
-        tinyUrl = current.tiny_url;
-      }
-    }
-
     // Sync public video data to proxy (non-blocking)
     if (publicEnabled !== undefined) {
       syncVideoToProxy(parseInt(req.params.id)).catch(() => {});
     }
 
-    res.json({ success: true, tinyUrl });
+    res.json({ success: true });
   } catch (err) {
     console.error('Failed to update video:', err);
     res.status(500).json({ error: 'Failed to update video' });
@@ -2879,27 +2869,10 @@ async function start() {
     }
   }
 
-  // ─── Auto-backfill TinyURLs + sync public videos to proxy (one-time, non-blocking) ───
+  // ─── Sync public videos to proxy on startup (one-time, non-blocking) ───
   if (VIDEO_PROXY_BASE_URL) {
     (async () => {
       try {
-        // Backfill TinyURLs for videos missing them
-        const vids = await query(
-          'SELECT id FROM videos WHERE public_enabled = ? AND (tiny_url IS NULL OR tiny_url = ?)',
-          [isPostgres ? true : 1, '']
-        );
-        if (vids.length > 0) {
-          console.log(`[TinyURL] Backfilling ${vids.length} public videos...`);
-          let ok = 0;
-          for (const v of vids) {
-            const url = await generateTinyUrlForVideo(v.id);
-            if (url) ok++;
-            await new Promise(r => setTimeout(r, 600));
-          }
-          console.log(`[TinyURL] Backfill done: ${ok}/${vids.length} succeeded`);
-        }
-
-        // Sync ALL public videos to proxy
         const allPublic = await query(
           'SELECT id FROM videos WHERE public_enabled = ?',
           [isPostgres ? true : 1]
@@ -2915,7 +2888,7 @@ async function start() {
           console.log(`[Proxy Sync] Done: ${synced}/${allPublic.length} synced`);
         }
       } catch (e) {
-        console.warn('[TinyURL/Sync] Backfill error (non-fatal):', e.message);
+        console.warn('[Proxy Sync] Startup sync error (non-fatal):', e.message);
       }
     })();
   }

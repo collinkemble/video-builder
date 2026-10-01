@@ -2698,6 +2698,21 @@ async function recoverStaleJobs() {
         ['compositing', 'uploading'].includes(v.status);
 
       if (canAutoResume) {
+        // If the video was uploading and already has a video_url, the upload completed
+        // before the restart — just mark it as completed, don't re-run the pipeline
+        if (v.status === 'uploading') {
+          const [fresh] = await query('SELECT video_url FROM videos WHERE id = ?', [v.id]);
+          if (fresh && fresh.video_url) {
+            await query("UPDATE videos SET status = 'completed', error = NULL WHERE id = ?", [v.id]);
+            await query(
+              "UPDATE video_jobs SET status = 'completed', completed_at = NOW() WHERE video_id = ? AND status IN ('pending', 'running')",
+              [v.id]
+            );
+            console.log(`[Recovery] Video ${v.id} ("${v.name}") was uploading but already has video_url — marked completed.`);
+            continue;
+          }
+        }
+
         // Video has all assets — auto-resume by requeueing the full pipeline
         // The pipeline will detect existing segment_assets and skip to composite
         console.log(`[Recovery] Video ${v.id} ("${v.name}") was ${v.status} with segment assets — auto-resuming.`);

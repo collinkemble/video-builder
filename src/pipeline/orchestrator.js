@@ -221,22 +221,22 @@ async function _runPipelineImpl(videoId, userId, options = {}) {
     }
 
     // ── Resolve brand logo URL (fallback to PocketSIC if missing) ──
+    // Uses withTimeout instead of AbortController (which doesn't work on Heroku Fir)
     let brandLogoUrl = video.brand_logo_url || sceneData.brand_logo_url || null;
     if (!brandLogoUrl && video.pocketsic_project_id) {
       try {
         const POCKETSIC_BASE_URL = process.env.POCKETSIC_BASE_URL || 'https://pocketsic.aubreydemo.com';
         const POCKETSIC_API_KEY = process.env.POCKETSIC_API_KEY;
         if (POCKETSIC_API_KEY) {
-          // Fetch the user's email for the PocketSIC API call
           const [user] = await query('SELECT email FROM users WHERE id = ?', [userId]);
           const email = user ? user.email : '';
-          const _ac1 = new AbortController();
-          const _t1 = setTimeout(() => _ac1.abort(), 10000);
-          const pResp = await fetch(
-            `${POCKETSIC_BASE_URL}/api/projects/${video.pocketsic_project_id}?email=${encodeURIComponent(email)}`,
-            { headers: { 'X-API-Key': POCKETSIC_API_KEY }, signal: _ac1.signal }
+          const pResp = await withTimeout(
+            fetch(
+              `${POCKETSIC_BASE_URL}/api/projects/${video.pocketsic_project_id}?email=${encodeURIComponent(email)}`,
+              { headers: { 'X-API-Key': POCKETSIC_API_KEY } }
+            ),
+            10000, 'PocketSIC brand logo fetch'
           );
-          clearTimeout(_t1);
           if (pResp.ok) {
             const pData = await pResp.json();
             const proj = pData.project || pData;
@@ -244,7 +244,6 @@ async function _runPipelineImpl(videoId, userId, options = {}) {
             brandLogoUrl = bp.logoUrl || bp.logo_url || bp.logo || proj.brand_logo_url || proj.logo_url || null;
             if (brandLogoUrl) {
               console.log(`[Pipeline] Resolved brand logo from PocketSIC: ${brandLogoUrl}`);
-              // Persist so we don't need to fetch again
               await query('UPDATE videos SET brand_logo_url = ? WHERE id = ?', [brandLogoUrl, videoId]);
             }
           }
@@ -263,13 +262,13 @@ async function _runPipelineImpl(videoId, userId, options = {}) {
         if (POCKETSIC_API_KEY_P) {
           const [user] = await query('SELECT email FROM users WHERE id = ?', [userId]);
           const email = user ? user.email : '';
-          const _ac2 = new AbortController();
-          const _t2 = setTimeout(() => _ac2.abort(), 10000);
-          const pResp2 = await fetch(
-            `${POCKETSIC_BASE_URL_P}/api/projects/${video.pocketsic_project_id}?email=${encodeURIComponent(email)}`,
-            { headers: { 'X-API-Key': POCKETSIC_API_KEY_P }, signal: _ac2.signal }
+          const pResp2 = await withTimeout(
+            fetch(
+              `${POCKETSIC_BASE_URL_P}/api/projects/${video.pocketsic_project_id}?email=${encodeURIComponent(email)}`,
+              { headers: { 'X-API-Key': POCKETSIC_API_KEY_P } }
+            ),
+            10000, 'PocketSIC persona image fetch'
           );
-          clearTimeout(_t2);
           if (pResp2.ok) {
             const pData2 = await pResp2.json();
             const proj2 = pData2.project || pData2;

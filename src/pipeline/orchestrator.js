@@ -230,10 +230,13 @@ async function _runPipelineImpl(videoId, userId, options = {}) {
           // Fetch the user's email for the PocketSIC API call
           const [user] = await query('SELECT email FROM users WHERE id = ?', [userId]);
           const email = user ? user.email : '';
+          const _ac1 = new AbortController();
+          const _t1 = setTimeout(() => _ac1.abort(), 10000);
           const pResp = await fetch(
             `${POCKETSIC_BASE_URL}/api/projects/${video.pocketsic_project_id}?email=${encodeURIComponent(email)}`,
-            { headers: { 'X-API-Key': POCKETSIC_API_KEY } }
+            { headers: { 'X-API-Key': POCKETSIC_API_KEY }, signal: _ac1.signal }
           );
+          clearTimeout(_t1);
           if (pResp.ok) {
             const pData = await pResp.json();
             const proj = pData.project || pData;
@@ -260,10 +263,13 @@ async function _runPipelineImpl(videoId, userId, options = {}) {
         if (POCKETSIC_API_KEY_P) {
           const [user] = await query('SELECT email FROM users WHERE id = ?', [userId]);
           const email = user ? user.email : '';
+          const _ac2 = new AbortController();
+          const _t2 = setTimeout(() => _ac2.abort(), 10000);
           const pResp2 = await fetch(
             `${POCKETSIC_BASE_URL_P}/api/projects/${video.pocketsic_project_id}?email=${encodeURIComponent(email)}`,
-            { headers: { 'X-API-Key': POCKETSIC_API_KEY_P } }
+            { headers: { 'X-API-Key': POCKETSIC_API_KEY_P }, signal: _ac2.signal }
           );
+          clearTimeout(_t2);
           if (pResp2.ok) {
             const pData2 = await pResp2.json();
             const proj2 = pData2.project || pData2;

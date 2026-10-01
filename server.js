@@ -806,10 +806,13 @@ app.get('/api/videos/:id', async (req, res) => {
     const _psBaseUrl = process.env.POCKETSIC_BASE_URL || 'https://pocketsic.aubreydemo.com';
     if (!video.brand_logo_url && video.pocketsic_project_id && _psApiKey) {
       try {
+        const _ac = new AbortController();
+        const _to = setTimeout(() => _ac.abort(), 10000);
         const pResp = await fetch(
           `${_psBaseUrl}/api/projects/${video.pocketsic_project_id}?email=${encodeURIComponent(email)}`,
-          { headers: { 'X-API-Key': _psApiKey } }
+          { headers: { 'X-API-Key': _psApiKey }, signal: _ac.signal }
         );
+        clearTimeout(_to);
         if (pResp.ok) {
           const pData = await pResp.json();
           const proj = pData.project || pData;
@@ -832,10 +835,13 @@ app.get('/api/videos/:id', async (req, res) => {
       try {
         // Reuse PocketSIC data if already fetched above, otherwise make a new call
         let projData = null;
+        const _ac2 = new AbortController();
+        const _to2 = setTimeout(() => _ac2.abort(), 10000);
         const pResp2 = await fetch(
           `${_psBaseUrl}/api/projects/${video.pocketsic_project_id}?email=${encodeURIComponent(email)}`,
-          { headers: { 'X-API-Key': _psApiKey } }
+          { headers: { 'X-API-Key': _psApiKey }, signal: _ac2.signal }
         );
+        clearTimeout(_to2);
         if (pResp2.ok) {
           const pData2 = await pResp2.json();
           projData = pData2.project || pData2;
@@ -2698,6 +2704,21 @@ async function recoverStaleJobs() {
         ['compositing', 'uploading'].includes(v.status);
 
       if (canAutoResume) {
+        // If the video was uploading and already has a video_url, the upload completed
+        // before the restart — just mark it as completed, don't re-run the pipeline
+        if (v.status === 'uploading') {
+          const [fresh] = await query('SELECT video_url FROM videos WHERE id = ?', [v.id]);
+          if (fresh && fresh.video_url) {
+            await query("UPDATE videos SET status = 'completed', error = NULL WHERE id = ?", [v.id]);
+            await query(
+              "UPDATE video_jobs SET status = 'completed', completed_at = NOW() WHERE video_id = ? AND status IN ('pending', 'running')",
+              [v.id]
+            );
+            console.log(`[Recovery] Video ${v.id} ("${v.name}") was uploading but already has video_url — marked completed.`);
+            continue;
+          }
+        }
+
         // Video has all assets — auto-resume by requeueing the full pipeline
         // The pipeline will detect existing segment_assets and skip to composite
         console.log(`[Recovery] Video ${v.id} ("${v.name}") was ${v.status} with segment assets — auto-resuming.`);

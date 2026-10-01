@@ -23,13 +23,13 @@ CRITICAL RULES YOU MUST FOLLOW:
 1. ABSOLUTELY NO screens of any kind — no phone screens, laptop screens, tablet screens, computer monitors, TV screens, smartwatch screens, or any digital display showing content.
 2. ABSOLUTELY NO close-ups of devices — do not show any device screen from an angle where you can see what is displayed.
 3. DO NOT generate images of people looking at screens, typing on keyboards, or using touchscreens in close-up.
-4. Feature the person from the reference image as the MAIN character. Show them in lifestyle moments: walking, shopping, enjoying products, in beautiful environments. IMPORTANT: Dress the person in clothing appropriate for the scene — if they are exercising, put them in athletic wear; if at a formal event, put them in formal attire; if outdoors hiking, put them in outdoor gear. Do NOT keep them in whatever outfit they are wearing in the reference image if it does not match the activity. Their face and identity stay the same, but their wardrobe MUST fit the scene.
-5. Every surface in the scene must be COMPLETELY CLEAN AND SMOOTH. This is the MOST IMPORTANT rule. All glasses must be perfectly plain, smooth, transparent glass — like simple kitchen tumblers or plain pint glasses you'd buy unprinted from a store. All bottles must be completely bare glass with zero printing or paper on them. All packaging must be plain solid single colors. All clothing must be solid colors. All storefronts and signs must be out of focus or show abstract shapes only. Think of this as a "stock footage" world where no brands exist — every object is a generic, unprinted, clean version of itself.
-6. Slow cinematic motion only — no rapid movement.
-7. ABSOLUTELY NO morphing between people — the person must remain the SAME throughout. Do NOT transition one person into a different person.
-8. Show only ONE person (the reference person) per shot. Never add random other people.
-9. NO delivery trucks, shipping vehicles, or logistics imagery.
-10. The person must NOT be talking, speaking, mouthing words, or moving their lips unless the scene description explicitly calls for speaking or conversation. Show them in silent, contemplative, or active moments — smiling is fine, but their mouth must stay CLOSED or in a natural resting position.`;
+4. ABSOLUTELY NO TALKING — the person must NEVER be speaking, talking to camera, mouthing words, lip-syncing, or moving their lips at any point. Their mouth must stay CLOSED or in a natural resting smile. Show them in SILENT lifestyle moments only — walking, looking, enjoying, contemplating. This is b-roll footage with a voiceover, NOT a talking-head video. If you show moving lips the clip is unusable.
+5. Feature the person from the reference image as the MAIN character. Show them in lifestyle moments: walking, shopping, enjoying products, in beautiful environments. IMPORTANT: Dress the person in clothing appropriate for the scene — if they are exercising, put them in athletic wear; if at a formal event, put them in formal attire; if outdoors hiking, put them in outdoor gear. Do NOT keep them in whatever outfit they are wearing in the reference image if it does not match the activity. Their face and identity stay the same, but their wardrobe MUST fit the scene.
+6. Every surface in the scene must be COMPLETELY CLEAN AND SMOOTH. This is the MOST IMPORTANT rule. All glasses must be perfectly plain, smooth, transparent glass — like simple kitchen tumblers or plain pint glasses you'd buy unprinted from a store. All bottles must be completely bare glass with zero printing or paper on them. All packaging must be plain solid single colors. All clothing must be solid colors. All storefronts and signs must be out of focus or show abstract shapes only. Think of this as a "stock footage" world where no brands exist — every object is a generic, unprinted, clean version of itself.
+7. Slow cinematic motion only — no rapid movement.
+8. ABSOLUTELY NO morphing between people — the person must remain the SAME throughout. Do NOT transition one person into a different person.
+9. Show only ONE person (the reference person) per shot. Never add random other people.
+10. NO delivery trucks, shipping vehicles, or logistics imagery.`;
 
 // Rules for clips WITHOUT persona reference — NO PEOPLE to avoid random strangers
 const VIDEO_PROMPT_RULES_NO_PERSONA = `Style: Cinematic b-roll footage. Smooth, slow camera movement. Warm natural lighting. Shallow depth of field. High production value.
@@ -181,7 +181,7 @@ async function generateBrollVideo({ description, brandName, brandDescription = '
   // If persona image is provided, enhance the prompt to explicitly mention the person
   let personaPromptHint = '';
   if (personaImageUrl) {
-    personaPromptHint = 'IMPORTANT: You MUST feature the exact person from the provided reference image as the main character in this clip. Match their face, hair, skin tone, body type, and facial features precisely from the reference image. However, ADAPT their clothing and outfit to match the scene — if the scene involves exercise, dress them in athletic wear; if a formal event, dress them formally; if casual, dress them casually. The person\'s IDENTITY stays the same but their WARDROBE should fit the activity and setting described. ';
+    personaPromptHint = 'IMPORTANT: You MUST feature the exact person from the provided reference image as the main character in this clip. Match their face, hair, skin tone, body type, and facial features precisely from the reference image. However, ADAPT their clothing and outfit to match the scene — if the scene involves exercise, dress them in athletic wear; if a formal event, dress them formally; if casual, dress them casually. The person\'s IDENTITY stays the same but their WARDROBE should fit the activity and setting described. CRITICAL: The person must NOT be talking or moving their lips at any point — this is silent b-roll with a voiceover, not a talking-head shot. ';
   }
 
   // Build brand/persona context — sanitized to avoid AI generating fake logos.
@@ -543,39 +543,56 @@ function truncate(str, maxLen) {
  * @returns {Promise<{filePath: string, videoRef: object|null}>} File path + video ref for chaining
  */
 async function generateBroll({ description, brandName, brandDescription = '', personaDescription = '', outputDir, segmentType = '', segmentChannel = '', personaImageUrl = null }) {
-  // Try video generation first (Veo) — generates 8s clips
-  const videoResult = await generateBrollVideo({ description, brandName, brandDescription, personaDescription, outputDir, segmentType, segmentChannel, personaImageUrl });
-  if (videoResult) return videoResult;  // { filePath, videoRef }
+  const MAX_ATTEMPTS = 5;
+  const BASE_DELAY_MS = 5000; // Exponential backoff: 5s, 10s, 20s, 40s between retries
 
-  // Wait before retrying to avoid rate-limit (429) cascading failures
-  console.log(`[B-Roll] Retry 2: waiting 5s before simplified prompt (no persona)...`);
-  await new Promise(r => setTimeout(r, 5000));
-  const retryResult = await generateBrollVideo({
-    description: `Cinematic lifestyle footage: ${description.substring(0, 100)}`,
-    brandName, brandDescription, personaDescription, outputDir, segmentType, segmentChannel,
-    personaImageUrl: null,  // Drop persona ref on retry — it can cause failures
-  });
-  if (retryResult) return retryResult;
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    // Backoff delay before retries (not before first attempt)
+    if (attempt > 1) {
+      const delay = BASE_DELAY_MS * Math.pow(2, attempt - 2); // 5s, 10s, 20s, 40s
+      console.log(`[B-Roll] Attempt ${attempt}/${MAX_ATTEMPTS}: waiting ${delay / 1000}s before retry...`);
+      await new Promise(r => setTimeout(r, delay));
+    }
 
-  // Third attempt with longer delay — ultra-minimal prompt
-  console.log(`[B-Roll] Retry 3: waiting 10s before minimal prompt...`);
-  await new Promise(r => setTimeout(r, 10000));
-  const minimalDesc = segmentType === 'intro'
-    ? `Beautiful cinematic opening shot. Slow camera movement across a stunning ${brandName || 'modern'} environment. Warm golden lighting. No text. No screens.`
-    : segmentType === 'outro'
-    ? `Warm cinematic closing shot. Slow pull-back camera movement. Beautiful sunset or golden hour lighting. No text. No screens.`
-    : `Smooth cinematic b-roll footage. Slow camera movement. Beautiful lighting. ${description.substring(0, 60)}. No text. No screens.`;
-  const retry3Result = await generateBrollVideo({
-    description: minimalDesc,
-    brandName, outputDir, segmentType, segmentChannel,
-    personaImageUrl: null,
-  });
-  if (retry3Result) return retry3Result;
+    // Progressively simplify prompts on retries
+    let desc = description;
+    let usePersona = personaImageUrl;
+    let passBrandDesc = brandDescription;
+    let passPersonaDesc = personaDescription;
 
-  // Fallback to image generation (Gemini Imagen)
-  console.warn(`[B-Roll] All 3 Veo attempts failed for ${segmentType || 'broll'} segment. Falling back to static image.`);
-  const imagePath = await generateBrollImage({ description, brandName, outputDir });
-  return { filePath: imagePath, videoRef: null };
+    if (attempt === 2) {
+      // Drop persona, simplify prompt
+      desc = `Cinematic lifestyle footage: ${description.substring(0, 100)}`;
+      usePersona = null;
+    } else if (attempt >= 3) {
+      // Ultra-minimal prompt — no persona, no brand/persona descriptions
+      usePersona = null;
+      passBrandDesc = '';
+      passPersonaDesc = '';
+      desc = segmentType === 'intro'
+        ? `Beautiful cinematic opening shot. Slow camera movement across a stunning ${brandName || 'modern'} environment. Warm golden lighting. No text. No screens. No talking.`
+        : segmentType === 'outro'
+        ? `Warm cinematic closing shot. Slow pull-back camera movement. Beautiful sunset or golden hour lighting. No text. No screens. No talking.`
+        : `Smooth cinematic b-roll footage. Slow camera movement. Beautiful lighting. ${description.substring(0, 60)}. No text. No screens. No talking.`;
+    }
+
+    const result = await generateBrollVideo({
+      description: desc,
+      brandName,
+      brandDescription: passBrandDesc,
+      personaDescription: passPersonaDesc,
+      outputDir,
+      segmentType,
+      segmentChannel,
+      personaImageUrl: usePersona,
+    });
+
+    if (result) return result;
+    console.warn(`[B-Roll] Attempt ${attempt}/${MAX_ATTEMPTS} failed for ${segmentType || 'broll'} segment`);
+  }
+
+  // ALL attempts exhausted — fail hard, no image fallback
+  throw new Error(`B-roll video generation failed after ${MAX_ATTEMPTS} attempts for ${segmentType || 'broll'} segment. Description: "${description.substring(0, 80)}"`);
 }
 
 /**
@@ -727,7 +744,7 @@ async function generateAllBroll(segments, brandName, outputDir, onProgress, pers
       }
 
       // Build continuation prompt — keep it coherent with the original
-      const continuationPrompt = `Continue the same cinematic scene smoothly. Maintain the same visual style, lighting, color palette, and camera movement. ${sanitizeBrollPrompt(desc, brandName).substring(0, 120)}`;
+      const continuationPrompt = `Continue the same cinematic scene smoothly. Maintain the same visual style, lighting, color palette, and camera movement. CRITICAL: If a person is visible, they must NOT be talking, speaking, or moving their lips — mouth stays closed. ${sanitizeBrollPrompt(desc, brandName).substring(0, 120)}`;
 
       const extResult = await extendBrollVideo({
         videoRef: currentVideoRef,
@@ -833,13 +850,23 @@ async function generateAllBroll(segments, brandName, outputDir, onProgress, pers
     await runNextSegment();
   }
 
-  // Launch initial batch with staggered starts
-  const workers = [];
-  for (let w = 0; w < Math.min(MAX_CONCURRENT, segmentClipCounts.length); w++) {
-    if (w > 0) await new Promise(r => setTimeout(r, STAGGER_MS));
-    workers.push(runNextSegment());
-  }
-  await Promise.all(workers);
+  // Launch initial batch with staggered starts, with overall stage timeout
+  const BROLL_STAGE_TIMEOUT_MS = 15 * 60 * 1000; // 15 minutes max for entire b-roll stage
+
+  const workersPromise = (async () => {
+    const workers = [];
+    for (let w = 0; w < Math.min(MAX_CONCURRENT, segmentClipCounts.length); w++) {
+      if (w > 0) await new Promise(r => setTimeout(r, STAGGER_MS));
+      workers.push(runNextSegment());
+    }
+    await Promise.all(workers);
+  })();
+
+  const timeoutPromise = new Promise((_, reject) =>
+    setTimeout(() => reject(new Error(`B-roll generation timed out after ${BROLL_STAGE_TIMEOUT_MS / 60000} minutes`)), BROLL_STAGE_TIMEOUT_MS)
+  );
+
+  await Promise.race([workersPromise, timeoutPromise]);
 
   // Build results
   const results = segmentResults

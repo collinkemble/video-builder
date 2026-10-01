@@ -15,10 +15,19 @@ const { deleteVideoAssets } = require('./src/utils/r2');
 const { parseEditInstruction } = require('./src/pipeline/smartEditParser');
 
 const fs = require('fs');
+const https = require('https');
+const http = require('http');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const BUILD_VERSION = 'v186-pipeline-visibility';
+const BUILD_VERSION = 'v187-tinyurl-proxy';
+
+// ─── Video Proxy Base URL ───
+const VIDEO_PROXY_BASE_URL = (process.env.VIDEO_PROXY_BASE_URL || '').replace(/\/+$/, '');
+
+// ─── PocketSIC scene channels to exclude from Video Builder ───
+// These scene types are not suitable for video rendering (e.g. data dashboards)
+const EXCLUDED_SCENE_CHANNELS = ['data360'];
 
 // ─── Staging Banner ───
 const STAGING_BANNER_HTML = '<div style="background:#f59e0b;color:#000;text-align:center;padding:4px;font-size:12px;font-weight:700;position:fixed;top:0;left:0;right:0;z-index:99999;">⚠️ STAGING ENVIRONMENT</div><div style="height:28px;"></div>';
@@ -34,6 +43,104 @@ try {
 function toBrowserUrl(url) {
   if (!url) return url;
   return url.replace(/\.herokuapp\.com\b/, '.herokuapp-internal.com');
+}
+
+// ─── TinyURL Helper ───
+/**
+ * Create a TinyURL short link for a given long URL.
+ * Uses the free legacy API endpoint (no account needed).
+ * Returns the short URL string, or null on failure.
+ */
+async function createTinyUrl(longUrl) {
+  return new Promise((resolve) => {
+    const apiUrl = `https://tinyurl.com/api-create.php?url=${encodeURIComponent(longUrl)}`;
+    https.get(apiUrl, { timeout: 10000 }, (resp) => {
+      let data = '';
+      resp.on('data', (chunk) => { data += chunk; });
+      resp.on('end', () => {
+        const url = data.trim();
+        if (url.startsWith('https://tinyurl.com/') || url.startsWith('http://tinyurl.com/')) {
+          resolve(url);
+        } else {
+          console.error('[TinyURL] Unexpected response:', url.substring(0, 200));
+          resolve(null);
+        }
+      });
+    }).on('error', (err) => {
+      console.error('[TinyURL] Request failed:', err.message);
+      resolve(null);
+    });
+  });
+}
+
+/**
+ * Generate a TinyURL for a video's proxy page and store it.
+ * Returns the tiny_url or null if generation failed / not configured.
+ */
+async function generateTinyUrlForVideo(videoId) {
+  if (!VIDEO_PROXY_BASE_URL) {
+    console.warn('[TinyURL] VIDEO_PROXY_BASE_URL not configured — skipping');
+    return null;
+  }
+  const proxyUrl = `${VIDEO_PROXY_BASE_URL}/video/${videoId}`;
+  const tinyUrl = await createTinyUrl(proxyUrl);
+  if (tinyUrl) {
+    await query('UPDATE videos SET tiny_url = ? WHERE id = ?', [tinyUrl, videoId]);
+    console.log(`[TinyURL] Created for video ${videoId}: ${tinyUrl}`);
+  }
+  return tinyUrl;
+}
+
+// ─── Video Proxy Sync ───
+const VIDEO_SYNC_SECRET = process.env.VIDEO_SYNC_SECRET || '';
+
+/**
+ * Push a video's public data to the proxy app so it can serve
+ * the public player page outside the private space.
+ * Non-blocking — failures are logged but don't break the flow.
+ */
+async function syncVideoToProxy(videoId) {
+  if (!VIDEO_PROXY_BASE_URL || !VIDEO_SYNC_SECRET) return;
+  try {
+    const rows = await query(
+      'SELECT id, name, brand_name, brand_logo_url, description, video_url, thumbnail_url, status, public_enabled, public_password, tiny_url FROM videos WHERE id = ?',
+      [videoId]
+    );
+    if (rows.length === 0) return;
+
+    const video = rows[0];
+    const body = JSON.stringify({ secret: VIDEO_SYNC_SECRET, ...video });
+    const url = new URL(`${VIDEO_PROXY_BASE_URL}/video/sync`);
+
+    const lib = url.protocol === 'https:' ? https : http;
+    await new Promise((resolve, reject) => {
+      const req = lib.request(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
+        timeout: 10000,
+      }, (resp) => {
+        let data = '';
+        resp.on('data', c => data += c);
+        resp.on('end', () => {
+          if (resp.statusCode === 200) {
+            console.log(`[Proxy Sync] Video ${videoId} synced`);
+            resolve();
+          } else {
+            console.warn(`[Proxy Sync] Video ${videoId} sync failed: HTTP ${resp.statusCode} ${data.substring(0, 200)}`);
+            resolve(); // don't reject — non-fatal
+          }
+        });
+      });
+      req.on('error', (err) => {
+        console.warn(`[Proxy Sync] Video ${videoId} sync error: ${err.message}`);
+        resolve();
+      });
+      req.write(body);
+      req.end();
+    });
+  } catch (err) {
+    console.warn(`[Proxy Sync] Video ${videoId} sync error: ${err.message}`);
+  }
 }
 
 // ─── Dynamic App URLs (env-driven for staging/prod) ───
@@ -91,8 +198,8 @@ app.get('/api/diag-logs', (req, res) => {
 });
 
 // ─── JWT Session Tokens ───
-const JWT_SECRET = process.env.JWT_SECRET || (process.env.MAGIC_LINK_SECRET
-  ? crypto.createHash('sha256').update('video-builder-session:' + process.env.MAGIC_LINK_SECRET).digest('hex')
+const JWT_SECRET = process.env.JWT_SECRET || (process.env.SESSION_SECRET
+  ? crypto.createHash('sha256').update('video-builder-session:' + process.env.SESSION_SECRET).digest('hex')
   : 'dev-jwt-secret');
 const JWT_EXPIRY = '30d';
 
@@ -100,7 +207,7 @@ const JWT_EXPIRY = '30d';
 // Each app derives its JWT secret from the shared MAGIC_LINK_SECRET with a unique prefix.
 const CROSS_APP_SECRETS = (() => {
   const secrets = [JWT_SECRET];
-  const magicSecret = process.env.MAGIC_LINK_SECRET || process.env.MAGIC_SECRET_KEY;
+  const magicSecret = process.env.SESSION_SECRET || process.env.MAGIC_SECRET_KEY;
   if (magicSecret) {
     const prefixes = ['demoforge-session:', 'pocketsic-session:', 'saleo-session:', 'brandkit-session:', 'orgbuilder-session:', 'scriptwriter-session:', 'installer-session:'];
     for (const prefix of prefixes) {
@@ -239,10 +346,11 @@ app.get('/api/auth/config', async (req, res) => {
     );
   }
   res.json({
-    magicPublishableKey: process.env.MAGIC_PUBLISHABLE_KEY || process.env.VITE_MAGIC_LINK_KEY || null,
+    /* Magic SDK removed — SSO-only auth */
     cookieDomain: process.env.COOKIE_DOMAIN || null,
     ssoSessionToken,
     ssoEmail,
+    videoProxyBaseUrl: VIDEO_PROXY_BASE_URL || null,
   });
 });
 
@@ -653,7 +761,7 @@ app.get('/api/videos', async (req, res) => {
     const videos = await query(
       `SELECT id, name, brand_name, pocketsic_project_name, status,
               video_url, thumbnail_url, duration_actual, error, language,
-              public_enabled, shared_by, shared_at, created_at, updated_at
+              public_enabled, tiny_url, shared_by, shared_at, created_at, updated_at
        FROM videos WHERE user_id = ? ORDER BY updated_at DESC`,
       [user.id]
     );
@@ -962,6 +1070,11 @@ app.put('/api/videos/:id', async (req, res) => {
       params.push(req.params.id);
       // Ownership already verified above (including admin bypass)
       await query(`UPDATE videos SET ${sets.join(', ')} WHERE id = ?`, params);
+    }
+
+    // Sync public video data to proxy (non-blocking)
+    if (publicEnabled !== undefined) {
+      syncVideoToProxy(parseInt(req.params.id)).catch(() => {});
     }
 
     res.json({ success: true });
@@ -1898,6 +2011,10 @@ app.get('/api/pocketsic/projects/:id/scenes', async (req, res) => {
     }
 
     const data = await pResp.json();
+    // Filter out excluded scene types (e.g. data360) that Video Builder can't render
+    if (data.scenes && Array.isArray(data.scenes)) {
+      data.scenes = data.scenes.filter(s => !EXCLUDED_SCENE_CHANNELS.includes((s.channel || s.channel_type || '').toLowerCase()));
+    }
     res.json(data);
   } catch (err) {
     console.error('PocketSIC scenes proxy failed:', err);
@@ -2131,7 +2248,49 @@ app.post('/api/videos/:id/share/confirm', async (req, res) => {
 // ═══════════════════════════════════════════════
 
 // JWT secret for short-lived watch tokens (scoped to individual videos)
-const WATCH_JWT_SECRET = crypto.createHash('sha256').update('watch-token:' + (process.env.MAGIC_LINK_SECRET || 'dev')).digest('hex');
+const WATCH_JWT_SECRET = crypto.createHash('sha256').update('watch-token:' + (process.env.SESSION_SECRET || 'dev')).digest('hex');
+
+// ─── TinyURL Backfill Endpoint (admin only) ───
+app.post('/api/videos/backfill-tinyurls', async (req, res) => {
+  try {
+    const { email } = req.body;
+    if (!email || !isAdmin(email)) {
+      return res.status(403).json({ error: 'Admin access required' });
+    }
+
+    if (!VIDEO_PROXY_BASE_URL) {
+      return res.status(400).json({ error: 'VIDEO_PROXY_BASE_URL not configured' });
+    }
+
+    // Find all public-enabled videos without a tiny_url
+    const videos = await query(
+      'SELECT id FROM videos WHERE public_enabled = ? AND (tiny_url IS NULL OR tiny_url = ?)',
+      [isPostgres ? true : 1, '']
+    );
+
+    console.log(`[TinyURL Backfill] Found ${videos.length} videos to process`);
+
+    let success = 0;
+    let failed = 0;
+    for (const v of videos) {
+      const url = await generateTinyUrlForVideo(v.id);
+      if (url) {
+        success++;
+      } else {
+        failed++;
+      }
+      // Small delay between API calls to avoid rate limiting
+      if (videos.length > 1) {
+        await new Promise(r => setTimeout(r, 500));
+      }
+    }
+
+    res.json({ total: videos.length, success, failed });
+  } catch (err) {
+    console.error('[TinyURL Backfill] Error:', err);
+    res.status(500).json({ error: 'Backfill failed' });
+  }
+});
 
 // Rate limiting for password attempts (in-memory, per video)
 const _watchAttempts = {};
@@ -2716,6 +2875,30 @@ async function start() {
         console.error('Data migration error:', e.message);
       }
     }
+  }
+
+  // ─── Sync public videos to proxy on startup (one-time, non-blocking) ───
+  if (VIDEO_PROXY_BASE_URL) {
+    (async () => {
+      try {
+        const allPublic = await query(
+          'SELECT id FROM videos WHERE public_enabled = ?',
+          [isPostgres ? true : 1]
+        );
+        if (allPublic.length > 0 && VIDEO_SYNC_SECRET) {
+          console.log(`[Proxy Sync] Syncing ${allPublic.length} public video(s) to proxy...`);
+          let synced = 0;
+          for (const v of allPublic) {
+            await syncVideoToProxy(v.id);
+            synced++;
+            await new Promise(r => setTimeout(r, 300));
+          }
+          console.log(`[Proxy Sync] Done: ${synced}/${allPublic.length} synced`);
+        }
+      } catch (e) {
+        console.warn('[Proxy Sync] Startup sync error (non-fatal):', e.message);
+      }
+    })();
   }
 
   const server = app.listen(PORT, () => {

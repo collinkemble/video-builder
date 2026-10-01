@@ -148,7 +148,9 @@ async function _runPipelineImpl(videoId, userId, options = {}) {
     // added, deleted, and re-created in any order.  The CX Summary describes the
     // journey in the correct sequence, so we match each scene's channel/name against
     // the narrative text and sort by first-mention position.
-    const rawScenes = (sceneData.scenes || []).slice();
+    // Filter out excluded scene types (e.g. data360 dashboards) that can't be rendered in video
+    const EXCLUDED_CHANNELS = ['data360'];
+    const rawScenes = (sceneData.scenes || []).filter(s => !EXCLUDED_CHANNELS.includes((s.channel || s.channel_type || '').toLowerCase()));
     const cxSummary = sceneData.cx_summary || '';
     let scenes;
     if (cxSummary && rawScenes.length > 1) {
@@ -1068,7 +1070,7 @@ async function regenerateSegments(videoId, userId, changes) {
             for (let ext = 0; ext < extensionsNeeded; ext++) {
               if (ext > 0) await new Promise(r => setTimeout(r, 2000));
 
-              const continuationPrompt = `Continue the same cinematic scene smoothly. Maintain the same visual style, lighting, and camera movement. ${desc.substring(0, 120)}`;
+              const continuationPrompt = `Continue the same cinematic scene smoothly. Maintain the same visual style, lighting, and camera movement. CRITICAL: If a person is visible, they must NOT be talking, speaking, or moving their lips — mouth stays closed. ${desc.substring(0, 120)}`;
 
               const extResult = await extendBrollVideo({
                 videoRef: currentVideoRef,

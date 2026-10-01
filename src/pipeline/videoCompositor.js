@@ -17,9 +17,10 @@ const FFMPEG_PATH = findFfmpegPath();
 console.log(`[Compositor] FFmpeg path: ${FFMPEG_PATH}`);
 ffmpeg.setFfmpegPath(FFMPEG_PATH);
 
-// Target resolution
-const WIDTH = 1920;
-const HEIGHT = 1080;
+// Target resolution — 720p to match Veo b-roll source quality and reduce
+// FFmpeg memory usage on memory-constrained Heroku Fir dynos (512MB).
+const WIDTH = 1280;
+const HEIGHT = 720;
 const FPS = 30;
 
 /**

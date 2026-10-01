@@ -97,6 +97,7 @@ CREATE TABLE IF NOT EXISTS videos (
   public_enabled BOOLEAN DEFAULT FALSE,
   public_username VARCHAR(255) DEFAULT NULL,
   public_password VARCHAR(255) DEFAULT NULL,
+  tiny_url VARCHAR(255) DEFAULT NULL,
 
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()

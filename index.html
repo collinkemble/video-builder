@@ -2570,7 +2570,9 @@ async function pollForScriptCompletion(videoId, email, btn) {
     try {
       const statusResp = await fetch(`/api/videos/${videoId}?email=${encodeURIComponent(email)}`);
       if (!statusResp.ok) continue;
-      const video = await statusResp.json();
+      // API returns { video: {...} } — unwrap it (reading .status off the wrapper was always undefined)
+      const body = await statusResp.json();
+      const video = body.video || body;
       if (video.status === 'scripting') continue; // still generating
       if (video.status === 'error') {
         throw new Error(video.error || 'Script generation failed');

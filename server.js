@@ -861,15 +861,13 @@ app.get('/api/videos/:id', async (req, res) => {
     }
 
     // If persona image URL exists, verify it's accessible; if not, try presigned URL fallback
-    if (video.persona_image_url && video.persona_image_url.includes('r2.dev/')) {
+    const _st = require('./src/utils/storage');
+    if (video.persona_image_url && _st.isStorageUrl(video.persona_image_url) && _st.isOwnKey(_st.urlToKey(video.persona_image_url))) {
       try {
         const headResp = await fetch(video.persona_image_url, { method: 'HEAD' });
         if (!headResp.ok) {
           console.log(`[API] Persona image 404 at public URL, trying presigned fallback...`);
-          const { getPresignedUrl } = require('./src/utils/r2');
-          const urlObj = new URL(video.persona_image_url);
-          const r2Key = urlObj.pathname.replace(/^\//, '');
-          video.persona_image_url = await getPresignedUrl(r2Key, 3600);
+          video.persona_image_url = await _st.getPresignedUrl(_st.urlToKey(video.persona_image_url), 3600);
           console.log(`[API] Persona image presigned URL generated`);
         }
       } catch (e) {
@@ -896,6 +894,7 @@ app.post('/api/videos', async (req, res) => {
     if (!email || !name) {
       return res.status(400).json({ error: 'Missing required fields: email, name' });
     }
+    try { require('./src/utils/storage').assertNoEmbeddedImages(req.body); } catch (e) { return res.status(400).json({ error: e.message }); }
 
     const user = await getOrCreateUser(email);
 
@@ -946,6 +945,7 @@ app.put('/api/videos/:id', async (req, res) => {
   try {
     const { email, name, brandName, voiceId, language, durationTarget, sceneData, narrationScript, musicTrackId, customInstructions, pocketsicProjectId, pocketsicProjectName, scriptWriterScriptId, scriptWriterScriptName, scriptWriterData } = req.body;
     if (!email) return res.status(400).json({ error: 'Email required' });
+    try { require('./src/utils/storage').assertNoEmbeddedImages(req.body); } catch (e) { return res.status(400).json({ error: e.message }); }
 
     const user = await getOrCreateUser(email);
 
@@ -2933,8 +2933,8 @@ async function start() {
     if (!process.env.ELEVENLABS_API_KEY) {
       console.warn('⚠️  ELEVENLABS_API_KEY not set — voiceover will not work');
     }
-    if (!process.env.R2_ACCOUNT_ID) {
-      console.warn('⚠️  R2 credentials not set — video upload will not work');
+    if (!require('./src/utils/storage').isConfigured()) {
+      console.warn('⚠️  File storage not configured — video upload will not work');
     }
   });
 

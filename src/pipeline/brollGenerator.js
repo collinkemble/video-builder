@@ -226,14 +226,11 @@ async function generateBrollVideo({ description, brandName, brandDescription = '
         let imgResp = await fetch(personaImageUrl);
 
         // If public URL fails, try presigned URL from R2 as fallback
-        if (!imgResp.ok && personaImageUrl.includes('r2.dev/')) {
+        const _st = require('../utils/storage');
+        if (!imgResp.ok && _st.isStorageUrl(personaImageUrl) && _st.isOwnKey(_st.urlToKey(personaImageUrl))) {
           console.log(`[B-Roll Video] Public URL returned ${imgResp.status}, trying presigned URL fallback...`);
           try {
-            const { getPresignedUrl } = require('../utils/r2');
-            // Extract the R2 key from the public URL (everything after the domain/)
-            const urlObj = new URL(personaImageUrl);
-            const r2Key = urlObj.pathname.replace(/^\//, '');
-            const presignedUrl = await getPresignedUrl(r2Key, 300);
+            const presignedUrl = await _st.getPresignedUrl(_st.urlToKey(personaImageUrl), 300);
             imgResp = await fetch(presignedUrl);
             if (imgResp.ok) {
               console.log(`[B-Roll Video] ✅ Presigned URL fallback worked for persona image`);

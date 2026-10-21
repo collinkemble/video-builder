@@ -315,6 +315,7 @@ async function _runPipelineImpl(videoId, userId, options = {}) {
           durationTarget: video.duration_target || 180,
           language: video.language || 'English',
           scriptWriterData,
+          scriptSynopsis: scriptWriterData ? '' : (video.script_synopsis || ''),
           customInstructions: video.custom_instructions || '',
         });
 

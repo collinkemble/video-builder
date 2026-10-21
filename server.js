@@ -20,7 +20,7 @@ const http = require('http');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const BUILD_VERSION = 'v187-tinyurl-proxy';
+const BUILD_VERSION = 'v188-new-video-wizard';
 
 // ─── Video Proxy Base URL ───
 const VIDEO_PROXY_BASE_URL = (process.env.VIDEO_PROXY_BASE_URL || '').replace(/\/+$/, '');
@@ -890,7 +890,7 @@ app.get('/api/videos/:id', async (req, res) => {
 // POST /api/videos — create a new video
 app.post('/api/videos', async (req, res) => {
   try {
-    const { email, name, brandName, pocketsicProjectId, pocketsicProjectName, sceneData, voiceId, language, durationTarget, scriptWriterScriptId, scriptWriterScriptName, scriptWriterData } = req.body;
+    const { email, name, brandName, pocketsicProjectId, pocketsicProjectName, sceneData, voiceId, language, durationTarget, scriptWriterScriptId, scriptWriterScriptName, scriptWriterData, scriptSynopsis } = req.body;
     if (!email || !name) {
       return res.status(400).json({ error: 'Missing required fields: email, name' });
     }
@@ -903,10 +903,12 @@ app.post('/api/videos', async (req, res) => {
     const brandLogoUrl = parsedSceneData?.brand_logo_url || null;
 
     const lang = (language || '').trim() || 'English';
+    // A video uses EITHER a demo script OR a user-written synopsis — never both.
+    const synopsisToStore = scriptWriterData ? null : ((typeof scriptSynopsis === 'string' && scriptSynopsis.trim()) || null);
     const result = await query(
       `INSERT INTO videos (user_id, name, brand_name, brand_logo_url, pocketsic_project_id, pocketsic_project_name,
-        scene_data, voice_id, language, duration_target, music_track_id, scriptwriter_script_id, scriptwriter_script_name, scriptwriter_data, status)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft')`,
+        scene_data, voice_id, language, duration_target, music_track_id, scriptwriter_script_id, scriptwriter_script_name, scriptwriter_data, script_synopsis, status)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft')`,
       [
         user.id,
         name.trim(),
@@ -922,6 +924,7 @@ app.post('/api/videos', async (req, res) => {
         scriptWriterScriptId || null,
         scriptWriterScriptName || null,
         scriptWriterData ? JSON.stringify(scriptWriterData) : null,
+        synopsisToStore,
       ]
     );
 
@@ -1021,6 +1024,18 @@ app.put('/api/videos/:id', async (req, res) => {
     if (scriptWriterData !== undefined) {
       sets.push('scriptwriter_data = ?');
       params.push(scriptWriterData === '' || scriptWriterData === null ? null : (typeof scriptWriterData === 'string' ? scriptWriterData : JSON.stringify(scriptWriterData)));
+    }
+
+    // Script synopsis — a video uses EITHER a demo script OR a synopsis.
+    // Linking a script clears the synopsis; otherwise three-state guard (value → set, '' → clear, null/undefined → keep).
+    const { scriptSynopsis } = req.body;
+    const linkingScript = scriptWriterData !== undefined && scriptWriterData !== null && scriptWriterData !== '';
+    if (linkingScript) {
+      sets.push('script_synopsis = ?');
+      params.push(null);
+    } else if (scriptSynopsis !== undefined && scriptSynopsis !== null) {
+      sets.push('script_synopsis = ?');
+      params.push(String(scriptSynopsis).trim() === '' ? null : String(scriptSynopsis).trim());
     }
 
     // Three-state guard for persona_image_url: truthy → use it, empty string → clear to null, null/undefined → keep existing
@@ -1219,6 +1234,8 @@ app.post('/api/videos/:id/generate-script', async (req, res) => {
       durationTarget: video.duration_target || 180,
       language: video.language || 'English',
       scriptWriterData,
+      scriptSynopsis: scriptWriterData ? '' : (video.script_synopsis || ''),
+      customInstructions: video.custom_instructions || '',
     }).then(async (script) => {
       await query('UPDATE videos SET narration_script = ?, status = ?, updated_at = NOW() WHERE id = ?', [JSON.stringify(script), 'draft', req.params.id]);
       console.log(`[Script] Generation complete for video ${req.params.id}`);
@@ -2029,6 +2046,51 @@ app.get('/api/pocketsic/projects/:id/scenes', async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════
+// VIDEO BUILDER — Upload a demo script file (New Video wizard, step 3)
+// Reads text from PDF / Word / TXT so it can be used like a Script Writer script.
+// ═══════════════════════════════════════════════
+const _scriptUpload = require('multer')({ storage: require('multer').memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
+app.post('/api/upload/extract-script', (req, res, next) => {
+  _scriptUpload.single('file')(req, res, (err) => {
+    if (err) return res.status(400).json({ error: err.code === 'LIMIT_FILE_SIZE' ? 'File is too large (10 MB max).' : 'Upload failed.' });
+    next();
+  });
+}, async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'No file provided.' });
+    const ext = path.extname(req.file.originalname || '').toLowerCase();
+    let rawText = '';
+    if (ext === '.pdf') {
+      const { PDFParse } = require('pdf-parse');
+      const parser = new PDFParse({ data: req.file.buffer });
+      try {
+        const result = await parser.getText();
+        rawText = (result.text || '').replace(/^\s*--\s*\d+\s+of\s+\d+\s*--\s*$/gm, ''); // strip page markers
+      } finally {
+        await parser.destroy().catch(() => {});
+      }
+    } else if (ext === '.docx' || ext === '.doc') {
+      const mammoth = require('mammoth');
+      const result = await mammoth.extractRawText({ buffer: req.file.buffer });
+      rawText = result.value || '';
+    } else if (ext === '.txt') {
+      rawText = req.file.buffer.toString('utf-8');
+    } else {
+      return res.status(400).json({ error: 'Unsupported file type. Please upload a PDF, Word, or text file.' });
+    }
+
+    const text = rawText.replace(/\r\n/g, '\n').replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim();
+    if (!text) return res.status(400).json({ error: 'Could not extract text from the uploaded file.' });
+
+    const title = path.basename(req.file.originalname, ext).replace(/[_-]+/g, ' ').trim() || 'Uploaded Script';
+    res.json({ title, fileName: req.file.originalname, text: text.substring(0, 60000) });
+  } catch (err) {
+    console.error('[Upload Script] Extraction failed:', err.message);
+    res.status(500).json({ error: 'Could not read that file. Try a different PDF, Word, or text file.' });
+  }
+});
+
+// ═══════════════════════════════════════════════
 // VIDEO BUILDER — Script Writer Proxy (server-side API key)
 // ═══════════════════════════════════════════════
 
@@ -2092,8 +2154,8 @@ async function createSharedVideoCopy(sourceVideo, senderEmail, recipientEmail) {
     `INSERT INTO videos (user_id, name, brand_name, brand_logo_url, pocketsic_project_id, pocketsic_project_name,
       scene_data, narration_script, voiceover_timestamps, video_url, thumbnail_url, voiceover_url,
       voice_id, language, duration_target, duration_actual, music_track_id, scriptwriter_script_id, scriptwriter_script_name, scriptwriter_data,
-      persona_image_url, status, shared_by, shared_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
+      persona_image_url, script_synopsis, status, shared_by, shared_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
     [
       recipientUser.id,
       sourceVideo.name,
@@ -2116,6 +2178,7 @@ async function createSharedVideoCopy(sourceVideo, senderEmail, recipientEmail) {
       sourceVideo.scriptwriter_script_name || null,
       sourceVideo.scriptwriter_data ? (typeof sourceVideo.scriptwriter_data === 'string' ? sourceVideo.scriptwriter_data : JSON.stringify(sourceVideo.scriptwriter_data)) : null,
       sourceVideo.persona_image_url || null,
+      sourceVideo.script_synopsis || null,
       sourceVideo.status === 'completed' ? 'completed' : 'draft',
       senderEmail,
     ]
@@ -2210,7 +2273,7 @@ app.post('/api/videos/:id/share/confirm', async (req, res) => {
         await query(
           `UPDATE videos SET name = ?, brand_name = ?, brand_logo_url = ?, scene_data = ?, narration_script = ?,
             voiceover_timestamps = ?, video_url = ?, thumbnail_url = ?, voiceover_url = ?,
-            duration_actual = ?, language = ?, status = ?, shared_by = ?, shared_at = NOW(), updated_at = NOW()
+            duration_actual = ?, language = ?, script_synopsis = ?, status = ?, shared_by = ?, shared_at = NOW(), updated_at = NOW()
            WHERE id = ?`,
           [
             sourceVideo.name,
@@ -2224,6 +2287,7 @@ app.post('/api/videos/:id/share/confirm', async (req, res) => {
             sourceVideo.voiceover_url,
             sourceVideo.duration_actual,
             sourceVideo.language || 'English',
+            sourceVideo.script_synopsis || null,
             sourceVideo.status === 'completed' ? 'completed' : 'draft',
             email.toLowerCase(),
             copiedId,

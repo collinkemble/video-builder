@@ -20,7 +20,7 @@ const http = require('http');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const BUILD_VERSION = 'v188-new-video-wizard';
+const BUILD_VERSION = 'v189-omni-broll';
 
 // ─── Video Proxy Base URL ───
 const VIDEO_PROXY_BASE_URL = (process.env.VIDEO_PROXY_BASE_URL || '').replace(/\/+$/, '');
@@ -1413,7 +1413,7 @@ app.get('/api/videos/:id/status', async (req, res) => {
         return res.status(404).json({ error: 'Video not found' });
       }
       const jobs = await query(
-        'SELECT id, step, status, progress, total, error, started_at, completed_at FROM video_jobs WHERE video_id = ? ORDER BY created_at ASC',
+        'SELECT id, step, status, progress, total, error, output, started_at, completed_at FROM video_jobs WHERE video_id = ? ORDER BY created_at ASC',
         [req.params.id]
       );
       status = { video, jobs };
@@ -1906,43 +1906,32 @@ app.post('/api/videos/:id/upload-brand-logo', async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════
-// ADMIN — Veo Diagnostics (test video generation capability)
+// ADMIN — Video model diagnostics (runs ONE real Gemini Omni Flash generation, ~$1)
 // ═══════════════════════════════════════════════
 
 app.get('/api/admin/veo-test', async (req, res) => {
   const email = req.query.email;
   if (!email || !isAdmin(email)) return res.status(403).json({ error: 'Admin only' });
+  if (!process.env.GEMINI_API_KEY) return res.json({ status: 'error', message: 'GEMINI_API_KEY not configured' });
 
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) return res.json({ status: 'error', message: 'GEMINI_API_KEY not configured' });
-
-  const { GoogleGenAI } = require('@google/genai');
-  const ai = new GoogleGenAI({ apiKey });
-
-  const models = ['veo-3.1-lite', 'veo-3.1-fast', 'veo-3.1-generate-preview'];
-  const results = [];
-
-  for (const modelName of models) {
-    try {
-      const operation = await ai.models.generateVideos({
-        model: modelName,
-        prompt: 'A slow pan across a coffee cup on a wooden table, warm morning light',
-        config: { aspectRatio: '16:9', resolution: '720p', durationSeconds: '4', numberOfVideos: 1 },
-      });
-      results.push({ model: modelName, status: 'accepted', operationDone: operation.done });
-      // Don't wait for completion — just confirm the API accepts the request
-      break; // If one works, report success
-    } catch (err) {
-      results.push({
-        model: modelName,
-        status: 'failed',
-        error: err.message?.substring(0, 200),
-        httpStatus: err.status || null,
-      });
-    }
+  const { omniGenerate, omniModel } = require('./src/pipeline/brollGenerator');
+  const model = omniModel();
+  const started = Date.now();
+  try {
+    const { buffer, interactionId } = await omniGenerate({
+      input: 'A slow pan across a coffee cup on a wooden table, warm morning light. One single continuous shot. No people, no text.',
+      label: 'admin test',
+    });
+    res.json({
+      status: 'ok',
+      model,
+      seconds: Math.round((Date.now() - started) / 1000),
+      bytes: buffer.length,
+      extendable: !!interactionId,
+    });
+  } catch (err) {
+    res.json({ status: 'failed', model, seconds: Math.round((Date.now() - started) / 1000), error: (err.message || String(err)).substring(0, 400), httpStatus: err.status || null });
   }
-
-  res.json({ status: results.some(r => r.status === 'accepted') ? 'ok' : 'all_failed', results });
 });
 
 // ═══════════════════════════════════════════════
@@ -2672,64 +2661,35 @@ app.get('/{*splat}', (req, res) => {
 // ═══════════════════════════════════════════════
 
 /**
- * Non-blocking startup check: probe Veo API to verify the API key has
- * video generation access (requires paid-tier billing).
+ * Non-blocking startup check: confirm the Gemini key can see the b-roll video model
+ * (Gemini Omni Flash). Lists models only — no video is generated, so it costs nothing.
  * Logs results so they show up in Heroku logs automatically.
  */
 async function checkVeoCapability() {
-  const { GoogleGenAI } = require('@google/genai');
-  const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-
-  const veoModels = ['veo-3.1-generate-preview'];
-
-  console.log('[Startup Veo Check] Testing Veo video generation capability...');
-
-  for (const modelName of veoModels) {
-    try {
-      // Just initiate a short generation — we cancel immediately, we only care
-      // about whether the API key is authorized for this model.
-      const operation = await ai.models.generateVideos({
-        model: modelName,
-        prompt: 'A single blue circle on white background',
-        config: {
-          aspectRatio: '16:9',
-          resolution: '720p',
-          durationSeconds: 5,
-          numberOfVideos: 1,
-        },
-      });
-
-      // If we get here without an error, the model is accessible
-      console.log(`[Startup Veo Check] ✓ ${modelName} — ACCESSIBLE (operation started)`);
-
-      // We don't need the actual video — just log that it works.
-      // The operation will eventually time out or be garbage collected.
-      // Log the operation name for reference.
-      if (operation.name) {
-        console.log(`[Startup Veo Check]   Operation: ${operation.name}`);
-      }
-
-      // One model working is enough — stop testing
-      return;
-    } catch (err) {
-      const errMsg = err.message || String(err);
-      console.warn(`[Startup Veo Check] ✗ ${modelName} — FAILED: ${errMsg}`);
-
-      if (err.status) console.warn(`[Startup Veo Check]   HTTP ${err.status}: ${err.statusText || ''}`);
-      if (err.errorDetails) {
-        console.warn(`[Startup Veo Check]   Details: ${JSON.stringify(err.errorDetails).substring(0, 300)}`);
-      }
-
-      // Billing/permission error means no Veo model will work
-      if (errMsg.includes('billing') || errMsg.includes('quota') || errMsg.includes('permission') || errMsg.includes('403') || errMsg.includes('PERMISSION_DENIED')) {
-        console.error('[Startup Veo Check] ⚠️  Veo requires a paid-tier Gemini API key with billing enabled.');
-        console.error('[Startup Veo Check]    B-roll will fall back to still images until this is resolved.');
-        return;
-      }
-    }
+  const { omniModel } = require('./src/pipeline/brollGenerator');
+  const model = omniModel();
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    console.error('[Startup Video Model Check] ✗ GEMINI_API_KEY not configured — b-roll video cannot be generated.');
+    return;
   }
-
-  console.warn('[Startup Veo Check] ⚠️  No Veo models accessible. B-roll will use still images.');
+  console.log(`[Startup Video Model Check] Checking access to ${model}...`);
+  try {
+    const listing = await Promise.race([
+      fetch('https://generativelanguage.googleapis.com/v1beta/models?pageSize=500', { headers: { 'x-goog-api-key': apiKey } }).then(r => r.json()),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('timed out after 20s')), 20000)),
+    ]);
+    if (listing.error) throw new Error(listing.error.message || JSON.stringify(listing.error));
+    const names = (listing.models || []).map(m => (m.name || '').replace(/^models\//, ''));
+    if (names.includes(model)) {
+      console.log(`[Startup Video Model Check] ✓ ${model} — available on this key`);
+    } else {
+      const omni = names.filter(n => n.includes('omni'));
+      console.error(`[Startup Video Model Check] ✗ ${model} is NOT available on this key. Omni models visible: ${omni.join(', ') || 'none'}. B-roll sections will fail (no still images are used).`);
+    }
+  } catch (err) {
+    console.warn(`[Startup Video Model Check] Could not check models: ${err.message}`);
+  }
 }
 
 // ═══════════════════════════════════════════════

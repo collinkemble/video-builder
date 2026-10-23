@@ -3485,6 +3485,14 @@ function renderPipelineSteps(jobs) {
       <div style="flex: 1;">
         <div style="font-size: 14px; font-weight: 600; color: ${status === 'pending' ? '#9CA3AF' : '#111'};">${label}${progressText}</div>
         ${job && job.error ? '<div style="font-size: 12px; color: #B91C1C; margin-top: 2px;">' + esc(job.error) + '</div>' : ''}
+        ${(() => {
+          // B-roll notes (retries / reused sections) saved with the job
+          if (!job || !job.output) return '';
+          let out = job.output;
+          if (typeof out === 'string') { try { out = JSON.parse(out); } catch { return ''; } }
+          const notes = Array.isArray(out && out.notes) ? out.notes : [];
+          return notes.map(n => '<div style="font-size: 12px; color: #92400E; margin-top: 2px;">⚠ ' + esc(n) + '</div>').join('');
+        })()}
       </div>
       ${status === 'running' ? '<div class="flex gap-1"><div class="w-2 h-2 bg-amber-500 rounded-full" style="animation: pulse-dot 1.4s infinite ease-in-out both; animation-delay: 0s;"></div><div class="w-2 h-2 bg-amber-500 rounded-full" style="animation: pulse-dot 1.4s infinite ease-in-out both; animation-delay: 0.2s;"></div></div>' : ''}
     </div>`;

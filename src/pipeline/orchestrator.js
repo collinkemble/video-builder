@@ -414,6 +414,7 @@ async function _runPipelineImpl(videoId, userId, options = {}) {
 
     const brollJobId = await createJob(videoId, userId, 'broll');
     let brollImages = {};
+    let brollStats = null;
 
     try {
       const brollSegments = script.segments.filter(
@@ -442,13 +443,19 @@ async function _runPipelineImpl(videoId, userId, options = {}) {
           // mediaPaths is an array of clip paths (may be 1 or more)
           brollImages[b.order] = b.mediaPaths || [b.imagePath];
         });
+        brollStats = brolls.stats || null;
       }
 
-      await completeJob(brollJobId, { generated: Object.keys(brollImages).length });
+      await completeJob(brollJobId, {
+        generated: Object.keys(brollImages).length,
+        ...(brollStats ? { clips: brollStats.clips, extensions: brollStats.extensions, retried: brollStats.retried, reused: brollStats.reused, notes: brollStats.notes } : {}),
+      });
     } catch (err) {
-      // B-roll failure is non-fatal — continue with placeholders
-      console.warn(`B-roll generation partially failed: ${err.message}`);
-      await completeJob(brollJobId, { error: err.message, partial: true });
+      // Every b-roll section failed — fail the video visibly rather than shipping it without b-roll
+      // (no still-image fallback by design).
+      console.error(`B-roll generation failed: ${err.message}`);
+      await failJob(brollJobId, err.message);
+      throw err;
     }
 
     // ── Step 5: Video Composition ──
@@ -693,7 +700,7 @@ async function getPipelineStatus(videoId, userId) {
   if (!video) return null;
 
   const jobs = await query(
-    'SELECT id, step, status, progress, total, error, started_at, completed_at FROM video_jobs WHERE video_id = ? ORDER BY created_at ASC',
+    'SELECT id, step, status, progress, total, error, output, started_at, completed_at FROM video_jobs WHERE video_id = ? ORDER BY created_at ASC',
     [videoId]
   );
 
@@ -839,6 +846,7 @@ async function regenerateSegments(videoId, userId, changes) {
     // ── Regenerate b-roll for changed segments ──
     const brollChanges = changes.filter(c => c.regenerateBroll);
     const newBrollClips = {}; // order → local path
+    let regenBrollStats = null;
 
     if (brollJobId) await updateJob(brollJobId, 'running');
     if (brollChanges.length > 0) {
@@ -847,17 +855,33 @@ async function regenerateSegments(videoId, userId, changes) {
       // Resolve persona image
       let personaImageUrl = video.persona_image_url || null;
 
-      const { generateBroll, extendBrollVideo, calcClipsNeeded } = require('./brollGenerator');
+      const { calcClipsNeeded, generateSectionFootage, newBrollStats, summarizeBrollStats } = require('./brollGenerator');
+      regenBrollStats = newBrollStats();
+
+      // No still images: if a section's new b-roll fails, reuse (1) this section's previous clip,
+      // then (2) the nearest other b-roll section's clip.
+      const findRegenDonorClip = async (order) => {
+        const prevUrl = segmentAssets.clips && segmentAssets.clips[order];
+        if (prevUrl) {
+          try {
+            const local = path.join(workDir, `previous_clip_${order}.mp4`);
+            await dlFile(prevUrl, local);
+            if (fs.existsSync(local)) return { path: local, label: 'its previous b-roll' };
+          } catch (e) { console.warn(`[Regen] Could not download previous clip for section ${order}: ${e.message}`); }
+        }
+        const brollOrders = script.segments
+          .filter(s => s.visualType === 'broll' && s.order !== order)
+          .map(s => s.order)
+          .sort((a, b) => Math.abs(a - order) - Math.abs(b - order));
+        for (const o of brollOrders) {
+          const p = newBrollClips[o] || existingClips[o];
+          if (p && fs.existsSync(p)) return { path: p, label: `section ${o}` };
+        }
+        return null;
+      };
       const { spawn } = require('child_process');
       const ffmpegPath = process.env.FFMPEG_PATH || 'ffmpeg';
 
-      // Variation styles for multi-clip segments (fallback when extend API fails)
-      const variationStyles = [
-        null,  // First clip uses the original description unchanged
-        'Show a COMPLETELY DIFFERENT scene and setting — different location, different activity, different mood. Do NOT repeat any action or prop from the previous shot.',
-        'Show an OUTDOOR establishing shot — wide angle, environmental, no close-ups of objects. Completely different from previous clips.',
-        'Show a warm CLOSE-UP of hands or a facial expression — intimate, emotional moment. No props, no objects, no packages.',
-      ];
 
       for (const c of brollChanges) {
         const seg = script.segments.find(s => s.order === c.order);
@@ -1039,112 +1063,35 @@ async function regenerateSegments(videoId, userId, changes) {
           }
           if (duration < 1) duration = 1;
 
-          // Calculate how many 8s clips we need (same logic as full pipeline)
+          // How many ~10s Omni clips we need (same logic as full pipeline)
           const clipsNeeded = calcClipsNeeded(seg, timestamps, script.segments);
-          console.log(`[Regen] Segment ${c.order}: ${duration.toFixed(1)}s → generating ${clipsNeeded} clip(s)`);
-
-          // Generate initial clip, then use Veo Extend API to chain continuous footage.
-          // Falls back to independent clip generation if extend fails.
-          const mediaPaths = [];
-          const desc = seg.brollDescription || 'Professional lifestyle image';
+          console.log(`[Regen] Segment ${c.order}: ${duration.toFixed(1)}s → ${clipsNeeded} × 10s clip(s), up to 30s per continuous shot`);
           const bName = video.brand_name || sceneData.brand_name || 'Brand';
 
-          // Step 1: Generate initial clip
-          const initialResult = await generateBroll({
-            description: desc,
+          const mediaPaths = await generateSectionFootage({
+            seg,
+            clipsNeeded,
             brandName: bName,
             brandDescription: sceneData.brand_description || '',
             personaDescription: sceneData.persona_description || '',
             outputDir: workDir,
-            segmentType: seg.type || '',
-            segmentChannel: seg.channel || '',
             personaImageUrl: personaImageUrl || null,
+            stats: regenBrollStats,
+            logPrefix: '[Regen]',
           });
 
-          if (initialResult && initialResult.filePath) {
-            mediaPaths.push(initialResult.filePath);
-            console.log(`[Regen] Initial clip: ${initialResult.filePath.endsWith('.mp4') ? 'VIDEO' : 'IMAGE'}${initialResult.videoRef ? ' (extend-capable)' : ''}`);
-          }
-
-          // Step 2: Extend for additional clips (if initial was a video with videoRef)
-          if (clipsNeeded > 1 && initialResult && initialResult.videoRef) {
-            let currentVideoRef = initialResult.videoRef;
-            const extensionsNeeded = Math.min(clipsNeeded - 1, 20); // Max 20 extensions
-
-            console.log(`[Regen] Extending initial clip ${extensionsNeeded} time(s) for continuous footage...`);
-
-            for (let ext = 0; ext < extensionsNeeded; ext++) {
-              if (ext > 0) await new Promise(r => setTimeout(r, 2000));
-
-              const continuationPrompt = `Continue the same cinematic scene smoothly. Maintain the same visual style, lighting, and camera movement. CRITICAL: If a person is visible, they must NOT be talking, speaking, or moving their lips — mouth stays closed. ${desc.substring(0, 120)}`;
-
-              const extResult = await extendBrollVideo({
-                videoRef: currentVideoRef,
-                prompt: continuationPrompt,
-                outputDir: workDir,
-                extensionNumber: ext + 1,
-              });
-
-              if (!extResult) {
-                console.warn(`[Regen] Extend #${ext + 1} failed — falling back to independent clips for remaining ${extensionsNeeded - ext}`);
-                // Fall back to independent clips for remaining
-                for (let fi = 0; fi < extensionsNeeded - ext; fi++) {
-                  if (fi > 0) await new Promise(r => setTimeout(r, 3000));
-                  let fallbackDesc = desc;
-                  if (fi < variationStyles.length && variationStyles[fi]) {
-                    fallbackDesc = `${variationStyles[fi]} General theme: ${desc.substring(0, 80)}`;
-                  }
-                  const fbResult = await generateBroll({
-                    description: fallbackDesc,
-                    brandName: bName,
-                    brandDescription: sceneData.brand_description || '',
-                    personaDescription: sceneData.persona_description || '',
-                    outputDir: workDir,
-                    segmentType: seg.type || '',
-                    segmentChannel: seg.channel || '',
-                    personaImageUrl: null,
-                  });
-                  if (fbResult && fbResult.filePath) mediaPaths.push(fbResult.filePath);
-                }
-                break;
-              }
-
-              // Veo Extend returns the FULL combined video (original + extensions merged).
-              // Replace mediaPaths[0] with the latest — it contains the complete chain.
-              const prevPath = mediaPaths[0];
-              mediaPaths[0] = extResult.filePath;
-              try { if (prevPath && fs.existsSync(prevPath)) fs.unlinkSync(prevPath); } catch {}
-              currentVideoRef = extResult.videoRef;
-              console.log(`[Regen] Extend #${ext + 1}/${extensionsNeeded} done — full chain now in single file`);
-            }
-          } else if (clipsNeeded > 1 && initialResult && !initialResult.videoRef) {
-            // No videoRef (image fallback) — generate remaining clips independently
-            console.log(`[Regen] No videoRef for extend — generating ${clipsNeeded - 1} independent clips`);
-            for (let ci = 1; ci < clipsNeeded; ci++) {
-              if (ci > 1) await new Promise(r => setTimeout(r, 3000));
-              let fallbackDesc = desc;
-              if (ci < variationStyles.length && variationStyles[ci]) {
-                fallbackDesc = `${variationStyles[ci]} General theme: ${desc.substring(0, 80)}`;
-              }
-              const fbResult = await generateBroll({
-                description: fallbackDesc,
-                brandName: bName,
-                brandDescription: sceneData.brand_description || '',
-                personaDescription: sceneData.persona_description || '',
-                outputDir: workDir,
-                segmentType: seg.type || '',
-                segmentChannel: seg.channel || '',
-                personaImageUrl: null,
-              });
-              if (fbResult && fbResult.filePath) mediaPaths.push(fbResult.filePath);
-            }
-          }
-
-          const validPaths = mediaPaths.filter(p => p);
+          let validPaths = mediaPaths.filter(p => p && fs.existsSync(p));
 
           if (validPaths.length === 0) {
-            console.warn(`[Regen] No clips generated for segment ${c.order}`);
-            continue;
+            const donor = await findRegenDonorClip(c.order);
+            if (!donor) {
+              console.warn(`[Regen] No b-roll could be generated for section ${c.order} and nothing to reuse — keeping it out`);
+              regenBrollStats.notes.push(`Section ${c.order}: b-roll could not be generated and there was no other b-roll to reuse.`);
+              continue;
+            }
+            console.warn(`[Regen] Section ${c.order}: new b-roll failed — reusing ${donor.label}`);
+            regenBrollStats.reused.push({ order: c.order, from: donor.label });
+            validPaths = [donor.path];
           }
 
           const normalizedPath = path.join(workDir, `regen_clip_${c.order}.mp4`);
@@ -1237,7 +1184,7 @@ async function regenerateSegments(videoId, userId, changes) {
 
             await new Promise((resolve, reject) => {
               const proc = spawn(ffmpegPath, [
-                '-y', '-f', 'concat', '-safe', '0', '-i', concatFilePath,
+                '-y', '-stream_loop', '-1', '-f', 'concat', '-safe', '0', '-i', concatFilePath,
                 '-c:v', 'libx264', '-preset', 'fast', '-crf', '26',
                 '-t', String(duration), '-r', '30', '-pix_fmt', 'yuv420p',
                 '-an', '-movflags', '+faststart', normalizedPath,
@@ -1263,7 +1210,14 @@ async function regenerateSegments(videoId, userId, changes) {
       }
     }
 
-    if (brollJobId) await completeJob(brollJobId, { clips: Object.keys(newBrollClips).length });
+    if (brollJobId) {
+      const notes = regenBrollStats ? [...summarizeBrollStats(regenBrollStats), ...regenBrollStats.notes] : [];
+      await completeJob(brollJobId, {
+        clips: Object.keys(newBrollClips).length,
+        ...(regenBrollStats ? { retried: regenBrollStats.retried, reused: regenBrollStats.reused } : {}),
+        notes,
+      });
+    }
 
     // ── Build final clip list in order ──
     const allSegmentOrders = script.segments.map(s => s.order).sort((a, b) => a - b);

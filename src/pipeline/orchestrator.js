@@ -18,7 +18,7 @@ let _currentVideoId = null;
 let _pipelineStartedAt = null;
 const pipelineQueue = [];
 
-const PIPELINE_TIMEOUT_MS = 20 * 60 * 1000; // 20 minutes
+const PIPELINE_TIMEOUT_MS = 60 * 60 * 1000; // 60 minutes — b-roll quality re-takes can take a while
 
 /**
  * Helper: wrap a promise with a timeout. Rejects with a timeout error if not resolved in time.

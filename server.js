@@ -20,7 +20,7 @@ const http = require('http');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const BUILD_VERSION = 'v191-broll-qa';
+const BUILD_VERSION = 'v192-refresh-sources';
 
 // ─── Video Proxy Base URL ───
 const VIDEO_PROXY_BASE_URL = (process.env.VIDEO_PROXY_BASE_URL || '').replace(/\/+$/, '');
@@ -2128,6 +2128,123 @@ app.get('/api/scriptwriter/scripts/:id', async (req, res) => {
   } catch (err) {
     console.error('Script Writer proxy failed:', err);
     res.status(500).json({ error: 'Failed to fetch script' });
+  }
+});
+
+// ═══════════════════════════════════════════════
+// VIDEO BUILDER — Refresh a video's sources (PocketSIC project + Script Writer script)
+// Video Builder keeps a saved copy of the linked project and script; this re-pulls the latest
+// so new scenes, CX summary / persona / synopsis edits and script edits are picked up.
+// The narration script is NOT changed here — the page offers to regenerate it afterwards.
+// ═══════════════════════════════════════════════
+const REFRESH_EXCLUDED_CHANNELS = ['data360'];
+function refreshTimeout(promise, ms, label) {
+  let t;
+  return Promise.race([promise.finally(() => clearTimeout(t)), new Promise((_, rej) => { t = setTimeout(() => rej(new Error(label + ' timed out')), ms); })]);
+}
+
+app.post('/api/videos/:id/refresh-sources', async (req, res) => {
+  try {
+    const { email } = req.body || {};
+    if (!email) return res.status(400).json({ error: 'Email required' });
+    const user = await getOrCreateUser(email);
+    const rows = isAdmin(email)
+      ? await query('SELECT * FROM videos WHERE id = ?', [req.params.id])
+      : await query('SELECT * FROM videos WHERE id = ? AND user_id = ?', [req.params.id, user.id]);
+    if (rows.length === 0) return res.status(404).json({ error: 'Video not found' });
+    const video = rows[0];
+    const ownerRows = await query('SELECT email FROM users WHERE id = ?', [video.user_id]);
+    const ownerEmail = (ownerRows[0] && ownerRows[0].email) || email;
+
+    const sets = [];
+    const params = [];
+    const result = { project: null, script: null, changed: false };
+
+    // ── PocketSIC project ──
+    if (video.pocketsic_project_id) {
+      if (!POCKETSIC_API_KEY) return res.status(500).json({ error: 'PocketSIC API key not configured on server.' });
+      const hdr = { headers: { 'X-API-Key': POCKETSIC_API_KEY } };
+      const base = `${POCKETSIC_BASE_URL}/api/projects/${video.pocketsic_project_id}`;
+      const [projResp, scenesResp] = await Promise.all([
+        refreshTimeout(fetch(`${base}?email=${encodeURIComponent(ownerEmail)}`, hdr), 30000, 'PocketSIC project'),
+        refreshTimeout(fetch(`${base}/scenes?email=${encodeURIComponent(ownerEmail)}`, hdr), 30000, 'PocketSIC scenes'),
+      ]);
+      if (!scenesResp.ok) return res.status(502).json({ error: `Could not load the PocketSIC project (HTTP ${scenesResp.status}). It may have been deleted.` });
+      const project = projResp.ok ? ((await projResp.json()).project || {}) : {};
+      const scenesArr = ((await scenesResp.json()).scenes || [])
+        .filter(s => !REFRESH_EXCLUDED_CHANNELS.includes((s.channel || s.channel_type || '').toLowerCase()));
+      const bp = project.brand_profile || {};
+      const old = typeof video.scene_data === 'string' ? JSON.parse(video.scene_data || '{}') : (video.scene_data || {});
+      const fresh = {
+        ...old,
+        brand_name: project.brand_name || bp.name || old.brand_name || '',
+        brand_description: project.brand_description || bp.description || '',
+        brand_logo_url: bp.logoUrl || bp.logo_url || bp.logo || project.brand_logo_url || project.logo_url || old.brand_logo_url || '',
+        persona_name: project.persona_name || bp.personaName || '',
+        persona_description: project.persona || bp.persona || '',
+        synopsis: project.demo_story_synopsis || bp.demoStorySynopsis || '',
+        cx_summary: project.cx_summary || bp.cxSummary || '',
+        scenes: scenesArr.map(s => ({
+          id: s.id, sceneId: s.id, channel: s.channel || '', channel_type: s.channel || '',
+          name: s.name || s.scene_name || `Scene ${s.id}`, content_summary: s.name || '', description: s.name || '',
+          url: s.url || s.scene_url || '', config: s.config || {}, status: s.status || 'draft',
+        })),
+      };
+      const oldScenes = old.scenes || [];
+      const oldIds = new Set(oldScenes.map(s => String(s.id || s.sceneId)));
+      const newIds = new Set(fresh.scenes.map(s => String(s.id)));
+      const added = fresh.scenes.filter(s => !oldIds.has(String(s.id))).map(s => s.name || s.channel);
+      const removed = oldScenes.filter(s => !newIds.has(String(s.id || s.sceneId))).map(s => s.name || s.channel);
+      const renamed = fresh.scenes.filter(s => { const o = oldScenes.find(x => String(x.id || x.sceneId) === String(s.id)); return o && (o.name || '') !== (s.name || ''); }).length;
+      const reordered = !added.length && !removed.length && oldScenes.map(s => String(s.id || s.sceneId)).join(',') !== fresh.scenes.map(s => String(s.id)).join(',');
+      const fieldChanged = (k) => (old[k] || '').trim() !== (fresh[k] || '').trim();
+      const fields = { cx_summary: 'CX summary', synopsis: 'synopsis', persona_description: 'persona', persona_name: 'persona name', brand_description: 'brand description' };
+      const changedFields = Object.keys(fields).filter(fieldChanged).map(k => fields[k]);
+      result.project = {
+        name: project.name || video.pocketsic_project_name || '',
+        scenesBefore: oldScenes.length, scenesAfter: fresh.scenes.length,
+        added, removed, renamed, reordered, changedFields,
+        changed: !!(added.length || removed.length || renamed || reordered || changedFields.length),
+      };
+      sets.push('scene_data = ?'); params.push(JSON.stringify(fresh));
+      if (project.name && project.name !== video.pocketsic_project_name) { sets.push('pocketsic_project_name = ?'); params.push(project.name); }
+      if (!video.brand_logo_url && fresh.brand_logo_url) { sets.push('brand_logo_url = ?'); params.push(fresh.brand_logo_url); }
+    }
+
+    // ── Script Writer script (uploaded scripts have no source to refresh from) ──
+    const oldSw = video.scriptwriter_data ? (typeof video.scriptwriter_data === 'string' ? JSON.parse(video.scriptwriter_data) : video.scriptwriter_data) : null;
+    if (video.scriptwriter_script_id && !(oldSw && oldSw.source === 'upload')) {
+      if (!SCRIPTWRITER_API_KEY) return res.status(500).json({ error: 'Script Writer API key not configured on server.' });
+      const swResp = await refreshTimeout(fetch(`${SCRIPTWRITER_BASE_URL}/api/scripts/${video.scriptwriter_script_id}?email=${encodeURIComponent(ownerEmail)}`, {
+        headers: { 'X-API-Key': SCRIPTWRITER_API_KEY },
+      }), 30000, 'Script Writer');
+      if (!swResp.ok) return res.status(502).json({ error: `Could not load the Script Writer script (HTTP ${swResp.status}). It may have been deleted.` });
+      const sw = await swResp.json();
+      const freshSw = sw.script || sw;
+      const strip = (o) => { if (!o) return ''; const c = { ...o }; delete c.updated_at; delete c.updatedAt; return JSON.stringify(c); };
+      const changed = strip(oldSw) !== strip(freshSw);
+      result.script = { name: freshSw.script_name || freshSw.title || video.scriptwriter_script_name || '', changed };
+      sets.push('scriptwriter_data = ?'); params.push(JSON.stringify(freshSw));
+      const newName = freshSw.script_name || freshSw.title;
+      if (newName && newName !== video.scriptwriter_script_name) { sets.push('scriptwriter_script_name = ?'); params.push(newName); }
+    } else if (oldSw && oldSw.source === 'upload') {
+      result.script = { name: video.scriptwriter_script_name || 'Uploaded script', uploaded: true, changed: false };
+    }
+
+    if (!result.project && !result.script) {
+      return res.status(400).json({ error: 'This video has no PocketSIC project or Script Writer script linked.' });
+    }
+    if (sets.length) {
+      sets.push('updated_at = NOW()');
+      params.push(req.params.id);
+      await query(`UPDATE videos SET ${sets.join(', ')} WHERE id = ?`, params);
+    }
+    result.changed = !!((result.project && result.project.changed) || (result.script && result.script.changed));
+    console.log(`[Refresh] Video ${req.params.id}: ${JSON.stringify(result)}`);
+    res.json(result);
+  } catch (err) {
+    console.error('Refresh sources failed:', err);
+    res.status(500).json({ error: 'Refresh failed: ' + err.message });
   }
 });
 

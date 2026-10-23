@@ -593,6 +593,18 @@
         </div>
       </div>
 
+      <!-- Refresh sources (re-pull the latest PocketSIC project + Script Writer script) -->
+      <div id="refresh-sources-bar" class="mb-4" style="display: none; background: #F0F7FF; border: 1px solid #D0E3F7; border-radius: 12px; padding: 14px 18px;">
+        <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
+          <div style="flex: 1; min-width: 220px;">
+            <div style="font-size: 13px; font-weight: 700; color: #032D60;">Changed something in PocketSIC or Script Writer?</div>
+            <div style="font-size: 12px; color: #5a6f85; margin-top: 2px;">Video Builder keeps a saved copy of your project and script. Refresh to pull in new scenes, CX summary, persona, synopsis and script edits.</div>
+          </div>
+          <button id="refresh-sources-btn" onclick="refreshSources()" class="cursor-pointer" style="background: #0176D3; color: white; font-size: 13px; font-weight: 700; padding: 8px 16px; border-radius: 8px; border: none; white-space: nowrap;">🔄 Refresh from PocketSIC &amp; Script Writer</button>
+        </div>
+        <div id="refresh-sources-result" style="display: none; margin-top: 12px; padding: 10px 14px; border-radius: 8px; font-size: 13px; line-height: 1.5;"></div>
+      </div>
+
       <!-- PocketSIC Project Source Card -->
       <div id="pocketsic-card" class="mb-6"></div>
 
@@ -1743,6 +1755,7 @@ async function viewVideo(id, skipPush) {
     // Source cards
     renderPocketsicCard(video);
     renderScriptWriterCard(video);
+    renderRefreshSourcesBar(video);
 
     // Narration Script — auto-generate if scenes exist but no script yet
     const scriptData = video.narration_script;
@@ -2846,6 +2859,81 @@ async function pollForScriptCompletion(videoId, email, btn) {
     }
   }
   throw new Error('Script generation timed out. Please try again.');
+}
+
+// ── Refresh sources: re-pull the latest PocketSIC project and Script Writer script ──
+function renderRefreshSourcesBar(video) {
+  const bar = document.getElementById('refresh-sources-bar');
+  if (!bar) return;
+  const sw = video.scriptwriter_data || {};
+  const hasProject = !!video.pocketsic_project_id;
+  const hasSwScript = !!video.scriptwriter_script_id && sw.source !== 'upload';
+  bar.style.display = (hasProject || hasSwScript) ? 'block' : 'none';
+  const label = hasProject && hasSwScript ? 'PocketSIC & Script Writer' : hasProject ? 'PocketSIC' : 'Script Writer';
+  const btn = document.getElementById('refresh-sources-btn');
+  btn.disabled = false;
+  btn.textContent = '🔄 Refresh from ' + label;
+  const out = document.getElementById('refresh-sources-result');
+  out.style.display = 'none';
+  out.innerHTML = '';
+}
+
+function describeRefresh(r) {
+  const lines = [];
+  if (r.project) {
+    const p = r.project;
+    const bits = [];
+    if (p.added.length) bits.push(p.added.length + ' new scene' + (p.added.length === 1 ? '' : 's') + ' (' + p.added.map(esc).join(', ') + ')');
+    if (p.removed.length) bits.push(p.removed.length + ' scene' + (p.removed.length === 1 ? '' : 's') + ' removed (' + p.removed.map(esc).join(', ') + ')');
+    if (p.renamed) bits.push(p.renamed + ' scene' + (p.renamed === 1 ? '' : 's') + ' renamed');
+    if (p.reordered) bits.push('scene order changed');
+    if (p.changedFields.length) bits.push(p.changedFields.join(', ') + ' updated');
+    lines.push('<strong>PocketSIC:</strong> ' + (bits.length ? bits.join('; ') : 'no changes') + ' — ' + p.scenesAfter + ' scene' + (p.scenesAfter === 1 ? '' : 's') + ' now.');
+  }
+  if (r.script) {
+    lines.push('<strong>Script:</strong> ' + (r.script.uploaded ? 'uploaded file — nothing to refresh (re-upload it to change it)' : (r.script.changed ? 'updated from Script Writer' : 'no changes')) + '.');
+  }
+  return lines.join('<br>');
+}
+
+async function refreshSources() {
+  if (!currentVideoId) return;
+  const btn = document.getElementById('refresh-sources-btn');
+  const out = document.getElementById('refresh-sources-result');
+  const original = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = '⏳ Refreshing...';
+  out.style.display = 'none';
+  try {
+    const email = document.getElementById('user-email').textContent;
+    const resp = await fetch(`/api/videos/${currentVideoId}/refresh-sources`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email }),
+    });
+    const r = await resp.json().catch(() => ({}));
+    if (!resp.ok) throw new Error(r.error || 'Refresh failed');
+    const videoId = currentVideoId;
+    await viewVideo(videoId); // re-render with the refreshed scenes and script
+    const outEl = document.getElementById('refresh-sources-result');
+    outEl.style.display = 'block';
+    outEl.style.background = r.changed ? '#E8F5E9' : '#F8FAFC';
+    outEl.style.border = '1px solid ' + (r.changed ? '#A5D6A7' : '#E2E8F0');
+    outEl.style.color = r.changed ? '#1B5E20' : '#475569';
+    outEl.innerHTML = (r.changed ? '✓ Refreshed. ' : 'Already up to date. ') + describeRefresh(r) +
+      (r.changed ? '<div style="margin-top: 8px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap;"><span>The narration hasn\'t changed yet.</span>' +
+        '<button onclick="refreshRegenerateScript()" class="cursor-pointer" style="background: #7C3AED; color: white; font-size: 12px; font-weight: 700; padding: 6px 12px; border-radius: 7px; border: none;">✨ Regenerate narration script now</button></div>' : '');
+  } catch (err) {
+    out.style.display = 'block';
+    out.style.background = '#FEF2F2'; out.style.border = '1px solid #FECACA'; out.style.color = '#991B1B';
+    out.textContent = 'Refresh failed: ' + err.message;
+    btn.disabled = false;
+    btn.textContent = original;
+  }
+}
+
+function refreshRegenerateScript() {
+  const outEl = document.getElementById('refresh-sources-result');
+  if (outEl) outEl.style.display = 'none';
+  generateScriptOnly();
 }
 
 async function generateScriptOnly() {

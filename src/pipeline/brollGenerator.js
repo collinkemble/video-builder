@@ -30,7 +30,10 @@ CRITICAL RULES YOU MUST FOLLOW:
 8. ABSOLUTELY NO morphing between people — the person must remain the SAME throughout. Do NOT transition one person into a different person.
 9. Show only ONE person (the reference person) per shot. Never add random other people.
 10. NO delivery trucks, shipping vehicles, or logistics imagery.
-11. ONE single continuous shot — no scene cuts, no edits, no jumps to a different location or angle.`;
+11. ONE single continuous shot — no scene cuts, no edits, no jumps to a different location or angle.
+12. NO transitions of any kind — no dissolves, crossfades, fades to or from black, or blending between scenes. The whole clip happens in ONE place.
+13. Natural forward motion only — time always moves forward. People walk FORWARD in the direction they are facing and never walk or move backwards. Nothing is reversed, rewound, or played in slow motion.
+14. The person appears exactly ONCE in the frame — never two copies of them, no ghosting, no doubles, no reflections of a second version of them.`;
 
 // Rules for clips WITHOUT persona reference — NO PEOPLE to avoid random strangers
 const VIDEO_PROMPT_RULES_NO_PERSONA = `Style: Cinematic b-roll footage. Smooth, slow camera movement. Warm natural lighting. Shallow depth of field. High production value.
@@ -43,7 +46,9 @@ CRITICAL RULES YOU MUST FOLLOW:
 6. Slow cinematic motion only — no rapid movement.
 7. NO delivery trucks, shipping vehicles, or logistics imagery.
 8. Focus on MOOD and ATMOSPHERE — the visual should evoke the feeling of the brand without showing people.
-9. ONE single continuous shot — no scene cuts, no edits, no jumps to a different location or angle.`;
+9. ONE single continuous shot — no scene cuts, no edits, no jumps to a different location or angle.
+10. NO transitions of any kind — no dissolves, crossfades, fades to or from black, or blending between scenes. The whole clip happens in ONE place.
+11. Natural forward motion only — time always moves forward. Nothing is reversed, rewound, or played in slow motion.`;
 
 /**
  * Sanitize a b-roll prompt to remove brand names and product-specific references
@@ -386,13 +391,14 @@ async function extendBrollVideo({ videoRef, prompt, outputDir, extensionNumber =
   }
 }
 
-/** Continuation prompt that keeps the same person, outfit and setting. */
+/** Continuation prompt that keeps the same person, outfit and setting — and the same PLACE. */
 function buildContinuationPrompt(desc, brandName, hasPersona) {
-  return 'Continue the SAME single continuous shot smoothly — no scene cuts. Keep the same ' +
-    (hasPersona ? 'person, the same outfit, ' : '') +
+  return 'Continue the SAME single continuous shot smoothly from exactly where it left off, in the SAME location — do not move to a new place, and no scene cuts, dissolves, crossfades or fades. ' +
+    'Keep the same ' + (hasPersona ? 'person (exactly one of them, never a second copy), the same outfit, ' : '') +
     'setting, lighting, color palette, and camera style. ' +
+    'All motion continues FORWARD naturally' + (hasPersona ? '; the person keeps moving forward in the direction they face and never walks backwards or reverses' : '') + '. Nothing is rewound or reversed. ' +
     (hasPersona ? 'The person must NOT be talking, speaking, or moving their lips — mouth stays closed. ' : 'No people. ') +
-    'No text, no screens. Story continues: ' + sanitizeBrollPrompt(desc, brandName).substring(0, 160);
+    'No text, no screens. The same moment continues: ' + sanitizeBrollPrompt(desc, brandName).substring(0, 160);
 }
 
 // ════════════════════════════════════════════════════════════════
@@ -630,16 +636,47 @@ function calcClipsNeeded(seg, timestamps, allSegments) {
  *   the compositor loops/trims footage to the exact section length.
  * Returns an array of mp4 paths ([] if not even one clip could be made).
  */
+// Rewrite a b-roll description into ONE continuous moment in ONE place. Descriptions such as
+// "walks out of the store onto the street" force the video model to cut or crossfade between two
+// locations (the cause of dissolves and two copies of the person). Cached per description.
+const _singleShotCache = new Map();
+const MULTI_PLACE_HINT = /\b(then|into|out of|onto|from .+ to|enters?|exits?|leaves?|arrives?|heads? (to|into|toward)|walks? (in|out|through)|steps? (in|out)|afterwards?|later|finally|before|after)\b|→|->/i;
+async function toSingleShotDescription(desc) {
+  if (!desc || !MULTI_PLACE_HINT.test(desc)) return desc;
+  if (_singleShotCache.has(desc)) return _singleShotCache.get(desc);
+  const job = (async () => {
+    const ai = getGenAI();
+    const prompt = 'Rewrite this video b-roll description so it is ONE continuous moment in ONE single place, filmable as a single unbroken shot with no cuts. ' +
+      'Keep the most important place and action, keep the same people and mood, keep it the same language and about the same length. ' +
+      'Remove any movement between places, sequences ("then"), or time jumps. People move forward naturally. Return ONLY the rewritten description.\n\nDescription: ' + desc;
+    for (const model of [...new Set([process.env.GEMINI_MODEL || 'gemini-3.7-flash', 'gemini-3.6-flash', 'gemini-3.5-flash'])]) {
+      try {
+        const resp = await raceTimeout(ai.models.generateContent({ model, contents: prompt, config: { temperature: 0.2 } }), 30000, 'Single-shot rewrite');
+        const out = (resp.text || '').trim().replace(/^["']|["']$/g, '').replace(/\s+/g, ' ');
+        if (out && out.length > 10 && out.length < desc.length * 3 + 100) {
+          console.log('[B-Roll] One-place description: "' + desc.substring(0, 70) + '…" → "' + out.substring(0, 90) + '…"');
+          return out;
+        }
+      } catch (err) {
+        console.warn('[B-Roll] Single-shot rewrite with ' + model + ' failed: ' + err.message);
+      }
+    }
+    return desc;
+  })();
+  _singleShotCache.set(desc, job);
+  return job;
+}
+
 async function generateSectionFootage({ seg, clipsNeeded, brandName, brandDescription = '', personaDescription = '', outputDir, personaImageUrl = null, stats = null, logPrefix = '[B-Roll]' }) {
-  const desc = seg.brollDescription || 'Professional lifestyle footage';
+  const { reviewShot, PROBLEM_LABELS } = require('./brollQa');
+  const MAX_RETAKES = Number(process.env.BROLL_QA_RETAKES || 2);
+  const desc = await toSingleShotDescription(seg.brollDescription || 'Professional lifestyle footage');
   const mediaPaths = [];
   let remaining = Math.max(1, clipsNeeded);
   let chain = 0;
 
-  while (remaining > 0 && chain < Math.max(1, clipsNeeded)) {
-    const chainDesc = chain === 0
-      ? desc
-      : 'The story continues in the same world as before, a new angle of the same moment: ' + desc;
+  // One continuous shot: a ~10s clip extended up to `target` clips. Returns { filePath, clipsInChain } or null.
+  const makeShot = async (chainDesc, target) => {
     let initial;
     try {
       initial = await generateBroll({
@@ -648,14 +685,11 @@ async function generateSectionFootage({ seg, clipsNeeded, brandName, brandDescri
       });
     } catch (err) {
       console.warn(logPrefix + ' Segment ' + seg.order + ': shot ' + (chain + 1) + ' could not start — ' + err.message);
-      break;
+      return null;
     }
-
     let filePath = initial.filePath;
     let videoRef = initial.videoRef;
     let clipsInChain = 1;
-    const target = Math.min(remaining, OMNI_MAX_CLIPS_PER_CHAIN);
-
     while (clipsInChain < target && videoRef) {
       const ext = await extendBrollVideo({
         videoRef,
@@ -675,19 +709,65 @@ async function generateSectionFootage({ seg, clipsNeeded, brandName, brandDescri
       clipsInChain++;
       if (stats) stats.extensions++;
     }
+    return { filePath, clipsInChain };
+  };
 
-    mediaPaths.push(filePath);
+  while (remaining > 0 && chain < Math.max(1, clipsNeeded)) {
+    const baseDesc = chain === 0
+      ? desc
+      : 'The story continues in the same world as before, a new angle of the same moment: ' + desc;
+    const target = Math.min(remaining, OMNI_MAX_CLIPS_PER_CHAIN);
+
+    // Quality check every shot; re-make failed shots (up to MAX_RETAKES) and keep the cleanest take.
+    let best = null;
+    for (let take = 0; take <= MAX_RETAKES; take++) {
+      let chainDesc = baseDesc;
+      if (take > 0 && best) {
+        const avoid = [...new Set(best.review.problems.map(p => PROBLEM_LABELS[p.type] || p.type))].join(' and ');
+        chainDesc = baseDesc + '. This must be ONE continuous take in one place with natural forward motion only — the previous take had ' + avoid + ', which must not happen.';
+      }
+      const shot = await makeShot(chainDesc, target);
+      if (!shot) break;
+      let review = { ok: true, problems: [] };
+      try { review = await reviewShot(shot.filePath); } catch (e) { console.warn(logPrefix + ' QA failed (accepting shot): ' + e.message); }
+      if (stats) {
+        stats.qa.checked++;
+        if (!review.ok) { stats.qa.failed++; review.problems.forEach(p => { stats.qa.types[p.type] = (stats.qa.types[p.type] || 0) + 1; }); }
+      }
+      const candidate = { ...shot, review };
+      const better = !best || review.problems.length < best.review.problems.length ||
+        (review.problems.length === best.review.problems.length && shot.clipsInChain > best.clipsInChain);
+      if (better) {
+        if (best) { try { fs.unlinkSync(best.filePath); } catch {} }
+        best = candidate;
+      } else {
+        try { fs.unlinkSync(candidate.filePath); } catch {}
+      }
+      if (review.ok) {
+        if (take > 0 && stats) stats.qa.fixed++;
+        break;
+      }
+      if (take < MAX_RETAKES) {
+        if (stats) stats.qa.retakes++;
+        console.warn(logPrefix + ' Segment ' + seg.order + ': shot ' + (chain + 1) + ' failed quality check (' + review.problems.map(p => p.type + '@' + p.second + 's').join(', ') + ') — re-making it');
+      } else if (stats) {
+        stats.qa.unresolved.push({ order: seg.order, problems: [...new Set(review.problems.map(p => p.type))] });
+      }
+    }
+    if (!best) break;
+
+    mediaPaths.push(best.filePath);
     if (stats) stats.clips++;
-    remaining -= clipsInChain;
+    remaining -= best.clipsInChain;
     chain++;
-    console.log(logPrefix + ' Segment ' + seg.order + ': shot ' + chain + ' = ' + (clipsInChain * OMNI_CLIP_SECONDS) + 's continuous' + (remaining > 0 ? ' (' + (remaining * OMNI_CLIP_SECONDS) + 's still needed)' : ''));
+    console.log(logPrefix + ' Segment ' + seg.order + ': shot ' + chain + ' = ' + (best.clipsInChain * OMNI_CLIP_SECONDS) + 's continuous' + (best.review.ok ? '' : ' (best take, still has ' + best.review.problems.map(p => p.type).join(', ') + ')') + (remaining > 0 ? ' (' + (remaining * OMNI_CLIP_SECONDS) + 's still needed)' : ''));
   }
 
   return mediaPaths;
 }
 
 function newBrollStats() {
-  return { clips: 0, extensions: 0, extensionFailures: 0, retried: 0, simplified: 0, described: 0, withoutPersona: 0, photoBlocked: false, errors: [], reused: [], notes: [] };
+  return { clips: 0, extensions: 0, extensionFailures: 0, retried: 0, simplified: 0, described: 0, withoutPersona: 0, photoBlocked: false, errors: [], reused: [], notes: [], qa: { checked: 0, failed: 0, retakes: 0, fixed: 0, types: {}, unresolved: [] } };
 }
 
 /** Human-readable notes for the progress view — explain what happened and why. */
@@ -705,6 +785,15 @@ function summarizeBrollStats(stats) {
   }
   if (stats.withoutPersona) {
     notes.push(stats.withoutPersona + ' clip' + (stats.withoutPersona === 1 ? '' : 's') + ' had to be made without the person.');
+  }
+  if (stats.qa && stats.qa.retakes) {
+    const { PROBLEM_LABELS } = require('./brollQa');
+    const kinds = Object.keys(stats.qa.types).map(t => PROBLEM_LABELS[t] || t).join(', ');
+    notes.push('Quality check re-made ' + stats.qa.retakes + ' shot' + (stats.qa.retakes === 1 ? '' : 's') + ' (found: ' + kinds + ')' + (stats.qa.fixed ? '; ' + stats.qa.fixed + ' fixed' : '') + '.');
+  }
+  if (stats.qa && stats.qa.unresolved.length) {
+    const { PROBLEM_LABELS } = require('./brollQa');
+    notes.push(stats.qa.unresolved.map(u => 'Section ' + u.order + ' still has ' + u.problems.map(t => PROBLEM_LABELS[t] || t).join(' and ')).join('; ') + ' after re-takes — the cleanest take was used. Regenerate that section to try again.');
   }
   const transient = stats.errors.filter(e => e.kind === 'transient').length;
   if (transient) notes.push('Google was busy ' + transient + ' time' + (transient === 1 ? '' : 's') + '; those clips were retried with the same prompt.');
@@ -754,7 +843,7 @@ async function generateAllBroll(segments, brandName, outputDir, onProgress, pers
     }
   }
 
-  const BROLL_STAGE_TIMEOUT_MS = 25 * 60 * 1000;
+  const BROLL_STAGE_TIMEOUT_MS = 40 * 60 * 1000;
   let timedOut = false;
   const workers = [];
   for (let w = 0; w < Math.min(5, plan.length); w++) {
@@ -793,5 +882,5 @@ async function generateAllBroll(segments, brandName, outputDir, onProgress, pers
 module.exports = {
   generateBrollImage, generateBrollVideo, extendBrollVideo, generateBroll, generateAllBroll, calcClipsNeeded,
   generateSectionFootage, newBrollStats, summarizeBrollStats, omniModel, omniGenerate,
-  OMNI_CLIP_SECONDS, OMNI_MAX_CHAIN_SECONDS, describePersona, classifyOmniError, isPersonaPhotoBlocked,
+  OMNI_CLIP_SECONDS, OMNI_MAX_CHAIN_SECONDS, describePersona, classifyOmniError, isPersonaPhotoBlocked, toSingleShotDescription,
 };

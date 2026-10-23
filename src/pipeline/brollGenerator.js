@@ -252,13 +252,63 @@ async function getPersonaImage(url) {
   return img;
 }
 
+// Persona photos that Google's safety filter has blocked ("Input blocked"). Once blocked, we stop
+// sending that photo and describe the person in words instead, so no attempts are wasted.
+const _blockedPersonaPhotos = new Set();
+function isPersonaPhotoBlocked(url) { return !!url && _blockedPersonaPhotos.has(url); }
+function markPersonaPhotoBlocked(url) { if (url) _blockedPersonaPhotos.add(url); }
+
+// Written description of the persona's look, made once per photo with Gemini (vision).
+const _personaLookCache = new Map();
+async function describePersona(url, fallbackText = '') {
+  if (!url) return fallbackText || '';
+  if (!_personaLookCache.has(url)) {
+    _personaLookCache.set(url, (async () => {
+      const img = await getPersonaImage(url);
+      if (!img) return '';
+      const ai = getGenAI();
+      const models = [process.env.GEMINI_MODEL || 'gemini-3.7-flash', 'gemini-3.6-flash', 'gemini-3.5-flash'];
+      for (const model of [...new Set(models)]) {
+        try {
+          const resp = await raceTimeout(ai.models.generateContent({
+            model,
+            contents: [{ role: 'user', parts: [
+              { inlineData: { mimeType: img.mimeType, data: img.base64 } },
+              { text: 'Write a short casting description of this fictional character\'s visible appearance for a video shoot: apparent age range, gender presentation, hair color and style, skin tone, build, and any distinctive features. Do not name or identify anyone and do not describe clothing. One or two sentences, no preamble.' },
+            ] }],
+          }), 45000, 'Persona description');
+          const text = (resp.text || '').trim().replace(/\s+/g, ' ');
+          if (text) { console.log('[B-Roll Omni] Persona described in words: ' + text.substring(0, 160)); return text; }
+        } catch (err) {
+          console.warn('[B-Roll Omni] Persona description with ' + model + ' failed: ' + err.message);
+        }
+      }
+      return '';
+    })());
+  }
+  const look = await _personaLookCache.get(url);
+  if (!look) _personaLookCache.delete(url); // try again next time
+  return look || fallbackText || '';
+}
+
+/** Classify an Omni error so retries can react to the real cause. */
+function classifyOmniError(err) {
+  const msg = (err && err.message) || '';
+  const status = err && err.status;
+  if (status === 429 || status >= 500 || /timed out|ECONNRESET|ETIMEDOUT|fetch failed|socket|RESOURCE_EXHAUSTED|UNAVAILABLE|overloaded/i.test(msg)) return 'transient';
+  if (/Input blocked|could not be processed|safety|blocked|prohibited|not supported.*(person|people|image)/i.test(msg)) return 'blocked';
+  return 'other';
+}
+
 /**
  * Generate a b-roll VIDEO clip (~10s, 720p) with Gemini Omni Flash.
- * With a persona photo, the photo is sent as <IMAGE_REF_0> so the same person appears in every clip.
- *
- * @returns {Promise<{filePath: string, videoRef: string|null}|null>} videoRef = Omni interaction id (for extensions)
+ * personaMode:
+ *   'photo'     — send the persona photo as <IMAGE_REF_0> (strongest likeness)
+ *   'described' — the photo is blocked by Google, so the same person is described in words (personaLook)
+ *   'none'      — no people at all (last resort)
+ * @returns {Promise<{filePath: string, videoRef: string|null}|{error: Error}>} videoRef = Omni interaction id (for extensions)
  */
-async function generateBrollVideo({ description, brandName, brandDescription = '', personaDescription = '', outputDir, segmentType = '', segmentChannel = '', personaImageUrl = null }) {
+async function generateBrollVideo({ description, brandName, brandDescription = '', personaDescription = '', outputDir, segmentType = '', segmentChannel = '', personaImageUrl = null, personaMode = null, personaLook = '' }) {
   let contextHint = '';
   if (segmentType === 'intro') {
     contextHint = 'This is the OPENING shot of the video — use a wide, establishing cinematic shot that sets the mood. ';
@@ -268,11 +318,18 @@ async function generateBrollVideo({ description, brandName, brandDescription = '
     contextHint = 'This is a TRANSITION shot bridging two scenes' + (segmentChannel ? ' (coming from: ' + segmentChannel + ')' : '') + ' — show movement, travel, or passage of time. ';
   }
 
-  // Persona photo → <IMAGE_REF_0>
-  const persona = personaImageUrl ? await getPersonaImage(personaImageUrl) : null;
+  const mode = personaMode || (personaImageUrl ? 'photo' : 'none');
+  const persona = mode === 'photo' && personaImageUrl ? await getPersonaImage(personaImageUrl) : null;
+  const usePhoto = !!persona;
+  const useDescribed = !usePhoto && (mode === 'described' || (mode === 'photo' && !!personaLook)) && !!personaLook;
+
   let personaPromptHint = '';
-  if (persona) {
-    personaPromptHint = 'IMPORTANT: The main character is the person shown in <IMAGE_REF_0>. Match their face, hair, skin tone, body type, and facial features exactly. ADAPT their clothing to the scene — athletic wear for exercise, formal wear for formal events, casual for casual. Their IDENTITY stays the same; their WARDROBE fits the activity. CRITICAL: The person must NOT be talking or moving their lips at any point — this is silent b-roll with a voiceover, not a talking-head shot. ';
+  const noTalking = 'CRITICAL: The person must NOT be talking or moving their lips at any point — this is silent b-roll with a voiceover, not a talking-head shot. ';
+  const wardrobe = 'ADAPT their clothing to the scene — athletic wear for exercise, formal wear for formal events, casual for casual. Their IDENTITY stays the same; their WARDROBE fits the activity. ';
+  if (usePhoto) {
+    personaPromptHint = 'IMPORTANT: The main character is the person shown in <IMAGE_REF_0>. Match their face, hair, skin tone, body type, and facial features exactly. ' + wardrobe + noTalking;
+  } else if (useDescribed) {
+    personaPromptHint = 'IMPORTANT: The main character is a fictional person with this exact look, kept identical in every shot: ' + personaLook + ' ' + wardrobe + noTalking;
   }
 
   let brandContext = '';
@@ -280,24 +337,32 @@ async function generateBrollVideo({ description, brandName, brandDescription = '
   if (personaDescription) brandContext += 'The story follows: ' + sanitizeBrollPrompt(personaDescription, brandName) + '. ';
 
   const cleanDescription = sanitizeBrollPrompt(description, brandName);
-  const rules = persona ? VIDEO_PROMPT_RULES_WITH_PERSONA : VIDEO_PROMPT_RULES_NO_PERSONA;
+  let rules = VIDEO_PROMPT_RULES_NO_PERSONA;
+  if (usePhoto) rules = VIDEO_PROMPT_RULES_WITH_PERSONA;
+  else if (useDescribed) rules = VIDEO_PROMPT_RULES_WITH_PERSONA
+    .replace(/the person from the reference image/gi, 'the described main character')
+    .replace(/\(the reference person\)/gi, '(the described main character)')
+    .replace(/in the reference image/gi, 'in the description');
+
   const promptText = contextHint + personaPromptHint + brandContext +
     'Professional cinematic b-roll footage for a premium brand customer experience video, filmed as ONE single continuous shot with no scene cuts: ' +
     cleanDescription + '.\n' + rules;
 
-  const input = persona
+  const input = usePhoto
     ? [{ type: 'image', mime_type: persona.mimeType, data: persona.base64 }, { type: 'text', text: promptText }]
     : promptText;
 
+  const how = usePhoto ? 'persona photo' : useDescribed ? 'persona described in words' : 'no people';
   try {
-    console.log('[B-Roll Video] Generating ~' + OMNI_CLIP_SECONDS + 's clip with ' + omniModel() + ': "' + description.substring(0, 60) + '..."' + (persona ? ' (with persona photo)' : ''));
-    const res = await omniGenerate({ input, label: 'clip (' + (segmentType || 'broll') + ')' });
+    console.log('[B-Roll Video] Generating ~' + OMNI_CLIP_SECONDS + 's clip with ' + omniModel() + ' (' + how + '): "' + description.substring(0, 60) + '..."');
+    const res = await omniGenerate({ input, label: 'clip (' + (segmentType || 'broll') + ', ' + how + ')' });
     const outputPath = path.join(outputDir || os.tmpdir(), 'broll_video_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7) + '.mp4');
     fs.writeFileSync(outputPath, res.buffer);
     return { filePath: outputPath, videoRef: res.interactionId };
   } catch (err) {
-    console.warn('[B-Roll Video] ' + omniModel() + ' failed: ' + err.message);
-    return null;
+    console.warn('[B-Roll Video] ' + omniModel() + ' failed (' + how + '): ' + err.message);
+    err.usedPhoto = usePhoto;
+    return { error: err };
   }
 }
 
@@ -461,65 +526,82 @@ function truncate(str, maxLen) {
 // ════════════════════════════════════════════════════════════════
 
 /**
- * Generate one b-roll VIDEO clip, retrying with backoff and progressively simpler prompts.
- * NEVER returns a still image — throws if every attempt fails (the caller then reuses
- * b-roll from another section).
- *   Attempt 1: full prompt with persona photo
- *   Attempt 2: simplified description, persona photo kept
- *   Attempt 3: minimal prompt, persona photo kept
- *   Attempts 4–5: minimal prompt, no persona (safety filters sometimes reject a photo/wording)
+ * Generate one b-roll VIDEO clip, reacting to Google's actual error. NEVER returns a still image —
+ * throws if every attempt fails (the caller then reuses b-roll from another section).
+ *   • Persona photo blocked ("Input blocked") → remember it for this photo, describe the person in
+ *     words instead (same look in every section) — the person stays in the shot.
+ *   • Prompt blocked without a photo → simplify the prompt in steps, keeping the person:
+ *       full description + brand/persona context → full description only → minimal description.
+ *   • Rate limit / server error / timeout → retry the SAME prompt after a backoff.
+ *   • Only the very last resort drops the person entirely.
  */
 async function generateBroll({ description, brandName, brandDescription = '', personaDescription = '', outputDir, segmentType = '', segmentChannel = '', personaImageUrl = null, stats = null }) {
-  const MAX_ATTEMPTS = 5;
-  const BASE_DELAY_MS = 5000; // 5s, 10s, 20s, 40s
+  const MAX_ATTEMPTS = 6;
+  const TRANSIENT_DELAYS_MS = [5000, 10000, 20000, 40000, 60000];
+
+  let mode = !personaImageUrl ? 'none' : (isPersonaPhotoBlocked(personaImageUrl) ? 'described' : 'photo');
+  let promptLevel = 0; // 0 = full + context, 1 = full description only, 2 = minimal
+  let transientCount = 0;
+
+  const minimal = segmentType === 'intro'
+    ? 'Beautiful cinematic opening shot. Slow camera movement across a stunning modern environment. Warm golden lighting.'
+    : segmentType === 'outro'
+    ? 'Warm cinematic closing shot. Slow pull-back camera movement. Beautiful golden hour lighting.'
+    : 'Smooth cinematic lifestyle footage. Slow camera movement. Beautiful lighting. ' + description.substring(0, 80) + '.';
 
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-    if (attempt > 1) {
-      const delay = BASE_DELAY_MS * Math.pow(2, attempt - 2);
-      console.log('[B-Roll] Attempt ' + attempt + '/' + MAX_ATTEMPTS + ': waiting ' + (delay / 1000) + 's before retry...');
-      await new Promise(r => setTimeout(r, delay));
-    }
+    const personaLook = mode === 'described' ? await describePersona(personaImageUrl, '') : '';
+    if (mode === 'described' && !personaLook) mode = 'none'; // couldn't describe them — fall through to no-people
 
-    let desc = description;
-    let usePersona = personaImageUrl;
-    let passBrandDesc = brandDescription;
-    let passPersonaDesc = personaDescription;
-    const minimal = segmentType === 'intro'
-      ? 'Beautiful cinematic opening shot. Slow camera movement across a stunning modern environment. Warm golden lighting.'
-      : segmentType === 'outro'
-      ? 'Warm cinematic closing shot. Slow pull-back camera movement. Beautiful golden hour lighting.'
-      : 'Smooth cinematic lifestyle footage. Slow camera movement. Beautiful lighting. ' + description.substring(0, 60) + '.';
-
-    if (attempt === 2) {
-      desc = 'Cinematic lifestyle footage: ' + description.substring(0, 100);
-    } else if (attempt === 3) {
-      passBrandDesc = '';
-      passPersonaDesc = '';
-      desc = minimal;
-    } else if (attempt >= 4) {
-      usePersona = null;
-      passBrandDesc = '';
-      passPersonaDesc = '';
-      desc = minimal;
-    }
+    const desc = promptLevel >= 2 ? minimal : description;
+    const passBrandDesc = promptLevel === 0 ? brandDescription : '';
+    const passPersonaDesc = promptLevel === 0 ? personaDescription : '';
 
     const result = await generateBrollVideo({
       description: desc, brandName, brandDescription: passBrandDesc, personaDescription: passPersonaDesc,
-      outputDir, segmentType, segmentChannel, personaImageUrl: usePersona,
+      outputDir, segmentType, segmentChannel, personaImageUrl, personaMode: mode, personaLook,
     });
 
-    if (result) {
-      if (stats && attempt > 1) {
-        stats.retried++;
-        if (attempt >= 3) stats.simplified++;
-        if (personaImageUrl && !usePersona) stats.withoutPersona++;
+    if (result && result.filePath) {
+      if (stats) {
+        if (attempt > 1) stats.retried++;
+        if (promptLevel > 0) stats.simplified++;
+        if (mode === 'described') stats.described++;
+        if (personaImageUrl && mode === 'none') stats.withoutPersona++;
       }
       return result;
     }
-    console.warn('[B-Roll] Attempt ' + attempt + '/' + MAX_ATTEMPTS + ' failed for ' + (segmentType || 'broll') + ' segment');
+
+    const err = (result && result.error) || new Error('unknown error');
+    const kind = classifyOmniError(err);
+    if (stats) stats.errors.push({ kind, message: (err.message || '').replace(/^.*?HTTP \d+:\s*/, '').substring(0, 200), photo: !!err.usedPhoto });
+    console.warn('[B-Roll] Attempt ' + attempt + '/' + MAX_ATTEMPTS + ' for ' + (segmentType || 'broll') + ' failed (' + kind + ', ' + mode + ', level ' + promptLevel + ')');
+    if (attempt === MAX_ATTEMPTS) break;
+
+    if (kind === 'transient') {
+      const delay = TRANSIENT_DELAYS_MS[Math.min(transientCount++, TRANSIENT_DELAYS_MS.length - 1)];
+      console.log('[B-Roll] Google is busy — retrying the same prompt in ' + (delay / 1000) + 's');
+      await new Promise(r => setTimeout(r, delay));
+      continue;
+    }
+
+    // Blocked or other content problem
+    if (mode === 'photo' && err.usedPhoto && kind === 'blocked') {
+      markPersonaPhotoBlocked(personaImageUrl);
+      if (stats) stats.photoBlocked = true;
+      mode = 'described';
+      console.warn('[B-Roll] Google blocked the persona photo — describing the person in words instead');
+    } else if (promptLevel < 2) {
+      promptLevel++;
+    } else if (mode !== 'none') {
+      mode = 'none';
+    } else {
+      break; // nothing left to simplify
+    }
+    await new Promise(r => setTimeout(r, 2000));
   }
 
-  throw new Error('B-roll video generation failed after ' + MAX_ATTEMPTS + ' attempts for ' + (segmentType || 'broll') + ' segment. Description: "' + description.substring(0, 80) + '"');
+  throw new Error('B-roll video generation failed for ' + (segmentType || 'broll') + ' segment. Description: "' + description.substring(0, 80) + '"');
 }
 
 /**
@@ -605,26 +687,35 @@ async function generateSectionFootage({ seg, clipsNeeded, brandName, brandDescri
 }
 
 function newBrollStats() {
-  return { clips: 0, extensions: 0, extensionFailures: 0, retried: 0, simplified: 0, withoutPersona: 0, reused: [], notes: [] };
+  return { clips: 0, extensions: 0, extensionFailures: 0, retried: 0, simplified: 0, described: 0, withoutPersona: 0, photoBlocked: false, errors: [], reused: [], notes: [] };
 }
 
-/** Human-readable notes for the progress view. */
+/** Human-readable notes for the progress view — explain what happened and why. */
 function summarizeBrollStats(stats) {
   const notes = [];
+  if (stats.photoBlocked) {
+    notes.push("Google's safety filter blocks this persona photo, so the person was described in words instead (same look in every section)" + (stats.described ? ' — ' + stats.described + ' clip' + (stats.described === 1 ? '' : 's') + ' made this way' : '') + '.');
+  }
   if (stats.reused.length) {
     const list = stats.reused.map(r => 'section ' + r.order + ' used ' + r.from).join(', ');
     notes.push(stats.reused.length + ' section' + (stats.reused.length === 1 ? '' : 's') + ' reused b-roll after the video model failed (' + list + ').');
   }
-  if (stats.retried) {
-    let detail = '';
-    if (stats.simplified) {
-      detail = ' (' + stats.simplified + ' with a simpler prompt' + (stats.withoutPersona ? ', ' + stats.withoutPersona + ' without the persona photo' : '') + ')';
-    }
-    notes.push(stats.retried + ' clip' + (stats.retried === 1 ? '' : 's') + ' needed a retry' + detail + '.');
+  if (stats.simplified) {
+    notes.push(stats.simplified + ' clip' + (stats.simplified === 1 ? '' : 's') + ' needed a simpler prompt after Google rejected the full one.');
   }
+  if (stats.withoutPersona) {
+    notes.push(stats.withoutPersona + ' clip' + (stats.withoutPersona === 1 ? '' : 's') + ' had to be made without the person.');
+  }
+  const transient = stats.errors.filter(e => e.kind === 'transient').length;
+  if (transient) notes.push('Google was busy ' + transient + ' time' + (transient === 1 ? '' : 's') + '; those clips were retried with the same prompt.');
   if (stats.extensionFailures) {
     notes.push(stats.extensionFailures + ' extension' + (stats.extensionFailures === 1 ? '' : 's') + ' failed, so some shots are shorter and loop to fill their section.');
   }
+  // Google's own words, most common first (excluding the photo block already explained)
+  const counts = {};
+  stats.errors.filter(e => e.kind !== 'transient' && !(e.photo && e.kind === 'blocked')).forEach(e => { counts[e.message] = (counts[e.message] || 0) + 1; });
+  const top = Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, 2);
+  top.forEach(([m, n]) => notes.push('Google said' + (n > 1 ? ' (' + n + '×)' : '') + ': "' + m + '"'));
   return notes;
 }
 
@@ -702,5 +793,5 @@ async function generateAllBroll(segments, brandName, outputDir, onProgress, pers
 module.exports = {
   generateBrollImage, generateBrollVideo, extendBrollVideo, generateBroll, generateAllBroll, calcClipsNeeded,
   generateSectionFootage, newBrollStats, summarizeBrollStats, omniModel, omniGenerate,
-  OMNI_CLIP_SECONDS, OMNI_MAX_CHAIN_SECONDS,
+  OMNI_CLIP_SECONDS, OMNI_MAX_CHAIN_SECONDS, describePersona, classifyOmniError, isPersonaPhotoBlocked,
 };

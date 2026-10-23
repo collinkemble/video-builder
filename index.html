@@ -4486,6 +4486,7 @@ function nvEmail() { return document.getElementById('user-email').textContent; }
 
 function nvShowStep(step) {
   nvStep = step;
+  nvHideMenus();
   for (let i = 1; i <= NV_TOTAL_STEPS; i++) {
     const panel = document.getElementById('nv-step-' + i);
     if (panel) panel.style.display = i === step ? 'flex' : 'none';
@@ -4587,12 +4588,12 @@ function nvResetWizard() {
   document.getElementById('nv-project-loading').style.display = 'none';
   document.getElementById('nv-project-buttons').style.display = 'flex';
   document.getElementById('nv-project-hint').style.display = 'block';
-  document.getElementById('nv-project-picker-dropdown').style.display = 'none';
+  nvHideMenus();
   // Step 3 UI
   document.getElementById('nv-script-applied').style.display = 'none';
   document.getElementById('nv-script-extracting').style.display = 'none';
   document.getElementById('nv-script-buttons').style.display = 'flex';
-  document.getElementById('nv-script-picker-dropdown').style.display = 'none';
+  nvHideMenus();
   document.getElementById('nv-synopsis-section').style.display = 'block';
   nvSetScriptButtonsLocked(false);
   const btn = document.getElementById('new-video-submit');
@@ -4614,6 +4615,46 @@ function closeNewVideoDialog() {
   nvShowStep(1);
 }
 
+// ─── Floating dropdowns (same approach as Slide Builder / PocketSIC): move the menu to the top
+// level of the page so the modal's scroll area, header and footer can never clip it. It follows its
+// button while scrolling and opens upward or downward depending on the space available.
+const NV_MENU_WIDTH = 300, NV_MENU_MAX_HEIGHT = 240, NV_MENU_GAP = 6;
+let nvFloatingPlace = null;
+function nvFloatMenu(menu, anchor) {
+  if (menu.parentElement !== document.body) document.body.appendChild(menu);
+  const place = () => {
+    const r = anchor.getBoundingClientRect();
+    const spaceBelow = window.innerHeight - r.bottom - NV_MENU_GAP - 8;
+    const spaceAbove = r.top - NV_MENU_GAP - 8;
+    const openUp = spaceBelow < Math.min(NV_MENU_MAX_HEIGHT, 160) && spaceAbove > spaceBelow;
+    const maxHeight = Math.max(120, Math.min(NV_MENU_MAX_HEIGHT, openUp ? spaceAbove : spaceBelow));
+    const left = Math.max(8, Math.min(r.left, window.innerWidth - NV_MENU_WIDTH - 8));
+    Object.assign(menu.style, {
+      position: 'fixed', left: left + 'px', width: NV_MENU_WIDTH + 'px', maxHeight: maxHeight + 'px',
+      top: openUp ? 'auto' : (r.bottom + NV_MENU_GAP) + 'px',
+      bottom: openUp ? (window.innerHeight - r.top + NV_MENU_GAP) + 'px' : 'auto',
+      marginBottom: '0', zIndex: '10000', overflowY: 'auto',
+    });
+  };
+  nvUnfloatMenu();
+  place();
+  nvFloatingPlace = place;
+  window.addEventListener('scroll', place, true); // capture: scrolling inside the modal body also repositions
+  window.addEventListener('resize', place);
+}
+function nvUnfloatMenu() {
+  if (!nvFloatingPlace) return;
+  window.removeEventListener('scroll', nvFloatingPlace, true);
+  window.removeEventListener('resize', nvFloatingPlace);
+  nvFloatingPlace = null;
+}
+function nvHideMenus() {
+  ['nv-project-picker-dropdown', 'nv-script-picker-dropdown'].forEach(id => {
+    const d = document.getElementById(id); if (d) d.style.display = 'none';
+  });
+  nvUnfloatMenu();
+}
+
 // ── Step 2: PocketSIC project ──
 function nvInitialBadge(initial) {
   return `<div style="width: 32px; height: 32px; border-radius: 8px; background: linear-gradient(135deg, #0891b2, #22d3ee); color: white; font-weight: 700; font-size: 14px; display: flex; align-items: center; justify-content: center; flex-shrink: 0;">${esc(initial)}</div>`;
@@ -4630,9 +4671,10 @@ function nvCreatePocketsicProject() {
 async function nvOpenProjectPicker() {
   const dropdown = document.getElementById('nv-project-picker-dropdown');
   const content = document.getElementById('nv-project-picker-content');
-  if (dropdown.style.display !== 'none') { dropdown.style.display = 'none'; return; }
-  document.getElementById('nv-script-picker-dropdown').style.display = 'none';
+  if (dropdown.style.display !== 'none') { nvHideMenus(); return; }
+  nvHideMenus();
   dropdown.style.display = 'block';
+  nvFloatMenu(dropdown, document.querySelector('#nv-project-picker-container button'));
   content.innerHTML = '<div style="padding: 16px; text-align: center; font-size: 13px; color: #888;">⏳ Loading projects...</div>';
   try {
     const resp = await fetch('/api/pocketsic/projects?email=' + encodeURIComponent(nvEmail()));
@@ -4663,7 +4705,7 @@ async function nvOpenProjectPicker() {
 }
 
 async function nvSelectProject(projectId, projectName) {
-  document.getElementById('nv-project-picker-dropdown').style.display = 'none';
+  nvHideMenus();
   nvClearFieldError('nv-project-picker-container');
   const pc = document.getElementById('nv-project-picker-container'); if (pc) pc.style.border = '';
   document.getElementById('nv-project-buttons').style.display = 'none';
@@ -4740,7 +4782,7 @@ function nvSetScriptButtonsLocked(locked) {
     b.style.cursor = locked ? 'not-allowed' : 'pointer';
   });
   document.getElementById('nv-script-locked-note').style.display = locked ? 'block' : 'none';
-  if (locked) document.getElementById('nv-script-picker-dropdown').style.display = 'none';
+  if (locked) nvHideMenus();
 }
 
 function nvOnSynopsisInput() {
@@ -4751,9 +4793,10 @@ async function nvOpenScriptPicker() {
   if (document.getElementById('nv-synopsis').value.trim()) return;
   const dropdown = document.getElementById('nv-script-picker-dropdown');
   const content = document.getElementById('nv-script-picker-content');
-  if (dropdown.style.display !== 'none') { dropdown.style.display = 'none'; return; }
-  document.getElementById('nv-project-picker-dropdown').style.display = 'none';
+  if (dropdown.style.display !== 'none') { nvHideMenus(); return; }
+  nvHideMenus();
   dropdown.style.display = 'block';
+  nvFloatMenu(dropdown, document.getElementById('nv-script-select-btn'));
   content.innerHTML = '<div style="padding: 16px; text-align: center; font-size: 13px; color: #888;">⏳ Loading scripts...</div>';
   try {
     const resp = await fetch('/api/scriptwriter/scripts?email=' + encodeURIComponent(nvEmail()));
@@ -4780,7 +4823,7 @@ async function nvOpenScriptPicker() {
 }
 
 async function nvSelectScript(scriptId, scriptName) {
-  document.getElementById('nv-script-picker-dropdown').style.display = 'none';
+  nvHideMenus();
   document.getElementById('nv-script-buttons').style.display = 'none';
   document.getElementById('nv-script-extract-status').textContent = 'Loading script from Script Writer';
   document.getElementById('nv-script-extracting').style.display = 'block';
@@ -4858,12 +4901,8 @@ function nvShowError(message) {
 
 // Close pickers on outside click
 document.addEventListener('click', (e) => {
-  if (!e.target.closest('#nv-project-picker-container')) {
-    const d = document.getElementById('nv-project-picker-dropdown'); if (d) d.style.display = 'none';
-  }
-  if (!e.target.closest('#nv-script-picker-container')) {
-    const d = document.getElementById('nv-script-picker-dropdown'); if (d) d.style.display = 'none';
-  }
+  if (e.target.closest('#nv-project-picker-container, #nv-script-picker-container, #nv-project-picker-dropdown, #nv-script-picker-dropdown')) return;
+  nvHideMenus();
 });
 
 async function createNewVideo() {

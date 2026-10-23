@@ -6,7 +6,7 @@
  *      which never happens in normal forward motion. Tested: synthetic 2s backwards moments score
  *      ~0.2; normal Omni footage scores ≥1.1.
  *   2. Gemini review (cheap, ~6k tokens per 10s): crossfades/dissolves, two copies of the person,
- *      scene cuts, and talking. (Gemini proved unreliable at judging reverse motion, so it is not asked.)
+ *      scene cuts, talking, and readable text/signage. (Gemini proved unreliable at judging reverse motion, so it is not asked.)
  *
  * The check never blocks a video: if it errors, the shot is accepted as-is.
  */
@@ -82,6 +82,7 @@ const REVIEW_PROMPT = 'You are a strict video quality reviewer for silent b-roll
   '- "duplicate_person": the same person appears twice at the same time (two copies, ghosting, a second version fading in while the first fades out).\n' +
   '- "scene_cut": a hard cut to a different shot, angle or location.\n' +
   '- "talking": a person is clearly speaking or moving their lips as if talking.\n' +
+  '- "visible_text": any READABLE text, letters, words, numbers or logos anywhere in the frame — store signs and storefront names, awnings, window lettering, posters, product packaging or labels, clothing prints, vehicles, or screens. Report it even if it is only on screen briefly. Ignore marks that are too blurry to read as letters.\n' +
   'Return JSON only: {"ok": boolean, "problems": [{"type": one of the above, "second": approximate time in seconds, "detail": short description}]}. ' +
   '"ok" is true only if there are no problems. Do not report minor softness, lighting changes, or normal camera movement.';
 
@@ -102,7 +103,7 @@ async function geminiReview(filePath) {
         config: { responseMimeType: 'application/json', temperature: 0, mediaResolution: 'MEDIA_RESOLUTION_MEDIUM' },
       }), 90000, 'B-roll review');
       const parsed = JSON.parse((resp.text || '').trim());
-      const allowed = ['dissolve', 'duplicate_person', 'scene_cut', 'talking'];
+      const allowed = ['dissolve', 'duplicate_person', 'scene_cut', 'talking', 'visible_text'];
       return (Array.isArray(parsed.problems) ? parsed.problems : []).filter(p => p && allowed.includes(p.type));
     } catch (err) {
       console.warn('[B-Roll QA] Gemini review with ' + model + ' failed: ' + err.message);
@@ -117,6 +118,7 @@ const PROBLEM_LABELS = {
   duplicate_person: 'two copies of the person',
   scene_cut: 'a scene cut',
   talking: 'the person talking',
+  visible_text: 'readable text or signage',
 };
 
 /**

@@ -33,7 +33,8 @@ CRITICAL RULES YOU MUST FOLLOW:
 11. ONE single continuous shot — no scene cuts, no edits, no jumps to a different location or angle.
 12. NO transitions of any kind — no dissolves, crossfades, fades to or from black, or blending between scenes. The whole clip happens in ONE place.
 13. Natural forward motion only — time always moves forward. People walk FORWARD in the direction they are facing and never walk or move backwards. Nothing is reversed, rewound, or played in slow motion.
-14. The person appears exactly ONCE in the frame — never two copies of them, no ghosting, no doubles, no reflections of a second version of them.`;
+14. The person appears exactly ONCE in the frame — never two copies of them, no ghosting, no doubles, no reflections of a second version of them.
+15. ZERO readable text anywhere in the frame — no letters, words, numbers or logos on store signs, storefronts, awnings, windows, posters, packaging, labels, clothing, vehicles or screens. Signs and awnings are completely blank; frame shots so signage is out of view or fully out of focus.`;
 
 // Rules for clips WITHOUT persona reference — NO PEOPLE to avoid random strangers
 const VIDEO_PROMPT_RULES_NO_PERSONA = `Style: Cinematic b-roll footage. Smooth, slow camera movement. Warm natural lighting. Shallow depth of field. High production value.
@@ -48,7 +49,8 @@ CRITICAL RULES YOU MUST FOLLOW:
 8. Focus on MOOD and ATMOSPHERE — the visual should evoke the feeling of the brand without showing people.
 9. ONE single continuous shot — no scene cuts, no edits, no jumps to a different location or angle.
 10. NO transitions of any kind — no dissolves, crossfades, fades to or from black, or blending between scenes. The whole clip happens in ONE place.
-11. Natural forward motion only — time always moves forward. Nothing is reversed, rewound, or played in slow motion.`;
+11. Natural forward motion only — time always moves forward. Nothing is reversed, rewound, or played in slow motion.
+12. ZERO readable text anywhere in the frame — no letters, words, numbers or logos on store signs, storefronts, awnings, windows, posters, packaging, labels, vehicles or screens. Signs and awnings are completely blank; frame shots so signage is out of view or fully out of focus.`;
 
 /**
  * Sanitize a b-roll prompt to remove brand names and product-specific references
@@ -640,7 +642,7 @@ function calcClipsNeeded(seg, timestamps, allSegments) {
 // "walks out of the store onto the street" force the video model to cut or crossfade between two
 // locations (the cause of dissolves and two copies of the person). Cached per description.
 const _singleShotCache = new Map();
-const MULTI_PLACE_HINT = /\b(then|into|out of|onto|from .+ to|enters?|exits?|leaves?|arrives?|heads? (to|into|toward)|walks? (in|out|through)|steps? (in|out)|afterwards?|later|finally|before|after)\b|→|->/i;
+const MULTI_PLACE_HINT = /\b(storefront|store ?front|sign|signage|shop window|billboard|poster|label|logo|then|into|out of|onto|from .+ to|enters?|exits?|leaves?|arrives?|heads? (to|into|toward)|walks? (in|out|through)|steps? (in|out)|afterwards?|later|finally|before|after)\b|→|->/i;
 async function toSingleShotDescription(desc) {
   if (!desc || !MULTI_PLACE_HINT.test(desc)) return desc;
   if (_singleShotCache.has(desc)) return _singleShotCache.get(desc);
@@ -648,7 +650,7 @@ async function toSingleShotDescription(desc) {
     const ai = getGenAI();
     const prompt = 'Rewrite this video b-roll description so it is ONE continuous moment in ONE single place, filmable as a single unbroken shot with no cuts. ' +
       'Keep the most important place and action, keep the same people and mood, keep it the same language and about the same length. ' +
-      'Remove any movement between places, sequences ("then"), or time jumps. People move forward naturally. Return ONLY the rewritten description.\n\nDescription: ' + desc;
+      'Remove any movement between places, sequences ("then"), or time jumps. People move forward naturally. Avoid framing store signs, storefront names, posters or product labels (no readable text). Return ONLY the rewritten description.\n\nDescription: ' + desc;
     for (const model of [...new Set([process.env.GEMINI_MODEL || 'gemini-3.7-flash', 'gemini-3.6-flash', 'gemini-3.5-flash'])]) {
       try {
         const resp = await raceTimeout(ai.models.generateContent({ model, contents: prompt, config: { temperature: 0.2 } }), 30000, 'Single-shot rewrite');

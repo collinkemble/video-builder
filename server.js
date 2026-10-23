@@ -20,7 +20,7 @@ const http = require('http');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const BUILD_VERSION = 'v187-tinyurl-proxy';
+const BUILD_VERSION = 'v190-broll-persona-fallback';
 
 // ─── Video Proxy Base URL ───
 const VIDEO_PROXY_BASE_URL = (process.env.VIDEO_PROXY_BASE_URL || '').replace(/\/+$/, '');
@@ -861,15 +861,13 @@ app.get('/api/videos/:id', async (req, res) => {
     }
 
     // If persona image URL exists, verify it's accessible; if not, try presigned URL fallback
-    if (video.persona_image_url && video.persona_image_url.includes('r2.dev/')) {
+    const _st = require('./src/utils/storage');
+    if (video.persona_image_url && _st.isStorageUrl(video.persona_image_url) && _st.isOwnKey(_st.urlToKey(video.persona_image_url))) {
       try {
         const headResp = await fetch(video.persona_image_url, { method: 'HEAD' });
         if (!headResp.ok) {
           console.log(`[API] Persona image 404 at public URL, trying presigned fallback...`);
-          const { getPresignedUrl } = require('./src/utils/r2');
-          const urlObj = new URL(video.persona_image_url);
-          const r2Key = urlObj.pathname.replace(/^\//, '');
-          video.persona_image_url = await getPresignedUrl(r2Key, 3600);
+          video.persona_image_url = await _st.getPresignedUrl(_st.urlToKey(video.persona_image_url), 3600);
           console.log(`[API] Persona image presigned URL generated`);
         }
       } catch (e) {
@@ -892,10 +890,11 @@ app.get('/api/videos/:id', async (req, res) => {
 // POST /api/videos — create a new video
 app.post('/api/videos', async (req, res) => {
   try {
-    const { email, name, brandName, pocketsicProjectId, pocketsicProjectName, sceneData, voiceId, language, durationTarget, scriptWriterScriptId, scriptWriterScriptName, scriptWriterData } = req.body;
+    const { email, name, brandName, pocketsicProjectId, pocketsicProjectName, sceneData, voiceId, language, durationTarget, scriptWriterScriptId, scriptWriterScriptName, scriptWriterData, scriptSynopsis } = req.body;
     if (!email || !name) {
       return res.status(400).json({ error: 'Missing required fields: email, name' });
     }
+    try { require('./src/utils/storage').assertNoEmbeddedImages(req.body); } catch (e) { return res.status(400).json({ error: e.message }); }
 
     const user = await getOrCreateUser(email);
 
@@ -904,10 +903,12 @@ app.post('/api/videos', async (req, res) => {
     const brandLogoUrl = parsedSceneData?.brand_logo_url || null;
 
     const lang = (language || '').trim() || 'English';
+    // A video uses EITHER a demo script OR a user-written synopsis — never both.
+    const synopsisToStore = scriptWriterData ? null : ((typeof scriptSynopsis === 'string' && scriptSynopsis.trim()) || null);
     const result = await query(
       `INSERT INTO videos (user_id, name, brand_name, brand_logo_url, pocketsic_project_id, pocketsic_project_name,
-        scene_data, voice_id, language, duration_target, music_track_id, scriptwriter_script_id, scriptwriter_script_name, scriptwriter_data, status)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft')`,
+        scene_data, voice_id, language, duration_target, music_track_id, scriptwriter_script_id, scriptwriter_script_name, scriptwriter_data, script_synopsis, status)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft')`,
       [
         user.id,
         name.trim(),
@@ -923,6 +924,7 @@ app.post('/api/videos', async (req, res) => {
         scriptWriterScriptId || null,
         scriptWriterScriptName || null,
         scriptWriterData ? JSON.stringify(scriptWriterData) : null,
+        synopsisToStore,
       ]
     );
 
@@ -946,6 +948,7 @@ app.put('/api/videos/:id', async (req, res) => {
   try {
     const { email, name, brandName, voiceId, language, durationTarget, sceneData, narrationScript, musicTrackId, customInstructions, pocketsicProjectId, pocketsicProjectName, scriptWriterScriptId, scriptWriterScriptName, scriptWriterData } = req.body;
     if (!email) return res.status(400).json({ error: 'Email required' });
+    try { require('./src/utils/storage').assertNoEmbeddedImages(req.body); } catch (e) { return res.status(400).json({ error: e.message }); }
 
     const user = await getOrCreateUser(email);
 
@@ -1021,6 +1024,18 @@ app.put('/api/videos/:id', async (req, res) => {
     if (scriptWriterData !== undefined) {
       sets.push('scriptwriter_data = ?');
       params.push(scriptWriterData === '' || scriptWriterData === null ? null : (typeof scriptWriterData === 'string' ? scriptWriterData : JSON.stringify(scriptWriterData)));
+    }
+
+    // Script synopsis — a video uses EITHER a demo script OR a synopsis.
+    // Linking a script clears the synopsis; otherwise three-state guard (value → set, '' → clear, null/undefined → keep).
+    const { scriptSynopsis } = req.body;
+    const linkingScript = scriptWriterData !== undefined && scriptWriterData !== null && scriptWriterData !== '';
+    if (linkingScript) {
+      sets.push('script_synopsis = ?');
+      params.push(null);
+    } else if (scriptSynopsis !== undefined && scriptSynopsis !== null) {
+      sets.push('script_synopsis = ?');
+      params.push(String(scriptSynopsis).trim() === '' ? null : String(scriptSynopsis).trim());
     }
 
     // Three-state guard for persona_image_url: truthy → use it, empty string → clear to null, null/undefined → keep existing
@@ -1219,6 +1234,8 @@ app.post('/api/videos/:id/generate-script', async (req, res) => {
       durationTarget: video.duration_target || 180,
       language: video.language || 'English',
       scriptWriterData,
+      scriptSynopsis: scriptWriterData ? '' : (video.script_synopsis || ''),
+      customInstructions: video.custom_instructions || '',
     }).then(async (script) => {
       await query('UPDATE videos SET narration_script = ?, status = ?, updated_at = NOW() WHERE id = ?', [JSON.stringify(script), 'draft', req.params.id]);
       console.log(`[Script] Generation complete for video ${req.params.id}`);
@@ -1396,7 +1413,7 @@ app.get('/api/videos/:id/status', async (req, res) => {
         return res.status(404).json({ error: 'Video not found' });
       }
       const jobs = await query(
-        'SELECT id, step, status, progress, total, error, started_at, completed_at FROM video_jobs WHERE video_id = ? ORDER BY created_at ASC',
+        'SELECT id, step, status, progress, total, error, output, started_at, completed_at FROM video_jobs WHERE video_id = ? ORDER BY created_at ASC',
         [req.params.id]
       );
       status = { video, jobs };
@@ -1889,43 +1906,32 @@ app.post('/api/videos/:id/upload-brand-logo', async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════
-// ADMIN — Veo Diagnostics (test video generation capability)
+// ADMIN — Video model diagnostics (runs ONE real Gemini Omni Flash generation, ~$1)
 // ═══════════════════════════════════════════════
 
 app.get('/api/admin/veo-test', async (req, res) => {
   const email = req.query.email;
   if (!email || !isAdmin(email)) return res.status(403).json({ error: 'Admin only' });
+  if (!process.env.GEMINI_API_KEY) return res.json({ status: 'error', message: 'GEMINI_API_KEY not configured' });
 
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) return res.json({ status: 'error', message: 'GEMINI_API_KEY not configured' });
-
-  const { GoogleGenAI } = require('@google/genai');
-  const ai = new GoogleGenAI({ apiKey });
-
-  const models = ['veo-3.1-lite', 'veo-3.1-fast', 'veo-3.1-generate-preview'];
-  const results = [];
-
-  for (const modelName of models) {
-    try {
-      const operation = await ai.models.generateVideos({
-        model: modelName,
-        prompt: 'A slow pan across a coffee cup on a wooden table, warm morning light',
-        config: { aspectRatio: '16:9', resolution: '720p', durationSeconds: '4', numberOfVideos: 1 },
-      });
-      results.push({ model: modelName, status: 'accepted', operationDone: operation.done });
-      // Don't wait for completion — just confirm the API accepts the request
-      break; // If one works, report success
-    } catch (err) {
-      results.push({
-        model: modelName,
-        status: 'failed',
-        error: err.message?.substring(0, 200),
-        httpStatus: err.status || null,
-      });
-    }
+  const { omniGenerate, omniModel } = require('./src/pipeline/brollGenerator');
+  const model = omniModel();
+  const started = Date.now();
+  try {
+    const { buffer, interactionId } = await omniGenerate({
+      input: 'A slow pan across a coffee cup on a wooden table, warm morning light. One single continuous shot. No people, no text.',
+      label: 'admin test',
+    });
+    res.json({
+      status: 'ok',
+      model,
+      seconds: Math.round((Date.now() - started) / 1000),
+      bytes: buffer.length,
+      extendable: !!interactionId,
+    });
+  } catch (err) {
+    res.json({ status: 'failed', model, seconds: Math.round((Date.now() - started) / 1000), error: (err.message || String(err)).substring(0, 400), httpStatus: err.status || null });
   }
-
-  res.json({ status: results.some(r => r.status === 'accepted') ? 'ok' : 'all_failed', results });
 });
 
 // ═══════════════════════════════════════════════
@@ -2029,6 +2035,51 @@ app.get('/api/pocketsic/projects/:id/scenes', async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════
+// VIDEO BUILDER — Upload a demo script file (New Video wizard, step 3)
+// Reads text from PDF / Word / TXT so it can be used like a Script Writer script.
+// ═══════════════════════════════════════════════
+const _scriptUpload = require('multer')({ storage: require('multer').memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
+app.post('/api/upload/extract-script', (req, res, next) => {
+  _scriptUpload.single('file')(req, res, (err) => {
+    if (err) return res.status(400).json({ error: err.code === 'LIMIT_FILE_SIZE' ? 'File is too large (10 MB max).' : 'Upload failed.' });
+    next();
+  });
+}, async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'No file provided.' });
+    const ext = path.extname(req.file.originalname || '').toLowerCase();
+    let rawText = '';
+    if (ext === '.pdf') {
+      const { PDFParse } = require('pdf-parse');
+      const parser = new PDFParse({ data: req.file.buffer });
+      try {
+        const result = await parser.getText();
+        rawText = (result.text || '').replace(/^\s*--\s*\d+\s+of\s+\d+\s*--\s*$/gm, ''); // strip page markers
+      } finally {
+        await parser.destroy().catch(() => {});
+      }
+    } else if (ext === '.docx' || ext === '.doc') {
+      const mammoth = require('mammoth');
+      const result = await mammoth.extractRawText({ buffer: req.file.buffer });
+      rawText = result.value || '';
+    } else if (ext === '.txt') {
+      rawText = req.file.buffer.toString('utf-8');
+    } else {
+      return res.status(400).json({ error: 'Unsupported file type. Please upload a PDF, Word, or text file.' });
+    }
+
+    const text = rawText.replace(/\r\n/g, '\n').replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim();
+    if (!text) return res.status(400).json({ error: 'Could not extract text from the uploaded file.' });
+
+    const title = path.basename(req.file.originalname, ext).replace(/[_-]+/g, ' ').trim() || 'Uploaded Script';
+    res.json({ title, fileName: req.file.originalname, text: text.substring(0, 60000) });
+  } catch (err) {
+    console.error('[Upload Script] Extraction failed:', err.message);
+    res.status(500).json({ error: 'Could not read that file. Try a different PDF, Word, or text file.' });
+  }
+});
+
+// ═══════════════════════════════════════════════
 // VIDEO BUILDER — Script Writer Proxy (server-side API key)
 // ═══════════════════════════════════════════════
 
@@ -2092,8 +2143,8 @@ async function createSharedVideoCopy(sourceVideo, senderEmail, recipientEmail) {
     `INSERT INTO videos (user_id, name, brand_name, brand_logo_url, pocketsic_project_id, pocketsic_project_name,
       scene_data, narration_script, voiceover_timestamps, video_url, thumbnail_url, voiceover_url,
       voice_id, language, duration_target, duration_actual, music_track_id, scriptwriter_script_id, scriptwriter_script_name, scriptwriter_data,
-      persona_image_url, status, shared_by, shared_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
+      persona_image_url, script_synopsis, status, shared_by, shared_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
     [
       recipientUser.id,
       sourceVideo.name,
@@ -2116,6 +2167,7 @@ async function createSharedVideoCopy(sourceVideo, senderEmail, recipientEmail) {
       sourceVideo.scriptwriter_script_name || null,
       sourceVideo.scriptwriter_data ? (typeof sourceVideo.scriptwriter_data === 'string' ? sourceVideo.scriptwriter_data : JSON.stringify(sourceVideo.scriptwriter_data)) : null,
       sourceVideo.persona_image_url || null,
+      sourceVideo.script_synopsis || null,
       sourceVideo.status === 'completed' ? 'completed' : 'draft',
       senderEmail,
     ]
@@ -2210,7 +2262,7 @@ app.post('/api/videos/:id/share/confirm', async (req, res) => {
         await query(
           `UPDATE videos SET name = ?, brand_name = ?, brand_logo_url = ?, scene_data = ?, narration_script = ?,
             voiceover_timestamps = ?, video_url = ?, thumbnail_url = ?, voiceover_url = ?,
-            duration_actual = ?, language = ?, status = ?, shared_by = ?, shared_at = NOW(), updated_at = NOW()
+            duration_actual = ?, language = ?, script_synopsis = ?, status = ?, shared_by = ?, shared_at = NOW(), updated_at = NOW()
            WHERE id = ?`,
           [
             sourceVideo.name,
@@ -2224,6 +2276,7 @@ app.post('/api/videos/:id/share/confirm', async (req, res) => {
             sourceVideo.voiceover_url,
             sourceVideo.duration_actual,
             sourceVideo.language || 'English',
+            sourceVideo.script_synopsis || null,
             sourceVideo.status === 'completed' ? 'completed' : 'draft',
             email.toLowerCase(),
             copiedId,
@@ -2608,64 +2661,35 @@ app.get('/{*splat}', (req, res) => {
 // ═══════════════════════════════════════════════
 
 /**
- * Non-blocking startup check: probe Veo API to verify the API key has
- * video generation access (requires paid-tier billing).
+ * Non-blocking startup check: confirm the Gemini key can see the b-roll video model
+ * (Gemini Omni Flash). Lists models only — no video is generated, so it costs nothing.
  * Logs results so they show up in Heroku logs automatically.
  */
 async function checkVeoCapability() {
-  const { GoogleGenAI } = require('@google/genai');
-  const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-
-  const veoModels = ['veo-3.1-generate-preview'];
-
-  console.log('[Startup Veo Check] Testing Veo video generation capability...');
-
-  for (const modelName of veoModels) {
-    try {
-      // Just initiate a short generation — we cancel immediately, we only care
-      // about whether the API key is authorized for this model.
-      const operation = await ai.models.generateVideos({
-        model: modelName,
-        prompt: 'A single blue circle on white background',
-        config: {
-          aspectRatio: '16:9',
-          resolution: '720p',
-          durationSeconds: 5,
-          numberOfVideos: 1,
-        },
-      });
-
-      // If we get here without an error, the model is accessible
-      console.log(`[Startup Veo Check] ✓ ${modelName} — ACCESSIBLE (operation started)`);
-
-      // We don't need the actual video — just log that it works.
-      // The operation will eventually time out or be garbage collected.
-      // Log the operation name for reference.
-      if (operation.name) {
-        console.log(`[Startup Veo Check]   Operation: ${operation.name}`);
-      }
-
-      // One model working is enough — stop testing
-      return;
-    } catch (err) {
-      const errMsg = err.message || String(err);
-      console.warn(`[Startup Veo Check] ✗ ${modelName} — FAILED: ${errMsg}`);
-
-      if (err.status) console.warn(`[Startup Veo Check]   HTTP ${err.status}: ${err.statusText || ''}`);
-      if (err.errorDetails) {
-        console.warn(`[Startup Veo Check]   Details: ${JSON.stringify(err.errorDetails).substring(0, 300)}`);
-      }
-
-      // Billing/permission error means no Veo model will work
-      if (errMsg.includes('billing') || errMsg.includes('quota') || errMsg.includes('permission') || errMsg.includes('403') || errMsg.includes('PERMISSION_DENIED')) {
-        console.error('[Startup Veo Check] ⚠️  Veo requires a paid-tier Gemini API key with billing enabled.');
-        console.error('[Startup Veo Check]    B-roll will fall back to still images until this is resolved.');
-        return;
-      }
-    }
+  const { omniModel } = require('./src/pipeline/brollGenerator');
+  const model = omniModel();
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    console.error('[Startup Video Model Check] ✗ GEMINI_API_KEY not configured — b-roll video cannot be generated.');
+    return;
   }
-
-  console.warn('[Startup Veo Check] ⚠️  No Veo models accessible. B-roll will use still images.');
+  console.log(`[Startup Video Model Check] Checking access to ${model}...`);
+  try {
+    const listing = await Promise.race([
+      fetch('https://generativelanguage.googleapis.com/v1beta/models?pageSize=500', { headers: { 'x-goog-api-key': apiKey } }).then(r => r.json()),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('timed out after 20s')), 20000)),
+    ]);
+    if (listing.error) throw new Error(listing.error.message || JSON.stringify(listing.error));
+    const names = (listing.models || []).map(m => (m.name || '').replace(/^models\//, ''));
+    if (names.includes(model)) {
+      console.log(`[Startup Video Model Check] ✓ ${model} — available on this key`);
+    } else {
+      const omni = names.filter(n => n.includes('omni'));
+      console.error(`[Startup Video Model Check] ✗ ${model} is NOT available on this key. Omni models visible: ${omni.join(', ') || 'none'}. B-roll sections will fail (no still images are used).`);
+    }
+  } catch (err) {
+    console.warn(`[Startup Video Model Check] Could not check models: ${err.message}`);
+  }
 }
 
 // ═══════════════════════════════════════════════
@@ -2933,8 +2957,8 @@ async function start() {
     if (!process.env.ELEVENLABS_API_KEY) {
       console.warn('⚠️  ELEVENLABS_API_KEY not set — voiceover will not work');
     }
-    if (!process.env.R2_ACCOUNT_ID) {
-      console.warn('⚠️  R2 credentials not set — video upload will not work');
+    if (!require('./src/utils/storage').isConfigured()) {
+      console.warn('⚠️  File storage not configured — video upload will not work');
     }
   });
 

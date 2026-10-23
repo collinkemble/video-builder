@@ -14,10 +14,10 @@ function getGenAI() {
 }
 
 // ════════════════════════════════════════════════════════════════
-// B-Roll VIDEO generation (Veo) — primary path
+// B-Roll VIDEO generation (Gemini Omni Flash) — primary path
 // ════════════════════════════════════════════════════════════════
 
-// Rules for clips WITH persona reference image — person is OK since Veo matches them
+// Rules for clips WITH persona reference image — person is OK since the model matches them
 const VIDEO_PROMPT_RULES_WITH_PERSONA = `Style: Cinematic b-roll footage. Smooth, slow camera movement. Warm natural lighting. Shallow depth of field. High production value.
 CRITICAL RULES YOU MUST FOLLOW:
 1. ABSOLUTELY NO screens of any kind — no phone screens, laptop screens, tablet screens, computer monitors, TV screens, smartwatch screens, or any digital display showing content.
@@ -29,7 +29,8 @@ CRITICAL RULES YOU MUST FOLLOW:
 7. Slow cinematic motion only — no rapid movement.
 8. ABSOLUTELY NO morphing between people — the person must remain the SAME throughout. Do NOT transition one person into a different person.
 9. Show only ONE person (the reference person) per shot. Never add random other people.
-10. NO delivery trucks, shipping vehicles, or logistics imagery.`;
+10. NO delivery trucks, shipping vehicles, or logistics imagery.
+11. ONE single continuous shot — no scene cuts, no edits, no jumps to a different location or angle.`;
 
 // Rules for clips WITHOUT persona reference — NO PEOPLE to avoid random strangers
 const VIDEO_PROMPT_RULES_NO_PERSONA = `Style: Cinematic b-roll footage. Smooth, slow camera movement. Warm natural lighting. Shallow depth of field. High production value.
@@ -41,7 +42,8 @@ CRITICAL RULES YOU MUST FOLLOW:
 5. Every surface in the scene must be COMPLETELY CLEAN AND SMOOTH. This is the MOST IMPORTANT rule. All glasses must be perfectly plain, smooth, transparent glass — like simple kitchen tumblers or plain pint glasses you'd buy unprinted from a store. All bottles must be completely bare glass with zero printing or paper on them. All packaging must be plain solid single colors. All clothing must be solid colors. All storefronts and signs must be out of focus or show abstract shapes only. Think of this as a "stock footage" world where no brands exist — every object is a generic, unprinted, clean version of itself.
 6. Slow cinematic motion only — no rapid movement.
 7. NO delivery trucks, shipping vehicles, or logistics imagery.
-8. Focus on MOOD and ATMOSPHERE — the visual should evoke the feeling of the brand without showing people.`;
+8. Focus on MOOD and ATMOSPHERE — the visual should evoke the feeling of the brand without showing people.
+9. ONE single continuous shot — no scene cuts, no edits, no jumps to a different location or angle.`;
 
 /**
  * Sanitize a b-roll prompt to remove brand names and product-specific references
@@ -126,278 +128,271 @@ function sanitizeBrollPrompt(text, brandName) {
   return clean;
 }
 
-/**
- * Poll a Veo video operation until done.
- * @returns {Promise<object>} The completed operation
- */
-async function pollVeoOperation(ai, operation, label, maxWait = 120000) {
-  const pollInterval = 10000;
-  const startTime = Date.now();
+// ════════════════════════════════════════════════════════════════
+// Gemini Omni Flash client (replaces Veo 3.1, which Google shut down 2026-10-22)
+//   • One synchronous Interactions API call returns a ~10s 720p clip.
+//   • Extensions use previous_interaction_id and return the FULL combined video.
+//   • Tested: a single continuous shot reliably reaches 30s (10s + 2 extensions).
+//     A 3rd extension replaced the last 10s instead of adding to it, so chains are capped at 30s.
+//   • No AbortController (unreliable on Heroku Fir) — timeouts use Promise.race.
+// ════════════════════════════════════════════════════════════════
+const OMNI_BASE = 'https://generativelanguage.googleapis.com/v1beta';
+const OMNI_CLIP_SECONDS = 10;
+const OMNI_MAX_CHAIN_SECONDS = 30;
+const OMNI_MAX_CLIPS_PER_CHAIN = OMNI_MAX_CHAIN_SECONDS / OMNI_CLIP_SECONDS; // 3 → initial + 2 extensions
+const OMNI_CALL_TIMEOUT_MS = 4 * 60 * 1000;
+const OMNI_RESPONSE_FORMAT = { type: 'video', aspect_ratio: '16:9', resolution: '720p' };
 
-  console.log(`[B-Roll Video] ${label}: Polling every ${pollInterval / 1000}s (max ${maxWait / 1000}s)...`);
+function omniModel() {
+  const m = (process.env.VEO_MODEL || '').trim();
+  // Ignore stale Veo model names — those endpoints no longer exist
+  return m && !/^veo-/i.test(m) ? m : 'gemini-omni-1.1-flash';
+}
 
-  while (!operation.done) {
-    if (Date.now() - startTime > maxWait) {
-      console.warn(`[B-Roll Video] ${label}: Timeout (${(maxWait / 1000)}s).`);
-      return operation;
-    }
-    await new Promise(r => setTimeout(r, pollInterval));
-    operation = await ai.operations.getVideosOperation({ operation });
-    console.log(`[B-Roll Video] ${label}: Polling... (${Math.round((Date.now() - startTime) / 1000)}s) done=${operation.done}`);
+function raceTimeout(promise, ms, label) {
+  let timer;
+  return Promise.race([
+    promise.finally(() => clearTimeout(timer)),
+    new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(`${label} timed out after ${Math.round(ms / 1000)}s`)), ms); }),
+  ]);
+}
+
+function omniHeaders() {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) throw new Error('GEMINI_API_KEY not configured');
+  return { 'x-goog-api-key': apiKey, 'Content-Type': 'application/json' };
+}
+
+/** Find the generated video anywhere in an Interactions API response. */
+function findVideoPart(node, depth = 0) {
+  if (!node || typeof node !== 'object' || depth > 12) return null;
+  if ((node.type === 'video' || /^video\//.test(node.mime_type || node.mimeType || '')) && (node.data || node.uri)) return node;
+  for (const v of Object.values(node)) {
+    const found = findVideoPart(v, depth + 1);
+    if (found) return found;
   }
+  return null;
+}
 
-  return operation;
+/** Download a `files/<id>` video once it is ACTIVE. */
+async function downloadOmniFile(uri) {
+  const headers = omniHeaders();
+  const fileId = uri.replace(/^.*?(files\/[^:/?]+).*$/, '$1');
+  for (let i = 0; i < 60; i++) {
+    const meta = await raceTimeout(fetch(`${OMNI_BASE}/${fileId}`, { headers }).then(r => r.json()), 30000, 'Omni file status');
+    if (meta.state === 'ACTIVE') break;
+    if (meta.state === 'FAILED') throw new Error(`Omni file ${fileId} failed to process`);
+    await new Promise(r => setTimeout(r, 3000));
+  }
+  const resp = await raceTimeout(fetch(`${OMNI_BASE}/${fileId}:download?alt=media`, { headers }), 120000, 'Omni file download');
+  if (!resp.ok) throw new Error(`Omni file download HTTP ${resp.status}`);
+  return Buffer.from(await resp.arrayBuffer());
 }
 
 /**
- * Generate a b-roll VIDEO clip from a description using Google Veo.
- * Generates a single 8-second clip (Veo maximum per generation).
- * The compositor handles looping if the segment needs to be longer.
- *
- * @param {object} params
- * @param {string} params.description - What the clip should show
- * @param {string} params.brandName - Brand name for context
- * @param {string} params.brandDescription - Brand description/industry for context
- * @param {string} params.personaDescription - Persona description for context
- * @param {string} params.outputDir - Directory to save the clip
- * @param {string} params.segmentType - Segment type (intro/transition/outro) for prompt context
- * @param {string} params.segmentChannel - Channel name for prompt context
- * @param {string} params.personaImageUrl - Optional persona image URL for character consistency
- * @returns {Promise<string|null>} Path to MP4 clip, or null if video gen failed
+ * One Omni generation. Returns { buffer, interactionId }.
+ * @param {string|Array} input - prompt text, or [image part, text part] for a persona reference
+ * @param {string} [previousInteractionId] - set to extend an earlier clip
  */
-async function generateBrollVideo({ description, brandName, brandDescription = '', personaDescription = '', outputDir, segmentType = '', segmentChannel = '', personaImageUrl = null }) {
-  const ai = getGenAI();
+async function omniGenerate({ input, previousInteractionId = null, label = 'Omni' }) {
+  const body = { model: omniModel(), input, response_format: OMNI_RESPONSE_FORMAT };
+  if (previousInteractionId) body.previous_interaction_id = previousInteractionId;
+  const started = Date.now();
+  const resp = await raceTimeout(
+    fetch(`${OMNI_BASE}/interactions`, { method: 'POST', headers: omniHeaders(), body: JSON.stringify(body) }),
+    OMNI_CALL_TIMEOUT_MS, label
+  );
+  const json = await raceTimeout(resp.json(), 120000, `${label} response`).catch(() => ({}));
+  if (!resp.ok) {
+    const msg = json?.error?.message || JSON.stringify(json).slice(0, 300);
+    const err = new Error(`${label} HTTP ${resp.status}: ${msg}`);
+    err.status = resp.status;
+    throw err;
+  }
+  const part = findVideoPart(json);
+  if (!part) throw new Error(`${label}: response contained no video (${JSON.stringify(json).slice(0, 200)})`);
+  const buffer = part.data ? Buffer.from(part.data, 'base64') : await downloadOmniFile(part.uri);
+  const outTokens = json?.usage?.total_output_tokens;
+  console.log(`[B-Roll Omni] ${label}: ok in ${Math.round((Date.now() - started) / 1000)}s (${(buffer.length / 1024 / 1024).toFixed(1)}MB${outTokens ? `, ${outTokens} output tokens` : ''})`);
+  return { buffer, interactionId: json.id || null };
+}
 
-  // Add context about the segment role for more fitting footage
+/** Download the persona photo (public URL, then presigned-URL fallback). Returns { base64, mimeType } or null. */
+async function loadPersonaImage(personaImageUrl) {
+  try {
+    let imgResp = await raceTimeout(fetch(personaImageUrl), 30000, 'Persona image download');
+    const _st = require('../utils/storage');
+    if (!imgResp.ok && _st.isStorageUrl(personaImageUrl) && _st.isOwnKey(_st.urlToKey(personaImageUrl))) {
+      console.log(`[B-Roll Omni] Persona image returned ${imgResp.status}, trying presigned URL...`);
+      try {
+        const presignedUrl = await _st.getPresignedUrl(_st.urlToKey(personaImageUrl), 300);
+        imgResp = await raceTimeout(fetch(presignedUrl), 30000, 'Persona image presigned download');
+      } catch (e) { console.warn(`[B-Roll Omni] Presigned fallback failed: ${e.message}`); }
+    }
+    if (!imgResp.ok) { console.warn(`[B-Roll Omni] Persona image download failed (HTTP ${imgResp.status})`); return null; }
+    const buf = Buffer.from(await imgResp.arrayBuffer());
+    const ct = (imgResp.headers.get('content-type') || '').toLowerCase();
+    const mimeType = ct.includes('png') || /\.png(\?|$)/i.test(personaImageUrl) ? 'image/png'
+      : ct.includes('webp') || /\.webp(\?|$)/i.test(personaImageUrl) ? 'image/webp'
+      : 'image/jpeg';
+    return { base64: buf.toString('base64'), mimeType };
+  } catch (err) {
+    console.warn(`[B-Roll Omni] Persona image error: ${err.message}`);
+    return null;
+  }
+}
+
+// Cache persona photo per URL for the life of the process (same photo used for every clip)
+const _personaCache = new Map();
+async function getPersonaImage(url) {
+  if (!url) return null;
+  if (!_personaCache.has(url)) _personaCache.set(url, loadPersonaImage(url));
+  const img = await _personaCache.get(url);
+  if (!img) _personaCache.delete(url); // retry download next time
+  return img;
+}
+
+// Persona photos that Google's safety filter has blocked ("Input blocked"). Once blocked, we stop
+// sending that photo and describe the person in words instead, so no attempts are wasted.
+const _blockedPersonaPhotos = new Set();
+function isPersonaPhotoBlocked(url) { return !!url && _blockedPersonaPhotos.has(url); }
+function markPersonaPhotoBlocked(url) { if (url) _blockedPersonaPhotos.add(url); }
+
+// Written description of the persona's look, made once per photo with Gemini (vision).
+const _personaLookCache = new Map();
+async function describePersona(url, fallbackText = '') {
+  if (!url) return fallbackText || '';
+  if (!_personaLookCache.has(url)) {
+    _personaLookCache.set(url, (async () => {
+      const img = await getPersonaImage(url);
+      if (!img) return '';
+      const ai = getGenAI();
+      const models = [process.env.GEMINI_MODEL || 'gemini-3.7-flash', 'gemini-3.6-flash', 'gemini-3.5-flash'];
+      for (const model of [...new Set(models)]) {
+        try {
+          const resp = await raceTimeout(ai.models.generateContent({
+            model,
+            contents: [{ role: 'user', parts: [
+              { inlineData: { mimeType: img.mimeType, data: img.base64 } },
+              { text: 'Write a short casting description of this fictional character\'s visible appearance for a video shoot: apparent age range, gender presentation, hair color and style, skin tone, build, and any distinctive features. Do not name or identify anyone and do not describe clothing. One or two sentences, no preamble.' },
+            ] }],
+          }), 45000, 'Persona description');
+          const text = (resp.text || '').trim().replace(/\s+/g, ' ');
+          if (text) { console.log('[B-Roll Omni] Persona described in words: ' + text.substring(0, 160)); return text; }
+        } catch (err) {
+          console.warn('[B-Roll Omni] Persona description with ' + model + ' failed: ' + err.message);
+        }
+      }
+      return '';
+    })());
+  }
+  const look = await _personaLookCache.get(url);
+  if (!look) _personaLookCache.delete(url); // try again next time
+  return look || fallbackText || '';
+}
+
+/** Classify an Omni error so retries can react to the real cause. */
+function classifyOmniError(err) {
+  const msg = (err && err.message) || '';
+  const status = err && err.status;
+  if (status === 429 || status >= 500 || /timed out|ECONNRESET|ETIMEDOUT|fetch failed|socket|RESOURCE_EXHAUSTED|UNAVAILABLE|overloaded/i.test(msg)) return 'transient';
+  if (/Input blocked|could not be processed|safety|blocked|prohibited|not supported.*(person|people|image)/i.test(msg)) return 'blocked';
+  return 'other';
+}
+
+/**
+ * Generate a b-roll VIDEO clip (~10s, 720p) with Gemini Omni Flash.
+ * personaMode:
+ *   'photo'     — send the persona photo as <IMAGE_REF_0> (strongest likeness)
+ *   'described' — the photo is blocked by Google, so the same person is described in words (personaLook)
+ *   'none'      — no people at all (last resort)
+ * @returns {Promise<{filePath: string, videoRef: string|null}|{error: Error}>} videoRef = Omni interaction id (for extensions)
+ */
+async function generateBrollVideo({ description, brandName, brandDescription = '', personaDescription = '', outputDir, segmentType = '', segmentChannel = '', personaImageUrl = null, personaMode = null, personaLook = '' }) {
   let contextHint = '';
   if (segmentType === 'intro') {
     contextHint = 'This is the OPENING shot of the video — use a wide, establishing cinematic shot that sets the mood. ';
   } else if (segmentType === 'outro') {
     contextHint = 'This is the CLOSING shot of the video — use a warm, conclusive cinematic shot that feels like a satisfying ending. ';
   } else if (segmentType === 'transition') {
-    contextHint = `This is a TRANSITION shot bridging two scenes${segmentChannel ? ` (coming from: ${segmentChannel})` : ''} — show movement, travel, or passage of time. `;
+    contextHint = 'This is a TRANSITION shot bridging two scenes' + (segmentChannel ? ' (coming from: ' + segmentChannel + ')' : '') + ' — show movement, travel, or passage of time. ';
   }
 
-  // If persona image is provided, enhance the prompt to explicitly mention the person
+  const mode = personaMode || (personaImageUrl ? 'photo' : 'none');
+  const persona = mode === 'photo' && personaImageUrl ? await getPersonaImage(personaImageUrl) : null;
+  const usePhoto = !!persona;
+  const useDescribed = !usePhoto && (mode === 'described' || (mode === 'photo' && !!personaLook)) && !!personaLook;
+
   let personaPromptHint = '';
-  if (personaImageUrl) {
-    personaPromptHint = 'IMPORTANT: You MUST feature the exact person from the provided reference image as the main character in this clip. Match their face, hair, skin tone, body type, and facial features precisely from the reference image. However, ADAPT their clothing and outfit to match the scene — if the scene involves exercise, dress them in athletic wear; if a formal event, dress them formally; if casual, dress them casually. The person\'s IDENTITY stays the same but their WARDROBE should fit the activity and setting described. CRITICAL: The person must NOT be talking or moving their lips at any point — this is silent b-roll with a voiceover, not a talking-head shot. ';
+  const noTalking = 'CRITICAL: The person must NOT be talking or moving their lips at any point — this is silent b-roll with a voiceover, not a talking-head shot. ';
+  const wardrobe = 'ADAPT their clothing to the scene — athletic wear for exercise, formal wear for formal events, casual for casual. Their IDENTITY stays the same; their WARDROBE fits the activity. ';
+  if (usePhoto) {
+    personaPromptHint = 'IMPORTANT: The main character is the person shown in <IMAGE_REF_0>. Match their face, hair, skin tone, body type, and facial features exactly. ' + wardrobe + noTalking;
+  } else if (useDescribed) {
+    personaPromptHint = 'IMPORTANT: The main character is a fictional person with this exact look, kept identical in every shot: ' + personaLook + ' ' + wardrobe + noTalking;
   }
 
-  // Build brand/persona context — sanitized to avoid AI generating fake logos.
-  // We tell the model what KIND of brand (industry) without naming it, so it
-  // cannot invent branding.  The brand name is deliberately stripped.
   let brandContext = '';
-  if (brandDescription) {
-    brandContext += `Brand context: a premium brand — ${sanitizeBrollPrompt(brandDescription, brandName)}. `;
-  }
-  if (personaDescription) {
-    brandContext += `The story follows: ${sanitizeBrollPrompt(personaDescription, brandName)}. `;
-  }
+  if (brandDescription) brandContext += 'Brand context: a premium brand — ' + sanitizeBrollPrompt(brandDescription, brandName) + '. ';
+  if (personaDescription) brandContext += 'The story follows: ' + sanitizeBrollPrompt(personaDescription, brandName) + '. ';
 
-  // Sanitize the visual description itself — strip brand name and branded product refs
   const cleanDescription = sanitizeBrollPrompt(description, brandName);
+  let rules = VIDEO_PROMPT_RULES_NO_PERSONA;
+  if (usePhoto) rules = VIDEO_PROMPT_RULES_WITH_PERSONA;
+  else if (useDescribed) rules = VIDEO_PROMPT_RULES_WITH_PERSONA
+    .replace(/the person from the reference image/gi, 'the described main character')
+    .replace(/\(the reference person\)/gi, '(the described main character)')
+    .replace(/in the reference image/gi, 'in the description');
 
-  // Use different rules depending on whether we have a persona reference image
-  const rules = personaImageUrl ? VIDEO_PROMPT_RULES_WITH_PERSONA : VIDEO_PROMPT_RULES_NO_PERSONA;
+  const promptText = contextHint + personaPromptHint + brandContext +
+    'Professional cinematic b-roll footage for a premium brand customer experience video, filmed as ONE single continuous shot with no scene cuts: ' +
+    cleanDescription + '.\n' + rules;
 
-  const prompt = `${contextHint}${personaPromptHint}${brandContext}Professional cinematic b-roll footage for a premium brand customer experience video: ${cleanDescription}.\n${rules}`;
+  const input = usePhoto
+    ? [{ type: 'image', mime_type: persona.mimeType, data: persona.base64 }, { type: 'text', text: promptText }]
+    : promptText;
 
-  const modelName = process.env.VEO_MODEL || 'veo-3.1-fast-generate-preview';
-
+  const how = usePhoto ? 'persona photo' : useDescribed ? 'persona described in words' : 'no people';
   try {
-    console.log(`[B-Roll Video] Generating 8s clip with ${modelName}: "${description.substring(0, 60)}..."${personaImageUrl ? ' (with persona reference image)' : ''}`);
-
-    // Build Veo config
-    const veoConfig = {
-      aspectRatio: '16:9',
-      resolution: '720p',
-      durationSeconds: 8,
-      numberOfVideos: 1,
-      personGeneration: 'allow_all',
-    };
-
-    // If persona image is provided, download and pass as reference image for character consistency.
-    // Uses referenceType: "ASSET" (uppercase per SDK enum) to preserve the subject's appearance.
-    // referenceImages goes INSIDE config per the Gemini API spec.
-    if (personaImageUrl) {
-      try {
-        console.log(`[B-Roll Video] Downloading persona image for Veo reference: ${personaImageUrl.substring(0, 80)}...`);
-        let imgResp = await fetch(personaImageUrl);
-
-        // If public URL fails, try presigned URL from R2 as fallback
-        if (!imgResp.ok && personaImageUrl.includes('r2.dev/')) {
-          console.log(`[B-Roll Video] Public URL returned ${imgResp.status}, trying presigned URL fallback...`);
-          try {
-            const { getPresignedUrl } = require('../utils/r2');
-            // Extract the R2 key from the public URL (everything after the domain/)
-            const urlObj = new URL(personaImageUrl);
-            const r2Key = urlObj.pathname.replace(/^\//, '');
-            const presignedUrl = await getPresignedUrl(r2Key, 300);
-            imgResp = await fetch(presignedUrl);
-            if (imgResp.ok) {
-              console.log(`[B-Roll Video] ✅ Presigned URL fallback worked for persona image`);
-            }
-          } catch (presignErr) {
-            console.warn(`[B-Roll Video] Presigned URL fallback failed: ${presignErr.message}`);
-          }
-        }
-
-        if (imgResp.ok) {
-          let imgBuffer = Buffer.from(await imgResp.arrayBuffer());
-          console.log(`[B-Roll Video] Downloaded persona image: ${(imgBuffer.length / 1024).toFixed(0)}KB`);
-
-          // If image is very large (>2MB), resize to avoid API limits
-          if (imgBuffer.length > 2 * 1024 * 1024) {
-            console.log(`[B-Roll Video] Image too large (${(imgBuffer.length / 1024 / 1024).toFixed(1)}MB), will proceed but may hit size limits`);
-          }
-
-          const base64Data = imgBuffer.toString('base64');
-          // Detect mime type from content-type header or URL
-          const contentType = imgResp.headers.get('content-type') || '';
-          const mimeType = contentType.includes('jpeg') || contentType.includes('jpg') || personaImageUrl.match(/\.jpe?g/i)
-            ? 'image/jpeg'
-            : 'image/png';
-
-          veoConfig.referenceImages = [{
-            image: {
-              imageBytes: base64Data,
-              mimeType,
-            },
-            referenceType: 'ASSET',
-          }];
-          // Veo does not allow personGeneration: 'allow_all' when referenceImages are present
-          delete veoConfig.personGeneration;
-          console.log(`[B-Roll Video] ✅ Persona reference image attached (${(imgBuffer.length / 1024).toFixed(0)}KB, type=${mimeType}, referenceType=ASSET, base64Length=${base64Data.length})`);
-        } else {
-          console.warn(`[B-Roll Video] ❌ Persona image download failed (HTTP ${imgResp.status}). Proceeding without reference.`);
-        }
-      } catch (err) {
-        console.warn(`[B-Roll Video] ❌ Persona image download error: ${err.message}. Proceeding without reference.`);
-      }
-    }
-
-    // Generate a single 8-second clip (max for one Veo generation)
-    const hasRefImages = veoConfig.referenceImages && veoConfig.referenceImages.length > 0;
-    console.log(`[B-Roll Video] Calling ${modelName}.generateVideos (hasReferenceImages=${hasRefImages}, configKeys=${Object.keys(veoConfig).join(',')})...`);
-    let operation = await ai.models.generateVideos({
-      model: modelName,
-      prompt,
-      config: veoConfig,
-    });
-
-    operation = await pollVeoOperation(ai, operation, 'generation');
-
-    if (!operation.done) return null;
-
-    // Extract video
-    const generatedVideo = operation.response?.generatedVideos?.[0];
-    if (!generatedVideo || !generatedVideo.video) {
-      console.warn(`[B-Roll Video] ${modelName} completed but no video in response.`);
-      return null;
-    }
-
-    // Download the video file
-    const filename = `broll_video_${Date.now()}.mp4`;
-    const outputPath = path.join(outputDir || os.tmpdir(), filename);
-
-    await ai.files.download({
-      file: generatedVideo.video,
-      downloadPath: outputPath,
-    });
-
-    const stats = fs.statSync(outputPath);
-    console.log(`[B-Roll Video] Generated: ${outputPath} (8s, ${(stats.size / 1024).toFixed(1)}KB)`);
-    // Return both file path and video reference (for extend API chaining)
-    return { filePath: outputPath, videoRef: generatedVideo.video };
-
+    console.log('[B-Roll Video] Generating ~' + OMNI_CLIP_SECONDS + 's clip with ' + omniModel() + ' (' + how + '): "' + description.substring(0, 60) + '..."');
+    const res = await omniGenerate({ input, label: 'clip (' + (segmentType || 'broll') + ', ' + how + ')' });
+    const outputPath = path.join(outputDir || os.tmpdir(), 'broll_video_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7) + '.mp4');
+    fs.writeFileSync(outputPath, res.buffer);
+    return { filePath: outputPath, videoRef: res.interactionId };
   } catch (err) {
-    const errMsg = err.message || String(err);
-    console.warn(`[B-Roll Video] ${modelName} failed: ${errMsg}`);
-    if (err.status) console.warn(`[B-Roll Video] HTTP status: ${err.status}`);
-    if (err.statusText) console.warn(`[B-Roll Video] Status text: ${err.statusText}`);
-    if (err.errorDetails) console.warn(`[B-Roll Video] Error details: ${JSON.stringify(err.errorDetails).substring(0, 500)}`);
-    if (errMsg.includes('billing') || errMsg.includes('quota') || errMsg.includes('permission') || errMsg.includes('403') || errMsg.includes('PERMISSION_DENIED')) {
-      console.warn('[B-Roll Video] Veo requires a paid-tier Gemini API key with billing enabled.');
-    }
+    console.warn('[B-Roll Video] ' + omniModel() + ' failed (' + how + '): ' + err.message);
+    err.usedPhoto = usePhoto;
+    return { error: err };
   }
-
-  console.warn('[B-Roll Video] Veo failed. Falling back to image generation.');
-  return null;
 }
 
-
-// ════════════════════════════════════════════════════════════════
-// B-Roll VIDEO EXTEND (Veo Extend API) — chain clips for continuity
-// ════════════════════════════════════════════════════════════════
-
 /**
- * Extend an existing Veo-generated video by ~7 seconds using the Veo Extend API.
- * Each extension adds approximately 7 seconds of continuous footage that maintains
- * visual coherence with the previous clip.
- *
- * Constraints:
- *   - Resolution locked to 720p (extend API requirement)
- *   - Max 20 extensions per chain (~148 seconds total)
- *   - Only works with Veo-generated MP4s
- *   - Each extension is sequential (depends on previous clip)
- *
- * @param {object} params
- * @param {object} params.videoRef - Video reference from previous generation (operation.response.generatedVideos[0].video)
- * @param {string} params.prompt - Continuation prompt for the extended footage
- * @param {string} params.outputDir - Directory to save the extended clip
- * @param {number} params.extensionNumber - Which extension this is (1-based, for logging)
- * @returns {Promise<{filePath: string, videoRef: object}|null>} Extended clip path + video ref for next extension, or null on failure
+ * Extend an Omni clip by ~10s. Omni returns the FULL combined video (earlier footage + new),
+ * so the caller should REPLACE its file with the returned one.
+ * @param {string} params.videoRef - interaction id of the clip being extended
+ * @returns {Promise<{filePath: string, videoRef: string|null}|null>}
  */
 async function extendBrollVideo({ videoRef, prompt, outputDir, extensionNumber = 1 }) {
-  const ai = getGenAI();
-  const modelName = process.env.VEO_MODEL || 'veo-3.1-fast-generate-preview';
-
+  if (!videoRef) return null;
   try {
-    console.log(`[B-Roll Extend] Extension #${extensionNumber} with ${modelName}: "${prompt.substring(0, 60)}..."`);
-
-    let operation = await ai.models.generateVideos({
-      model: modelName,
-      prompt,
-      video: videoRef,
-      config: {
-        numberOfVideos: 1,
-        resolution: '720p',
-      },
-    });
-
-    operation = await pollVeoOperation(ai, operation, `extend-${extensionNumber}`, 180000);
-
-    if (!operation.done) {
-      console.warn(`[B-Roll Extend] Extension #${extensionNumber} timed out.`);
-      return null;
-    }
-
-    const generatedVideo = operation.response?.generatedVideos?.[0];
-    if (!generatedVideo || !generatedVideo.video) {
-      console.warn(`[B-Roll Extend] Extension #${extensionNumber} completed but no video in response.`);
-      return null;
-    }
-
-    // Download the extended video
-    const filename = `broll_extended_${extensionNumber}_${Date.now()}.mp4`;
-    const outputPath = path.join(outputDir || os.tmpdir(), filename);
-
-    await ai.files.download({
-      file: generatedVideo.video,
-      downloadPath: outputPath,
-    });
-
-    const stats = fs.statSync(outputPath);
-    console.log(`[B-Roll Extend] Extension #${extensionNumber} done: ${outputPath} (${(stats.size / 1024).toFixed(1)}KB)`);
-    return { filePath: outputPath, videoRef: generatedVideo.video };
-
+    console.log('[B-Roll Extend] Extension #' + extensionNumber + ' with ' + omniModel() + ': "' + prompt.substring(0, 60) + '..."');
+    const res = await omniGenerate({ input: prompt, previousInteractionId: videoRef, label: 'extension #' + extensionNumber });
+    const outputPath = path.join(outputDir || os.tmpdir(), 'broll_extended_' + extensionNumber + '_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7) + '.mp4');
+    fs.writeFileSync(outputPath, res.buffer);
+    return { filePath: outputPath, videoRef: res.interactionId };
   } catch (err) {
-    const errMsg = err.message || String(err);
-    console.warn(`[B-Roll Extend] Extension #${extensionNumber} failed: ${errMsg}`);
-    if (err.status) console.warn(`[B-Roll Extend] HTTP status: ${err.status}`);
+    console.warn('[B-Roll Extend] Extension #' + extensionNumber + ' failed: ' + err.message);
     return null;
   }
+}
+
+/** Continuation prompt that keeps the same person, outfit and setting. */
+function buildContinuationPrompt(desc, brandName, hasPersona) {
+  return 'Continue the SAME single continuous shot smoothly — no scene cuts. Keep the same ' +
+    (hasPersona ? 'person, the same outfit, ' : '') +
+    'setting, lighting, color palette, and camera style. ' +
+    (hasPersona ? 'The person must NOT be talking, speaking, or moving their lips — mouth stays closed. ' : 'No people. ') +
+    'No text, no screens. Story continues: ' + sanitizeBrollPrompt(desc, brandName).substring(0, 160);
 }
 
 // ════════════════════════════════════════════════════════════════
@@ -531,354 +526,272 @@ function truncate(str, maxLen) {
 // ════════════════════════════════════════════════════════════════
 
 /**
- * Generate a b-roll asset (video clip preferred, image fallback).
- * Returns { filePath, videoRef } for video clips (videoRef enables extend API chaining),
- * or { filePath, videoRef: null } for image fallbacks.
- *
- * @param {object} params
- * @param {string} params.description - What the clip should show
- * @param {string} params.brandName - Brand name for context
- * @param {string} params.outputDir - Directory to save the clip
- * @param {string} params.personaImageUrl - Optional persona image URL for character consistency
- * @returns {Promise<{filePath: string, videoRef: object|null}>} File path + video ref for chaining
+ * Generate one b-roll VIDEO clip, reacting to Google's actual error. NEVER returns a still image —
+ * throws if every attempt fails (the caller then reuses b-roll from another section).
+ *   • Persona photo blocked ("Input blocked") → remember it for this photo, describe the person in
+ *     words instead (same look in every section) — the person stays in the shot.
+ *   • Prompt blocked without a photo → simplify the prompt in steps, keeping the person:
+ *       full description + brand/persona context → full description only → minimal description.
+ *   • Rate limit / server error / timeout → retry the SAME prompt after a backoff.
+ *   • Only the very last resort drops the person entirely.
  */
-async function generateBroll({ description, brandName, brandDescription = '', personaDescription = '', outputDir, segmentType = '', segmentChannel = '', personaImageUrl = null }) {
-  const MAX_ATTEMPTS = 5;
-  const BASE_DELAY_MS = 5000; // Exponential backoff: 5s, 10s, 20s, 40s between retries
+async function generateBroll({ description, brandName, brandDescription = '', personaDescription = '', outputDir, segmentType = '', segmentChannel = '', personaImageUrl = null, stats = null }) {
+  const MAX_ATTEMPTS = 6;
+  const TRANSIENT_DELAYS_MS = [5000, 10000, 20000, 40000, 60000];
+
+  let mode = !personaImageUrl ? 'none' : (isPersonaPhotoBlocked(personaImageUrl) ? 'described' : 'photo');
+  let promptLevel = 0; // 0 = full + context, 1 = full description only, 2 = minimal
+  let transientCount = 0;
+
+  const minimal = segmentType === 'intro'
+    ? 'Beautiful cinematic opening shot. Slow camera movement across a stunning modern environment. Warm golden lighting.'
+    : segmentType === 'outro'
+    ? 'Warm cinematic closing shot. Slow pull-back camera movement. Beautiful golden hour lighting.'
+    : 'Smooth cinematic lifestyle footage. Slow camera movement. Beautiful lighting. ' + description.substring(0, 80) + '.';
 
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-    // Backoff delay before retries (not before first attempt)
-    if (attempt > 1) {
-      const delay = BASE_DELAY_MS * Math.pow(2, attempt - 2); // 5s, 10s, 20s, 40s
-      console.log(`[B-Roll] Attempt ${attempt}/${MAX_ATTEMPTS}: waiting ${delay / 1000}s before retry...`);
-      await new Promise(r => setTimeout(r, delay));
-    }
+    const personaLook = mode === 'described' ? await describePersona(personaImageUrl, '') : '';
+    if (mode === 'described' && !personaLook) mode = 'none'; // couldn't describe them — fall through to no-people
 
-    // Progressively simplify prompts on retries
-    let desc = description;
-    let usePersona = personaImageUrl;
-    let passBrandDesc = brandDescription;
-    let passPersonaDesc = personaDescription;
-
-    if (attempt === 2) {
-      // Drop persona, simplify prompt
-      desc = `Cinematic lifestyle footage: ${description.substring(0, 100)}`;
-      usePersona = null;
-    } else if (attempt >= 3) {
-      // Ultra-minimal prompt — no persona, no brand/persona descriptions
-      usePersona = null;
-      passBrandDesc = '';
-      passPersonaDesc = '';
-      desc = segmentType === 'intro'
-        ? `Beautiful cinematic opening shot. Slow camera movement across a stunning ${brandName || 'modern'} environment. Warm golden lighting. No text. No screens. No talking.`
-        : segmentType === 'outro'
-        ? `Warm cinematic closing shot. Slow pull-back camera movement. Beautiful sunset or golden hour lighting. No text. No screens. No talking.`
-        : `Smooth cinematic b-roll footage. Slow camera movement. Beautiful lighting. ${description.substring(0, 60)}. No text. No screens. No talking.`;
-    }
+    const desc = promptLevel >= 2 ? minimal : description;
+    const passBrandDesc = promptLevel === 0 ? brandDescription : '';
+    const passPersonaDesc = promptLevel === 0 ? personaDescription : '';
 
     const result = await generateBrollVideo({
-      description: desc,
-      brandName,
-      brandDescription: passBrandDesc,
-      personaDescription: passPersonaDesc,
-      outputDir,
-      segmentType,
-      segmentChannel,
-      personaImageUrl: usePersona,
+      description: desc, brandName, brandDescription: passBrandDesc, personaDescription: passPersonaDesc,
+      outputDir, segmentType, segmentChannel, personaImageUrl, personaMode: mode, personaLook,
     });
 
-    if (result) return result;
-    console.warn(`[B-Roll] Attempt ${attempt}/${MAX_ATTEMPTS} failed for ${segmentType || 'broll'} segment`);
+    if (result && result.filePath) {
+      if (stats) {
+        if (attempt > 1) stats.retried++;
+        if (promptLevel > 0) stats.simplified++;
+        if (mode === 'described') stats.described++;
+        if (personaImageUrl && mode === 'none') stats.withoutPersona++;
+      }
+      return result;
+    }
+
+    const err = (result && result.error) || new Error('unknown error');
+    const kind = classifyOmniError(err);
+    if (stats) stats.errors.push({ kind, message: (err.message || '').replace(/^.*?HTTP \d+:\s*/, '').substring(0, 200), photo: !!err.usedPhoto });
+    console.warn('[B-Roll] Attempt ' + attempt + '/' + MAX_ATTEMPTS + ' for ' + (segmentType || 'broll') + ' failed (' + kind + ', ' + mode + ', level ' + promptLevel + ')');
+    if (attempt === MAX_ATTEMPTS) break;
+
+    if (kind === 'transient') {
+      const delay = TRANSIENT_DELAYS_MS[Math.min(transientCount++, TRANSIENT_DELAYS_MS.length - 1)];
+      console.log('[B-Roll] Google is busy — retrying the same prompt in ' + (delay / 1000) + 's');
+      await new Promise(r => setTimeout(r, delay));
+      continue;
+    }
+
+    // Blocked or other content problem
+    if (mode === 'photo' && err.usedPhoto && kind === 'blocked') {
+      markPersonaPhotoBlocked(personaImageUrl);
+      if (stats) stats.photoBlocked = true;
+      mode = 'described';
+      console.warn('[B-Roll] Google blocked the persona photo — describing the person in words instead');
+    } else if (promptLevel < 2) {
+      promptLevel++;
+    } else if (mode !== 'none') {
+      mode = 'none';
+    } else {
+      break; // nothing left to simplify
+    }
+    await new Promise(r => setTimeout(r, 2000));
   }
 
-  // ALL attempts exhausted — fail hard, no image fallback
-  throw new Error(`B-roll video generation failed after ${MAX_ATTEMPTS} attempts for ${segmentType || 'broll'} segment. Description: "${description.substring(0, 80)}"`);
+  throw new Error('B-roll video generation failed for ' + (segmentType || 'broll') + ' segment. Description: "' + description.substring(0, 80) + '"');
 }
 
 /**
- * Calculate how many 8s Veo clips a b-roll segment needs based on voiceover timestamps.
- * Uses the same logic as the compositor: duration = next segment's startTime - this segment's startTime.
- *
- * @param {object} seg - The b-roll segment
- * @param {object} timestamps - Voiceover timestamps { segments: [{order, startTime, endTime}] }
- * @param {Array} allSegments - All script segments (for next-segment lookup)
- * @returns {number} Number of 8s clips needed (minimum 1)
+ * How many ~10s Omni clips a b-roll segment needs, from the voiceover timeline
+ * (duration = next segment's startTime - this segment's startTime).
  */
 function calcClipsNeeded(seg, timestamps, allSegments) {
-  const VEO_CLIP_DURATION = 8;
-
   if (!timestamps || !timestamps.segments || !allSegments) return 1;
-
-  const tsMap = {};
-  timestamps.segments.forEach(ts => { tsMap[ts.order] = ts; });
-
   const orderedTs = timestamps.segments.slice().sort((a, b) => a.order - b.order);
-  const tsIndexMap = {};
-  orderedTs.forEach((ts, idx) => { tsIndexMap[ts.order] = idx; });
-
-  const ts = tsMap[seg.order];
-  if (!ts) return 1;
-
-  const tsIdx = tsIndexMap[seg.order];
-  const nextTs = (tsIdx !== undefined && tsIdx < orderedTs.length - 1)
-    ? orderedTs[tsIdx + 1]
-    : null;
-
-  let duration;
-  if (nextTs) {
-    duration = nextTs.startTime - ts.startTime;
-  } else {
-    duration = ts.endTime - ts.startTime;
-  }
-
-  if (duration <= VEO_CLIP_DURATION) return 1;
-
-  const clipsNeeded = Math.ceil(duration / VEO_CLIP_DURATION);
-  console.log(`[B-Roll] Segment ${seg.order} needs ${duration.toFixed(1)}s → ${clipsNeeded} clips (${clipsNeeded * VEO_CLIP_DURATION}s of footage)`);
+  const idx = orderedTs.findIndex(t => t.order === seg.order);
+  if (idx < 0) return 1;
+  const ts = orderedTs[idx];
+  const nextTs = idx < orderedTs.length - 1 ? orderedTs[idx + 1] : null;
+  const duration = nextTs ? (nextTs.startTime - ts.startTime) : (ts.endTime - ts.startTime);
+  if (duration <= OMNI_CLIP_SECONDS) return 1;
+  const clipsNeeded = Math.ceil(duration / OMNI_CLIP_SECONDS);
+  console.log('[B-Roll] Segment ' + seg.order + ' needs ' + duration.toFixed(1) + 's → ' + clipsNeeded + ' × ' + OMNI_CLIP_SECONDS + 's clips');
   return clipsNeeded;
 }
 
 /**
- * Generate all b-roll assets for a video.
- *
- * NEW APPROACH (Veo Extend API):
- *   For segments needing >8s of footage, instead of generating N independent clips
- *   and FFmpeg-concatenating them, we generate 1 initial 8s clip and then EXTEND it
- *   N-1 times using the Veo Extend API. Each extension adds ~7s of continuous footage
- *   that maintains visual coherence with the previous clip. The final extended clip
- *   is the SINGLE output for that segment — no FFmpeg concat needed.
- *
- *   Cross-segment parallelism is preserved (MAX_CONCURRENT=5 segments in parallel).
- *   Within a segment, extensions run sequentially (each depends on the previous clip).
- *
- *   FALLBACK: If an extend call fails mid-chain, we keep what we have (initial clip
- *   + successful extensions as one continuous clip) and fall back to independent clip
- *   generation for the missing footage. The compositor's FFmpeg concat handles mixing
- *   the extended clip with any independent fallback clips.
- *
- * @param {Array} segments - B-roll segments from script
- * @param {string} brandName
- * @param {string} outputDir
- * @param {function} onProgress
- * @param {string} personaImageUrl - Optional persona image for character consistency across clips
- * @param {object} timestamps - Voiceover timestamps for duration calculation
- * @param {Array} allSegments - All script segments for next-segment lookup
- * @param {string} brandDescription - Brand description/industry for contextual b-roll
- * @param {string} personaDescription - Persona description for contextual b-roll
- * @returns {Promise<Array>} Array of { order, mediaPaths, imagePath }
+ * Make all footage for ONE b-roll section as continuous shots of up to 30s each.
+ *   Chain = 10s clip (with persona photo) + up to 2 extensions → one file of up to 30s.
+ *   Sections longer than 30s start a new chain from the persona photo (one cut every 30s).
+ *   If an extension fails, the shorter chain is kept and the next chain picks up the rest;
+ *   the compositor loops/trims footage to the exact section length.
+ * Returns an array of mp4 paths ([] if not even one clip could be made).
  */
-async function generateAllBroll(segments, brandName, outputDir, onProgress, personaImageUrl = null, timestamps = null, allSegments = null, brandDescription = '', personaDescription = '') {
-  let videoCount = 0;
-  let imageCount = 0;
-  let extendCount = 0;
-  let extendFailCount = 0;
+async function generateSectionFootage({ seg, clipsNeeded, brandName, brandDescription = '', personaDescription = '', outputDir, personaImageUrl = null, stats = null, logPrefix = '[B-Roll]' }) {
+  const desc = seg.brollDescription || 'Professional lifestyle footage';
+  const mediaPaths = [];
+  let remaining = Math.max(1, clipsNeeded);
+  let chain = 0;
 
-  // Calculate total clips needed across all segments
-  const segmentClipCounts = segments.map(seg => ({
-    seg,
-    clipsNeeded: calcClipsNeeded(seg, timestamps, allSegments),
-  }));
-
-  const totalSegments = segments.length;
-  console.log(`[B-Roll] Generating b-roll for ${totalSegments} segments (extend API for multi-clip, max 5 concurrent)...${personaImageUrl ? ' (with persona reference image)' : ''}`);
-  let completed = 0;
-
-  /**
-   * Generate b-roll for a single segment using extend API chaining.
-   * Returns array of media file paths for this segment.
-   */
-  async function generateSegmentBroll(seg, clipsNeeded) {
-    const desc = seg.brollDescription || 'Professional lifestyle image';
-    const usePersona = !!personaImageUrl;
-
-    // ── Step 1: Generate initial 8s clip ──
-    const initialResult = await generateBroll({
-      description: desc,
-      brandName,
-      brandDescription,
-      personaDescription,
-      outputDir,
-      segmentType: seg.type || '',
-      segmentChannel: seg.channel || '',
-      personaImageUrl: usePersona ? personaImageUrl : null,
-    });
-
-    if (!initialResult || !initialResult.filePath) {
-      console.warn(`[B-Roll] Segment ${seg.order}: initial clip generation failed completely`);
-      return [];
-    }
-
-    const mediaPaths = [initialResult.filePath];
-    if (initialResult.filePath.endsWith('.mp4')) {
-      videoCount++;
-    } else {
-      imageCount++;
-    }
-
-    // Single clip needed — done
-    if (clipsNeeded <= 1) {
-      return mediaPaths;
-    }
-
-    // ── Step 2: Extend the clip for additional footage ──
-    // Only extend if we got a video with a videoRef (not an image fallback)
-    if (!initialResult.videoRef) {
-      console.log(`[B-Roll] Segment ${seg.order}: no videoRef (image fallback), falling back to independent clips for remaining ${clipsNeeded - 1} clips`);
-      // Fall back to independent clip generation for remaining clips
-      const fallbackPaths = await generateFallbackClips(seg, clipsNeeded - 1, desc);
-      mediaPaths.push(...fallbackPaths);
-      return mediaPaths;
-    }
-
-    // Chain extensions sequentially
-    let currentVideoRef = initialResult.videoRef;
-    const MAX_EXTENSIONS = 20; // Veo limit
-    const extensionsNeeded = Math.min(clipsNeeded - 1, MAX_EXTENSIONS);
-
-    console.log(`[B-Roll] Segment ${seg.order}: extending initial clip ${extensionsNeeded} time(s) for continuous footage`);
-
-    for (let ext = 0; ext < extensionsNeeded; ext++) {
-      // Small delay between extensions to be gentle on the API
-      if (ext > 0) {
-        await new Promise(r => setTimeout(r, 2000));
-      }
-
-      // Build continuation prompt — keep it coherent with the original
-      const continuationPrompt = `Continue the same cinematic scene smoothly. Maintain the same visual style, lighting, color palette, and camera movement. CRITICAL: If a person is visible, they must NOT be talking, speaking, or moving their lips — mouth stays closed. ${sanitizeBrollPrompt(desc, brandName).substring(0, 120)}`;
-
-      const extResult = await extendBrollVideo({
-        videoRef: currentVideoRef,
-        prompt: continuationPrompt,
-        outputDir,
-        extensionNumber: ext + 1,
+  while (remaining > 0 && chain < Math.max(1, clipsNeeded)) {
+    const chainDesc = chain === 0
+      ? desc
+      : 'The story continues in the same world as before, a new angle of the same moment: ' + desc;
+    let initial;
+    try {
+      initial = await generateBroll({
+        description: chainDesc, brandName, brandDescription, personaDescription, outputDir,
+        segmentType: seg.type || '', segmentChannel: seg.channel || '', personaImageUrl, stats,
       });
+    } catch (err) {
+      console.warn(logPrefix + ' Segment ' + seg.order + ': shot ' + (chain + 1) + ' could not start — ' + err.message);
+      break;
+    }
 
-      if (!extResult) {
-        console.warn(`[B-Roll] Segment ${seg.order}: extend #${ext + 1} failed — falling back to independent clips for remaining ${extensionsNeeded - ext} clips`);
-        extendFailCount++;
-        // Fall back to independent generation for remaining clips
-        const fallbackPaths = await generateFallbackClips(seg, extensionsNeeded - ext, desc);
-        mediaPaths.push(...fallbackPaths);
+    let filePath = initial.filePath;
+    let videoRef = initial.videoRef;
+    let clipsInChain = 1;
+    const target = Math.min(remaining, OMNI_MAX_CLIPS_PER_CHAIN);
+
+    while (clipsInChain < target && videoRef) {
+      const ext = await extendBrollVideo({
+        videoRef,
+        prompt: buildContinuationPrompt(desc, brandName, !!personaImageUrl),
+        outputDir,
+        extensionNumber: clipsInChain,
+      });
+      if (!ext) {
+        if (stats) stats.extensionFailures++;
+        console.warn(logPrefix + ' Segment ' + seg.order + ': extension ' + clipsInChain + ' failed — keeping ' + (clipsInChain * OMNI_CLIP_SECONDS) + 's shot');
         break;
       }
-
-      extendCount++;
-      videoCount++;
-      // Veo Extend returns the FULL combined video (original + extensions merged).
-      // Replace mediaPaths[0] with each successive extension — the last one
-      // contains the complete chain. Delete the now-superseded intermediate file.
-      const prevPath = mediaPaths[0];
-      mediaPaths[0] = extResult.filePath;
-      try { if (prevPath && fs.existsSync(prevPath)) fs.unlinkSync(prevPath); } catch {}
-      currentVideoRef = extResult.videoRef;
-      console.log(`[B-Roll] Segment ${seg.order}: extend #${ext + 1}/${extensionsNeeded} done — full chain now in single file`);
+      // Omni returns the FULL combined video — replace, and delete the superseded file
+      try { if (filePath && fs.existsSync(filePath)) fs.unlinkSync(filePath); } catch {}
+      filePath = ext.filePath;
+      videoRef = ext.videoRef;
+      clipsInChain++;
+      if (stats) stats.extensions++;
     }
 
-    return mediaPaths;
+    mediaPaths.push(filePath);
+    if (stats) stats.clips++;
+    remaining -= clipsInChain;
+    chain++;
+    console.log(logPrefix + ' Segment ' + seg.order + ': shot ' + chain + ' = ' + (clipsInChain * OMNI_CLIP_SECONDS) + 's continuous' + (remaining > 0 ? ' (' + (remaining * OMNI_CLIP_SECONDS) + 's still needed)' : ''));
   }
 
-  /**
-   * Fallback: generate independent clips (old approach) when extend fails.
-   */
-  async function generateFallbackClips(seg, count, desc) {
-    const variationStyles = [
-      'Show a COMPLETELY DIFFERENT scene and setting — different location, different activity, different mood.',
-      'Show an OUTDOOR establishing shot — wide angle, environmental, no close-ups of objects.',
-      'Show a warm CLOSE-UP of hands or a facial expression — intimate, emotional moment.',
-    ];
-
-    const paths = [];
-    for (let i = 0; i < count; i++) {
-      // Small delay between independent clips
-      if (i > 0) await new Promise(r => setTimeout(r, 3000));
-
-      let fallbackDesc = desc;
-      if (i < variationStyles.length) {
-        fallbackDesc = `${variationStyles[i]} General theme: ${desc.substring(0, 80)}`;
-      } else {
-        fallbackDesc = `Cinematic environmental wide shot — cityscape, nature, or architecture. Theme: ${desc.substring(0, 60)}`;
-      }
-
-      try {
-        const result = await generateBroll({
-          description: fallbackDesc,
-          brandName,
-          brandDescription,
-          personaDescription,
-          outputDir,
-          segmentType: seg.type || '',
-          segmentChannel: seg.channel || '',
-          personaImageUrl: null,  // No persona on fallback clips
-        });
-        if (result && result.filePath) {
-          paths.push(result.filePath);
-          if (result.filePath.endsWith('.mp4')) videoCount++;
-          else imageCount++;
-        }
-      } catch (err) {
-        console.warn(`[B-Roll] Fallback clip ${i + 1}/${count} for segment ${seg.order} failed: ${err.message}`);
-      }
-    }
-    return paths;
-  }
-
-  // ── Run segments with controlled concurrency (max 5 segments in parallel) ──
-  const MAX_CONCURRENT = 5;
-  const STAGGER_MS = 2000;
-  const segmentResults = new Array(segmentClipCounts.length);
-  let nextIdx = 0;
-
-  async function runNextSegment() {
-    const idx = nextIdx++;
-    if (idx >= segmentClipCounts.length) return;
-    const { seg, clipsNeeded } = segmentClipCounts[idx];
-
-    console.log(`[B-Roll] Segment order=${seg.order} (${seg.type || 'broll'}): ${clipsNeeded} clip(s) — "${seg.brollDescription?.substring(0, 50)}..."`);
-
-    try {
-      const mediaPaths = await generateSegmentBroll(seg, clipsNeeded);
-      segmentResults[idx] = { order: seg.order, mediaPaths };
-      completed++;
-      console.log(`[B-Roll] Segment ${seg.order} complete: ${mediaPaths.length} clip(s) (${completed}/${totalSegments} segments done)`);
-      if (onProgress) onProgress(Math.min(completed, totalSegments), totalSegments);
-    } catch (err) {
-      console.error(`[B-Roll] Segment ${seg.order} failed: ${err.message}`);
-      segmentResults[idx] = null;
-    }
-
-    // Continue with next segment
-    await runNextSegment();
-  }
-
-  // Launch initial batch with staggered starts, with overall stage timeout
-  const BROLL_STAGE_TIMEOUT_MS = 15 * 60 * 1000; // 15 minutes max for entire b-roll stage
-
-  const workersPromise = (async () => {
-    const workers = [];
-    for (let w = 0; w < Math.min(MAX_CONCURRENT, segmentClipCounts.length); w++) {
-      if (w > 0) await new Promise(r => setTimeout(r, STAGGER_MS));
-      workers.push(runNextSegment());
-    }
-    await Promise.all(workers);
-  })();
-
-  const timeoutPromise = new Promise((_, reject) =>
-    setTimeout(() => reject(new Error(`B-roll generation timed out after ${BROLL_STAGE_TIMEOUT_MS / 60000} minutes`)), BROLL_STAGE_TIMEOUT_MS)
-  );
-
-  await Promise.race([workersPromise, timeoutPromise]);
-
-  // Build results
-  const results = segmentResults
-    .filter(r => r !== null && r.mediaPaths.length > 0)
-    .map(r => ({
-      order: r.order,
-      mediaPaths: r.mediaPaths,
-      imagePath: r.mediaPaths[0],  // Backward compat — primary clip
-    }));
-
-  console.log(`[B-Roll] Complete: ${videoCount} video clips (${extendCount} via extend API, ${extendFailCount} extend failures), ${imageCount} still images for ${totalSegments} segments`);
-  return results;
+  return mediaPaths;
 }
 
-module.exports = { generateBrollImage, generateBrollVideo, extendBrollVideo, generateBroll, generateAllBroll, calcClipsNeeded };
+function newBrollStats() {
+  return { clips: 0, extensions: 0, extensionFailures: 0, retried: 0, simplified: 0, described: 0, withoutPersona: 0, photoBlocked: false, errors: [], reused: [], notes: [] };
+}
+
+/** Human-readable notes for the progress view — explain what happened and why. */
+function summarizeBrollStats(stats) {
+  const notes = [];
+  if (stats.photoBlocked) {
+    notes.push("Google's safety filter blocks this persona photo, so the person was described in words instead (same look in every section)" + (stats.described ? ' — ' + stats.described + ' clip' + (stats.described === 1 ? '' : 's') + ' made this way' : '') + '.');
+  }
+  if (stats.reused.length) {
+    const list = stats.reused.map(r => 'section ' + r.order + ' used ' + r.from).join(', ');
+    notes.push(stats.reused.length + ' section' + (stats.reused.length === 1 ? '' : 's') + ' reused b-roll after the video model failed (' + list + ').');
+  }
+  if (stats.simplified) {
+    notes.push(stats.simplified + ' clip' + (stats.simplified === 1 ? '' : 's') + ' needed a simpler prompt after Google rejected the full one.');
+  }
+  if (stats.withoutPersona) {
+    notes.push(stats.withoutPersona + ' clip' + (stats.withoutPersona === 1 ? '' : 's') + ' had to be made without the person.');
+  }
+  const transient = stats.errors.filter(e => e.kind === 'transient').length;
+  if (transient) notes.push('Google was busy ' + transient + ' time' + (transient === 1 ? '' : 's') + '; those clips were retried with the same prompt.');
+  if (stats.extensionFailures) {
+    notes.push(stats.extensionFailures + ' extension' + (stats.extensionFailures === 1 ? '' : 's') + ' failed, so some shots are shorter and loop to fill their section.');
+  }
+  // Google's own words, most common first (excluding the photo block already explained)
+  const counts = {};
+  stats.errors.filter(e => e.kind !== 'transient' && !(e.photo && e.kind === 'blocked')).forEach(e => { counts[e.message] = (counts[e.message] || 0) + 1; });
+  const top = Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, 2);
+  top.forEach(([m, n]) => notes.push('Google said' + (n > 1 ? ' (' + n + '×)' : '') + ': "' + m + '"'));
+  return notes;
+}
+
+/**
+ * Generate all b-roll for a video (max 5 sections in parallel).
+ * Sections that still fail after every retry REUSE b-roll from the nearest successful section —
+ * never a still image. If no section succeeds at all, this throws so the video fails visibly.
+ * @returns {Promise<Array>} [{ order, mediaPaths, imagePath, reusedFrom }] with a non-enumerable `.stats`
+ */
+async function generateAllBroll(segments, brandName, outputDir, onProgress, personaImageUrl = null, timestamps = null, allSegments = null, brandDescription = '', personaDescription = '') {
+  const stats = newBrollStats();
+  const plan = segments.map(seg => ({ seg, clipsNeeded: calcClipsNeeded(seg, timestamps, allSegments) }));
+  const totalSegments = segments.length;
+  console.log('[B-Roll] Generating b-roll for ' + totalSegments + ' section(s) with ' + omniModel() + ' (≤30s continuous shots, max 5 in parallel)' + (personaImageUrl ? ' with persona photo' : '') + '...');
+
+  const results = new Array(plan.length).fill(null);
+  let completed = 0;
+  let nextIdx = 0;
+  let lastError = null;
+
+  async function worker() {
+    while (nextIdx < plan.length) {
+      const idx = nextIdx++;
+      const { seg, clipsNeeded } = plan[idx];
+      console.log('[B-Roll] Section ' + seg.order + ' (' + (seg.type || 'broll') + '): ' + (clipsNeeded * OMNI_CLIP_SECONDS) + 's — "' + (seg.brollDescription || '').substring(0, 50) + '..."');
+      try {
+        const mediaPaths = await generateSectionFootage({ seg, clipsNeeded, brandName, brandDescription, personaDescription, outputDir, personaImageUrl, stats });
+        results[idx] = { order: seg.order, mediaPaths };
+      } catch (err) {
+        lastError = err;
+        console.error('[B-Roll] Section ' + seg.order + ' failed: ' + err.message);
+        results[idx] = { order: seg.order, mediaPaths: [] };
+      }
+      completed++;
+      if (onProgress) onProgress(Math.min(completed, totalSegments), totalSegments);
+    }
+  }
+
+  const BROLL_STAGE_TIMEOUT_MS = 25 * 60 * 1000;
+  let timedOut = false;
+  const workers = [];
+  for (let w = 0; w < Math.min(5, plan.length); w++) {
+    if (w > 0) await new Promise(r => setTimeout(r, 2000));
+    workers.push(worker());
+  }
+  let stageTimer;
+  await Promise.race([
+    Promise.all(workers),
+    new Promise(resolve => { stageTimer = setTimeout(() => { timedOut = true; resolve(); }, BROLL_STAGE_TIMEOUT_MS); }),
+  ]);
+  clearTimeout(stageTimer);
+  if (timedOut) console.warn('[B-Roll] Stage hit ' + (BROLL_STAGE_TIMEOUT_MS / 60000) + '-minute limit — using the sections finished so far');
+
+  // Reuse b-roll for sections that got nothing (nearest successful section by order)
+  const done = results.filter(r => r && r.mediaPaths.length > 0);
+  if (done.length === 0) {
+    throw new Error('B-roll video generation failed for every section' + (lastError ? ' (' + lastError.message + ')' : '') + '. No still images were used. Try regenerating in a few minutes.');
+  }
+  plan.forEach(({ seg }, idx) => {
+    const r = results[idx];
+    if (r && r.mediaPaths.length > 0) return;
+    const donor = done.slice().sort((a, b) => Math.abs(a.order - seg.order) - Math.abs(b.order - seg.order))[0];
+    results[idx] = { order: seg.order, mediaPaths: donor.mediaPaths.slice(), reusedFrom: donor.order };
+    stats.reused.push({ order: seg.order, from: 'section ' + donor.order });
+    console.warn('[B-Roll] Section ' + seg.order + ': no footage — reusing b-roll from section ' + donor.order);
+  });
+
+  stats.notes = summarizeBrollStats(stats);
+  const out = results.filter(Boolean).map(r => ({ order: r.order, mediaPaths: r.mediaPaths, imagePath: r.mediaPaths[0], reusedFrom: r.reusedFrom }));
+  Object.defineProperty(out, 'stats', { value: stats, enumerable: false });
+  console.log('[B-Roll] Complete: ' + stats.clips + ' shot(s), ' + stats.extensions + ' extension(s), ' + stats.retried + ' retried, ' + stats.reused.length + ' section(s) reused — 0 still images');
+  return out;
+}
+
+module.exports = {
+  generateBrollImage, generateBrollVideo, extendBrollVideo, generateBroll, generateAllBroll, calcClipsNeeded,
+  generateSectionFootage, newBrollStats, summarizeBrollStats, omniModel, omniGenerate,
+  OMNI_CLIP_SECONDS, OMNI_MAX_CHAIN_SECONDS, describePersona, classifyOmniError, isPersonaPhotoBlocked,
+};

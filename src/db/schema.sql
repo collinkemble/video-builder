@@ -82,6 +82,7 @@ CREATE TABLE IF NOT EXISTS videos (
   include_broll BOOLEAN DEFAULT TRUE,
   music_track_id VARCHAR(100) DEFAULT 'corporate-technology',
   custom_instructions TEXT DEFAULT NULL,
+  script_synopsis TEXT DEFAULT NULL,
   segment_assets JSON DEFAULT NULL,
 
   -- Metadata

@@ -203,7 +203,7 @@
               Script Writer
             </a>
             <a href="https://saleo-builder.aubreydemo.com">
-              <img src="https://saleo.io/wp-content/uploads/2022/03/Saleo-logo-only.png" alt="Saleo" style="width: 16px; height: 16px; flex-shrink: 0; object-fit: contain;">
+              <img src="https://d3h23g0wdojqui.cloudfront.net/shared/icons/saleo-logo.png" alt="Saleo" style="width: 16px; height: 16px; flex-shrink: 0; object-fit: contain;">
               Saleo Builder
             </a>
             <a href="https://pocketsic.aubreydemo.com">
@@ -261,7 +261,7 @@
         <a href="https://brandkit-builder.aubreydemo.com">🎨 Brand Kit Builder</a>
         <a href="https://deep-research.aubreydemo.com">🔍 Deep Research</a>
         <a href="https://scriptwriter.aubreydemo.com">📝 Script Writer</a>
-        <a href="https://saleo-builder.aubreydemo.com" style="display: flex !important; align-items: center; gap: 6px;"><img src="https://saleo.io/wp-content/uploads/2022/03/Saleo-logo-only.png" alt="" style="width: 14px; height: 14px; object-fit: contain; flex-shrink: 0;"> Saleo Builder</a>
+        <a href="https://saleo-builder.aubreydemo.com" style="display: flex !important; align-items: center; gap: 6px;"><img src="https://d3h23g0wdojqui.cloudfront.net/shared/icons/saleo-logo.png" alt="" style="width: 14px; height: 14px; object-fit: contain; flex-shrink: 0;"> Saleo Builder</a>
         <a href="https://pocketsic.aubreydemo.com">📱 PocketSIC</a>
         <a href="https://installer.aubreydemo.com">🚀 Installer</a>
         <a href="https://org-builder.aubreydemo.com">🏗️ Org Builder</a>
@@ -948,88 +948,246 @@
   </div>
 
   <!-- ═══════════════════════════════════════════════ -->
-  <!-- NEW VIDEO DIALOG                               -->
+  <!-- NEW VIDEO WIZARD (mirrors DemoForge New Demo)  -->
   <!-- ═══════════════════════════════════════════════ -->
   <div id="new-video-dialog" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4" style="background: rgba(0,0,0,0.5);">
-    <div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg p-8">
-      <h3 class="text-lg font-bold text-gray-800 mb-1">New Video</h3>
-      <p class="text-sm text-gray-500 mb-5">Create a video from a PocketSIC demo project.</p>
-
-      <div class="mb-4">
-        <label class="block text-xs font-bold mb-1" style="color: #032D60;">Video Name <span style="color: #ea001e;">*</span></label>
-        <input id="new-video-name" type="text" placeholder="e.g. NTO Connected CX Story"
-          class="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm">
+    <div class="bg-white rounded-2xl shadow-2xl w-full max-w-[746px]" style="max-height: 85vh; display: flex; flex-direction: column;">
+      <!-- Wizard header with progress -->
+      <div style="padding: 18px 28px 0; flex-shrink: 0;">
+        <h3 style="font-size: 20px; font-weight: 700; color: #032D60; margin: 0 0 4px;">New Video</h3>
+        <p style="font-size: 13px; color: #888; margin: 0 0 14px;">Let's set up your video in a few quick steps.</p>
+        <!-- Progress bar -->
+        <div style="display: flex; align-items: center; gap: 0; margin-bottom: 16px;">
+          <div id="nv-prog-1" style="flex: 1; height: 4px; border-radius: 2px; background: #0176D3; transition: background 0.3s;"></div>
+          <div style="width: 4px;"></div>
+          <div id="nv-prog-2" style="flex: 1; height: 4px; border-radius: 2px; background: #e5e7eb; transition: background 0.3s;"></div>
+          <div style="width: 4px;"></div>
+          <div id="nv-prog-3" style="flex: 1; height: 4px; border-radius: 2px; background: #e5e7eb; transition: background 0.3s;"></div>
+        </div>
+        <!-- Step labels -->
+        <div style="display: flex; justify-content: space-between; margin-bottom: 12px;">
+          <span id="nv-label-1" style="font-size: 11px; font-weight: 700; color: #0176D3; transition: color 0.3s;">1. Video Settings</span>
+          <span id="nv-label-2" style="font-size: 11px; font-weight: 600; color: #9ca3af; transition: color 0.3s;">2. PocketSIC Project</span>
+          <span id="nv-label-3" style="font-size: 11px; font-weight: 600; color: #9ca3af; transition: color 0.3s;">3. Demo Script</span>
+        </div>
       </div>
 
-      <div class="mb-4">
-        <label class="block text-xs font-bold mb-1" style="color: #032D60;">Brand Name</label>
-        <input id="new-video-brand" type="text" placeholder="e.g. Northern Trail Outfitters"
-          class="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm">
+      <!-- Scrollable wizard body -->
+      <div id="nv-body" style="flex: 1; overflow-y: auto; padding: 0 28px;">
+
+        <!-- ── Step 1: Video Settings ── -->
+        <div id="nv-step-1" style="display: flex; flex-direction: column; gap: 12px;">
+          <div style="background: linear-gradient(135deg, #f0f7ff, #e8f2ff); border-radius: 10px; padding: 14px 16px; border: 1px solid #d0e3f7;">
+            <p style="margin: 0; font-size: 13px; color: #032D60; line-height: 1.5;">
+              <strong>Video Builder</strong> turns your PocketSIC demo scenes into a narrated, branded video — with AI voiceover, b-roll, and music. Just name your video and we'll handle the rest.
+            </p>
+          </div>
+          <div>
+            <label class="block text-xs font-bold mb-1" style="color: #032D60;">Video Name <span style="color: #ea001e;">*</span></label>
+            <input id="new-video-name" type="text" placeholder="e.g. Nike Holiday Campaign" oninput="nvClearFieldError('new-video-name'); nvAutoFillBrandName();" class="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm">
+            <p style="font-size: 11px; color: #9ca3af; margin: 6px 0 0 0; line-height: 1.4;">Give your video a descriptive name. The brand name will be auto-filled from this.</p>
+          </div>
+          <div>
+            <label class="block text-xs font-bold mb-1" style="color: #032D60;">Brand Name <span style="color: #ea001e;">*</span></label>
+            <input id="new-video-brand" type="text" placeholder="e.g. Nike, Patagonia, Lululemon" oninput="nvClearFieldError('new-video-brand'); this.dataset.autoFilled = '';" class="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm">
+            <p style="font-size: 11px; color: #9ca3af; margin: 6px 0 0 0; line-height: 1.4;">Auto-filled from the video name. Edit if needed.</p>
+          </div>
+          <div>
+            <label class="block text-xs font-bold mb-1" style="color: #032D60;">Output Language</label>
+            <select id="ns-language" class="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm" style="background: white;">
+              <option value="Arabic">Arabic</option>
+              <option value="Bulgarian">Bulgarian</option>
+              <option value="Chinese">Chinese</option>
+              <option value="Croatian">Croatian</option>
+              <option value="Czech">Czech</option>
+              <option value="Danish">Danish</option>
+              <option value="Dutch">Dutch</option>
+              <option value="English" selected>English</option>
+              <option value="Filipino">Filipino</option>
+              <option value="Finnish">Finnish</option>
+              <option value="French">French</option>
+              <option value="German">German</option>
+              <option value="Greek">Greek</option>
+              <option value="Hindi">Hindi</option>
+              <option value="Indonesian">Indonesian</option>
+              <option value="Italian">Italian</option>
+              <option value="Japanese">Japanese</option>
+              <option value="Korean">Korean</option>
+              <option value="Malay">Malay</option>
+              <option value="Polish">Polish</option>
+              <option value="Portuguese">Portuguese</option>
+              <option value="Romanian">Romanian</option>
+              <option value="Russian">Russian</option>
+              <option value="Slovak">Slovak</option>
+              <option value="Spanish">Spanish</option>
+              <option value="Swedish">Swedish</option>
+              <option value="Tamil">Tamil</option>
+              <option value="Turkish">Turkish</option>
+              <option value="Ukrainian">Ukrainian</option>
+            </select>
+            <p style="font-size: 11px; color: #9ca3af; margin: 6px 0 0 0; line-height: 1.4;">The narration and voiceover will be in this language.</p>
+          </div>
+        </div>
+
+        <!-- ── Step 2: PocketSIC Project ── -->
+        <div id="nv-step-2" style="display: none; flex-direction: column; gap: 12px;">
+          <div style="background: linear-gradient(135deg, #FFFBEB, #FEF3C7); border-radius: 10px; padding: 14px 16px; border: 1px solid rgba(245,158,11,0.25);">
+            <p style="margin: 0; font-size: 12px; color: #92400E; line-height: 1.5;">
+              <strong>What is PocketSIC, and why do I need it?</strong> PocketSIC is the AubreyDemo app that builds branded, interactive demo scenes for a customer journey — websites, emails, text messages, social posts, in-store screens, and more. Video Builder records those scenes and stitches them into your video with narration and b-roll, so every video needs a PocketSIC project with scenes.
+            </p>
+          </div>
+          <div id="nv-project-section" style="margin-bottom: 4px;">
+            <div style="background: linear-gradient(135deg, #ecfeff, #cffafe); border-radius: 10px; padding: 16px; border: 1px dashed #67e8f9;">
+              <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px;">
+                <span style="font-size: 16px;">📱</span>
+                <span style="font-size: 13px; font-weight: 700; color: #032D60;">PocketSIC Project <span style="color: #ea001e;">*</span></span>
+              </div>
+              <p style="font-size: 12px; color: #5a6f85; margin: 0 0 12px; line-height: 1.4;">
+                Select an existing PocketSIC project, or create a new one in PocketSIC. We'll use its scenes, brand, and persona for your video.
+              </p>
+
+              <!-- Applied project badge -->
+              <div id="nv-project-applied" style="display: none; margin-bottom: 12px; padding: 10px 14px; border-radius: 8px; background: #E8F5E9; border: 1px solid #A5D6A7;">
+                <div style="display: flex; align-items: center; gap: 8px; justify-content: space-between;">
+                  <div style="display: flex; align-items: center; gap: 8px; min-width: 0;">
+                    <span style="font-size: 14px;">✓</span>
+                    <div style="min-width: 0;">
+                      <div style="font-size: 12px; font-weight: 700; color: #2E7D32; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
+                        <span id="nv-project-applied-name">Project</span> selected · <span id="nv-project-applied-count">0 scenes</span>
+                      </div>
+                      <a id="nv-project-applied-link" href="#" target="_blank" rel="noopener noreferrer" style="font-size: 11px; color: #0176D3; text-decoration: none;">View in PocketSIC →</a>
+                    </div>
+                  </div>
+                  <button type="button" onclick="nvChangeProject()" style="padding: 4px 10px; font-size: 11px; font-weight: 600; color: #5a6f85; background: white; border: 1px solid #d1d5db; border-radius: 6px; cursor: pointer; white-space: nowrap;">Change</button>
+                </div>
+              </div>
+
+              <!-- No-scenes warning -->
+              <div id="nv-project-noscenes" style="display: none; margin-bottom: 12px; padding: 10px 14px; border-radius: 8px; background: #FFFBEB; border: 1px solid #FCD34D;">
+                <div style="display: flex; align-items: center; gap: 8px; justify-content: space-between;">
+                  <div style="font-size: 12px; color: #92400E; line-height: 1.4;">
+                    <strong id="nv-project-noscenes-name">This project</strong> has no scenes yet. Open it in PocketSIC and generate scenes, then select it again.
+                  </div>
+                  <button type="button" onclick="nvChangeProject()" style="padding: 4px 10px; font-size: 11px; font-weight: 600; color: #5a6f85; background: white; border: 1px solid #d1d5db; border-radius: 6px; cursor: pointer; white-space: nowrap;">Change</button>
+                </div>
+              </div>
+
+              <!-- Buttons row: Create → or → Select -->
+              <div id="nv-project-buttons" style="display: flex; gap: 8px; flex-wrap: wrap; align-items: center;">
+                <button type="button" onclick="nvCreatePocketsicProject()" style="padding: 7px 14px; font-size: 12px; font-weight: 700; color: #fff; background: linear-gradient(135deg, #0891b2, #0e7490); border: none; border-radius: 7px; cursor: pointer;">
+                  ✨ Create PocketSIC Project
+                </button>
+                <span style="font-size: 12px; color: #9ca3af; font-weight: 600;">or</span>
+                <div style="position: relative; display: inline-block;" id="nv-project-picker-container">
+                  <button onclick="nvOpenProjectPicker()" type="button"
+                    style="padding: 7px 14px; font-size: 12px; font-weight: 600; color: #0e7490; background: rgba(255,255,255,0.85); border: 1px solid #67e8f9; border-radius: 7px; cursor: pointer;">
+                    📋 Select PocketSIC Project
+                  </button>
+                  <div id="nv-project-picker-dropdown" style="display: none; position: absolute; bottom: 100%; left: 0; margin-bottom: 6px; width: 300px; max-height: 240px; overflow-y: auto; background: #fff; border-radius: 10px; box-shadow: 0 8px 30px rgba(0,0,0,0.18); border: 1px solid #e5e7eb; z-index: 100;">
+                    <div id="nv-project-picker-content" style="padding: 4px 0;"></div>
+                  </div>
+                </div>
+              </div>
+              <p id="nv-project-hint" style="font-size: 11px; color: #5a6f85; margin: 10px 0 0 0; line-height: 1.4;">Created a new project? Come back here and click Select once its scenes are generated.</p>
+
+              <!-- Loading scenes -->
+              <div id="nv-project-loading" style="display: none; margin-top: 12px; padding: 16px; background: linear-gradient(135deg, #ecfeff, #cffafe); border-radius: 10px; border: 1px solid #67e8f9;">
+                <div style="display: flex; align-items: center; gap: 10px;">
+                  <div style="width: 20px; height: 20px; border: 2.5px solid #0e7490; border-top-color: transparent; border-radius: 50%; animation: spin 0.8s linear infinite;"></div>
+                  <div>
+                    <div style="font-size: 13px; font-weight: 700; color: #032D60;">Loading project...</div>
+                    <div style="font-size: 11px; color: #5a6f85; margin-top: 2px;">Importing scenes, brand, and persona</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ── Step 3: Demo Script ── -->
+        <div id="nv-step-3" style="display: none; flex-direction: column; gap: 12px;">
+          <div id="nv-script-section" style="margin-bottom: 4px;">
+            <div style="background: linear-gradient(135deg, #faf5ff, #f3e8ff); border-radius: 10px; padding: 16px; border: 1px dashed #c4b5fd;">
+              <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px;">
+                <span style="font-size: 16px;">📝</span>
+                <span style="font-size: 13px; font-weight: 700; color: #032D60;">Already Have a Script?</span>
+              </div>
+              <p style="font-size: 12px; color: #5a6f85; margin: 0 0 12px; line-height: 1.4;">
+                Select a script from Script Writer or upload a script file. We'll use it as the basis for your video's narration.
+              </p>
+
+              <div id="nv-script-applied" style="display: none; margin-bottom: 12px; padding: 10px 14px; border-radius: 8px; background: #F3E8FF; border: 1px solid #C4B5FD;">
+                <div style="display: flex; align-items: center; gap: 8px; justify-content: space-between;">
+                  <div style="display: flex; align-items: center; gap: 8px; min-width: 0;">
+                    <span style="font-size: 14px;">✓</span>
+                    <div style="min-width: 0;">
+                      <div style="font-size: 12px; font-weight: 700; color: #6D28D9; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
+                        <span id="nv-script-applied-name">Script</span> applied
+                      </div>
+                      <a id="nv-script-applied-link" href="#" target="_blank" rel="noopener noreferrer" style="font-size: 11px; color: #0176D3; text-decoration: none; display: none;">View in Script Writer →</a>
+                    </div>
+                  </div>
+                  <button type="button" onclick="nvClearScript()" style="padding: 4px 10px; font-size: 11px; font-weight: 600; color: #5a6f85; background: white; border: 1px solid #d1d5db; border-radius: 6px; cursor: pointer; white-space: nowrap;">Remove</button>
+                </div>
+              </div>
+
+              <div id="nv-script-buttons" style="display: flex; gap: 8px; flex-wrap: wrap; align-items: center;">
+                <div style="position: relative; display: inline-block;" id="nv-script-picker-container">
+                  <button type="button" id="nv-script-select-btn" onclick="nvOpenScriptPicker()" style="padding: 7px 14px; font-size: 12px; font-weight: 600; color: #6d28d9; background: rgba(255,255,255,0.85); border: 1px solid #c4b5fd; border-radius: 7px; cursor: pointer;">
+                    📋 Select from Script Writer
+                  </button>
+                  <div id="nv-script-picker-dropdown" style="display: none; position: absolute; bottom: 100%; left: 0; margin-bottom: 6px; width: 300px; max-height: 240px; overflow-y: auto; background: #fff; border-radius: 10px; box-shadow: 0 8px 30px rgba(0,0,0,0.18); border: 1px solid #e5e7eb; z-index: 100;">
+                    <div id="nv-script-picker-content" style="padding: 4px 0;"></div>
+                  </div>
+                </div>
+                <span style="font-size: 12px; color: #9ca3af; font-weight: 600;">or</span>
+                <button type="button" id="nv-script-upload-btn" onclick="document.getElementById('nv-script-file-input').click()" style="padding: 7px 14px; font-size: 12px; font-weight: 600; color: #0176D3; background: rgba(255,255,255,0.85); border: 1px solid #b0d4f1; border-radius: 7px; cursor: pointer;">
+                  📄 Upload Script
+                </button>
+                <input id="nv-script-file-input" type="file" accept=".pdf,.doc,.docx,.txt" onchange="nvHandleScriptUpload(this.files[0]); this.value='';" style="display: none;">
+              </div>
+              <p id="nv-script-locked-note" style="display: none; font-size: 11px; color: #6d28d9; margin: 10px 0 0 0; line-height: 1.4;">Clear the synopsis to use a script instead.</p>
+
+              <div id="nv-script-extracting" style="display: none; margin-top: 12px; padding: 14px; background: linear-gradient(135deg, #F5F3FF, #EDE9FE); border-radius: 10px; border: 1px solid #C4B5FD;">
+                <div style="display: flex; align-items: center; gap: 10px;">
+                  <div style="width: 20px; height: 20px; border: 2.5px solid #7C3AED; border-top-color: transparent; border-radius: 50%; animation: spin 0.8s linear infinite;"></div>
+                  <div>
+                    <div style="font-size: 13px; font-weight: 700; color: #032D60;">Extracting script...</div>
+                    <div id="nv-script-extract-status" style="font-size: 11px; color: #5a6f85; margin-top: 2px;">Reading your script file</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- OR + Script Synopsis (hidden when a script is applied) -->
+          <div id="nv-synopsis-section">
+            <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 12px;">
+              <div style="flex: 1; height: 1px; background: #e5e7eb;"></div>
+              <span style="font-size: 11px; font-weight: 600; color: #9ca3af; text-transform: uppercase; letter-spacing: 0.05em;">Or</span>
+              <div style="flex: 1; height: 1px; background: #e5e7eb;"></div>
+            </div>
+            <div>
+              <label class="block text-xs font-bold mb-1" style="color: #032D60;">Script Synopsis</label>
+              <textarea id="nv-synopsis" rows="5" oninput="nvOnSynopsisInput()" placeholder="Describe the story you want the video to tell — the customer, what they're trying to do, and how the brand helps..." class="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm resize-none"></textarea>
+              <p style="font-size: 11px; color: #9ca3af; margin: 6px 0 0 0; line-height: 1.4;">If you don't have a script, describe your video here and the AI will write the narration around it.</p>
+            </div>
+          </div>
+        </div>
       </div>
 
-      <div class="mb-4">
-        <label class="block text-xs font-bold mb-1" style="color: #032D60;">PocketSIC Project <span style="color: #ea001e;">*</span></label>
-        <div id="project-picker-loading" class="hidden text-sm text-gray-400 py-2">Loading projects...</div>
-        <div id="project-picker-error" class="hidden text-sm py-2" style="color: #C23934;"></div>
-        <select id="new-video-project" class="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm">
-          <option value="">— Select a project —</option>
-        </select>
-        <p class="mt-1 text-xs text-gray-400">Import scenes from PocketSIC to capture in the video.</p>
-      </div>
-
-      <div class="mb-4">
-        <label class="block text-xs font-bold mb-1" style="color: #032D60;">Demo Script <span class="font-normal text-gray-400">(from Script Writer)</span></label>
-        <div id="script-picker-loading" class="hidden text-sm text-gray-400 py-2">Loading scripts...</div>
-        <div id="script-picker-error" class="hidden text-sm py-2" style="color: #C23934;"></div>
-        <select id="new-video-script" class="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm">
-          <option value="">— Select a script (optional) —</option>
-        </select>
-        <p class="mt-1 text-xs text-gray-400">Use an existing demo script as the basis for video narration.</p>
-      </div>
-
-      <div class="mb-4">
-        <label class="block text-xs font-bold mb-1" style="color: #032D60;">Output Language</label>
-        <select id="ns-language" class="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm" style="background: white;">
-          <option value="Arabic">Arabic</option>
-          <option value="Bulgarian">Bulgarian</option>
-          <option value="Chinese">Chinese</option>
-          <option value="Croatian">Croatian</option>
-          <option value="Czech">Czech</option>
-          <option value="Danish">Danish</option>
-          <option value="Dutch">Dutch</option>
-          <option value="English" selected>English</option>
-          <option value="Filipino">Filipino</option>
-          <option value="Finnish">Finnish</option>
-          <option value="French">French</option>
-          <option value="German">German</option>
-          <option value="Greek">Greek</option>
-          <option value="Hindi">Hindi</option>
-          <option value="Indonesian">Indonesian</option>
-          <option value="Italian">Italian</option>
-          <option value="Japanese">Japanese</option>
-          <option value="Korean">Korean</option>
-          <option value="Malay">Malay</option>
-          <option value="Polish">Polish</option>
-          <option value="Portuguese">Portuguese</option>
-          <option value="Romanian">Romanian</option>
-          <option value="Russian">Russian</option>
-          <option value="Slovak">Slovak</option>
-          <option value="Spanish">Spanish</option>
-          <option value="Swedish">Swedish</option>
-          <option value="Tamil">Tamil</option>
-          <option value="Turkish">Turkish</option>
-          <option value="Ukrainian">Ukrainian</option>
-        </select>
-        <p style="font-size: 11px; color: #9ca3af; margin: 6px 0 0 0; line-height: 1.4;">
-          The generated narration will be in this language. You can also write field values above in this language.
-        </p>
-      </div>
-
-      <p id="new-video-error" class="hidden text-sm mb-3" style="color: #C23934;"></p>
-
-      <div class="flex justify-end gap-3">
-        <button onclick="closeNewVideoDialog()" class="px-4 py-2 text-sm font-medium text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200 cursor-pointer">Cancel</button>
-        <button id="new-video-submit" onclick="createNewVideo()" class="px-4 py-2 text-sm font-bold text-white rounded-lg cursor-pointer" style="background: #0176D3;">Create Video</button>
+      <!-- Wizard footer (fixed at bottom) -->
+      <div style="padding: 14px 28px 20px; flex-shrink: 0; border-top: 1px solid #f0f0f0;">
+        <div id="new-video-error" class="hidden" style="margin-bottom: 12px; padding: 10px 14px; background: #FEF2F2; border: 1px solid #FECACA; border-radius: 8px; font-size: 13px; color: #991B1B; line-height: 1.5;"></div>
+        <div class="flex justify-between items-center">
+          <button id="nv-back-btn" onclick="nvWizardBack()" style="display: none; padding: 8px 16px; font-size: 13px; font-weight: 600; color: #555; background: #f3f4f6; border: none; border-radius: 8px; cursor: pointer;">← Back</button>
+          <div style="flex: 1;"></div>
+          <div style="display: flex; gap: 10px;">
+            <button onclick="closeNewVideoDialog()" class="px-4 py-2 text-sm font-medium text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200 cursor-pointer">Cancel</button>
+            <button id="nv-next-btn" onclick="nvWizardNext()" class="px-5 py-2 text-sm font-bold text-white rounded-lg cursor-pointer" style="background: #0176D3;">Next →</button>
+            <button id="new-video-submit" onclick="createNewVideo()" style="display: none; background: #0176D3;" class="px-5 py-2 text-sm font-bold text-white rounded-lg cursor-pointer">Create Video</button>
+          </div>
+        </div>
       </div>
     </div>
   </div>
@@ -1753,7 +1911,7 @@ function renderScriptWriterCard(video) {
             <div style="font-weight: 600; font-size: 14px; color: #111; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${esc(video.scriptwriter_script_name || 'Script #' + video.scriptwriter_script_id)}</div>
             <div style="font-size: 12px; color: #888; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${esc(synopsis)}</div>
           </div>
-          <span style="font-size: 11px; color: #888; background: #F3F4F6; padding: 2px 8px; border-radius: 6px;">Script Writer</span>
+          <span style="font-size: 11px; color: #888; background: #F3F4F6; padding: 2px 8px; border-radius: 6px;">${swData.source === 'upload' ? 'Uploaded' : 'Script Writer'}</span>
         </div>
         <div id="script-picker" style="display: none; margin-top: 12px; padding-top: 12px; border-top: 1px solid #f0f0f0;">
           <label style="font-size: 12px; font-weight: 600; color: #555; display: block; margin-bottom: 4px;">Select a different script</label>
@@ -1763,7 +1921,49 @@ function renderScriptWriterCard(video) {
         </div>
       </div>`;
   } else {
-    mount.innerHTML = `
+    const synopsisText = (video.script_synopsis || '').trim();
+    const pickerHtml = `
+        <div id="script-picker" style="display: none; margin-top: 12px; padding-top: 12px; border-top: 1px solid #f0f0f0;">
+          <label style="font-size: 12px; font-weight: 600; color: #555; display: block; margin-bottom: 4px;">Select a script</label>
+          <div id="script-picker-inline-loading" class="text-sm text-gray-400 py-1">Loading scripts...</div>
+          <select id="script-picker-inline-select" class="hidden w-full px-3 py-2 rounded-lg border border-gray-300 text-sm" onchange="selectScript(this.value)">
+          </select>
+        </div>`;
+    const editorHtml = `
+        <div id="synopsis-editor" style="display: none; margin-top: 12px; padding-top: 12px; border-top: 1px solid #f0f0f0;">
+          <label style="font-size: 12px; font-weight: 700; color: #032D60; display: block; margin-bottom: 4px;">Script Synopsis</label>
+          <textarea id="synopsis-editor-text" rows="5" placeholder="Describe the story you want the video to tell — the customer, what they're trying to do, and how the brand helps..." class="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm resize-none">${esc(synopsisText)}</textarea>
+          <p style="font-size: 11px; color: #9ca3af; margin: 6px 0 10px 0; line-height: 1.4;">The AI writes the narration around this. After saving, click Regenerate Script to rewrite the narration with it.</p>
+          <div style="display: flex; gap: 8px; justify-content: flex-end;">
+            <button onclick="toggleSynopsisEditor(false)" class="cursor-pointer" style="padding: 6px 14px; font-size: 12px; font-weight: 600; color: #555; background: #f3f4f6; border: none; border-radius: 8px;">Cancel</button>
+            <button id="synopsis-save-btn" onclick="saveScriptSynopsis()" class="cursor-pointer" style="padding: 6px 14px; font-size: 12px; font-weight: 700; color: white; background: #0176D3; border: none; border-radius: 8px;">Save Synopsis</button>
+          </div>
+        </div>`;
+    if (synopsisText) {
+      mount.innerHTML = `
+      <div style="background: white; border-radius: 12px; padding: 24px; box-shadow: 0 1px 3px rgba(0,0,0,0.08);">
+        <div class="flex items-center justify-between mb-2">
+          <p class="font-bold" style="font-size: 15px; color: #032D60;">Demo Script</p>
+          <div class="flex items-center gap-2">
+            <button onclick="toggleSynopsisEditor(true)" class="cursor-pointer" style="background: none; border: none; color: #0176D3; font-size: 12px; font-weight: 600; padding: 0;">Edit</button>
+            <span style="color: #ddd;">|</span>
+            <button onclick="clearScriptSynopsis()" class="cursor-pointer" style="background: none; border: none; color: #EF4444; font-size: 12px; font-weight: 600; padding: 0;">Remove</button>
+          </div>
+        </div>
+        <div style="display: flex; align-items: flex-start; gap: 12px; padding: 10px 0;">
+          <div style="width: 36px; height: 36px; border-radius: 10px; background: linear-gradient(135deg, #0176D3, #014486); display: flex; align-items: center; justify-content: center; font-size: 16px; color: white; flex-shrink: 0;">✍️</div>
+          <div style="flex: 1; min-width: 0;">
+            <div style="font-weight: 600; font-size: 14px; color: #111;">Script Synopsis</div>
+            <div id="synopsis-display" style="font-size: 12px; color: #555; line-height: 1.5; white-space: pre-wrap; margin-top: 2px;">${esc(synopsisText)}</div>
+          </div>
+          <span style="font-size: 11px; color: #888; background: #F3F4F6; padding: 2px 8px; border-radius: 6px; white-space: nowrap;">Synopsis</span>
+        </div>
+        <p style="font-size: 11px; color: #9ca3af; margin: 0;">Have a script instead? <button onclick="showScriptPicker()" class="cursor-pointer" style="background: none; border: none; color: #7C3AED; font-size: 11px; font-weight: 600; padding: 0;">Link a script</button> (replaces the synopsis).</p>
+        ${editorHtml}
+        ${pickerHtml}
+      </div>`;
+    } else {
+      mount.innerHTML = `
       <div style="background: white; border-radius: 12px; padding: 24px; box-shadow: 0 1px 3px rgba(0,0,0,0.08);">
         <div class="flex items-center justify-between mb-2">
           <p class="font-bold" style="font-size: 15px; color: #032D60;">Demo Script</p>
@@ -1772,17 +1972,15 @@ function renderScriptWriterCard(video) {
           <div style="width: 36px; height: 36px; border-radius: 10px; background: #F9FAFB; border: 2px dashed #D1D5DB; display: flex; align-items: center; justify-content: center; font-size: 16px; flex-shrink: 0;">📝</div>
           <div style="flex: 1; min-width: 0;">
             <div style="font-weight: 600; font-size: 14px; color: #9CA3AF;">No demo script linked</div>
-            <div style="font-size: 12px; color: #9CA3AF;">Link a Script Writer script to use as the basis for narration.</div>
+            <div style="font-size: 12px; color: #9CA3AF;">Link a Script Writer script, or add a synopsis, to shape the narration.</div>
           </div>
-          <button onclick="showScriptPicker()" class="cursor-pointer" style="background: #7C3AED; color: white; font-size: 12px; font-weight: 600; padding: 6px 14px; border-radius: 8px; border: none;">Link Script</button>
+          <button onclick="toggleSynopsisEditor(true)" class="cursor-pointer" style="background: white; color: #0176D3; font-size: 12px; font-weight: 600; padding: 6px 14px; border-radius: 8px; border: 1px solid #b0d4f1; white-space: nowrap;">+ Add a synopsis</button>
+          <button onclick="showScriptPicker()" class="cursor-pointer" style="background: #7C3AED; color: white; font-size: 12px; font-weight: 600; padding: 6px 14px; border-radius: 8px; border: none; white-space: nowrap;">Link Script</button>
         </div>
-        <div id="script-picker" style="display: none; margin-top: 12px; padding-top: 12px; border-top: 1px solid #f0f0f0;">
-          <label style="font-size: 12px; font-weight: 600; color: #555; display: block; margin-bottom: 4px;">Select a script</label>
-          <div id="script-picker-inline-loading" class="text-sm text-gray-400 py-1">Loading scripts...</div>
-          <select id="script-picker-inline-select" class="hidden w-full px-3 py-2 rounded-lg border border-gray-300 text-sm" onchange="selectScript(this.value)">
-          </select>
-        </div>
+        ${editorHtml}
+        ${pickerHtml}
       </div>`;
+    }
   }
 }
 
@@ -1927,8 +2125,64 @@ async function showScriptPicker() {
   }
 }
 
+function toggleSynopsisEditor(show) {
+  const editor = document.getElementById('synopsis-editor');
+  if (!editor) return;
+  editor.style.display = show ? 'block' : 'none';
+  const picker = document.getElementById('script-picker');
+  if (show && picker) picker.style.display = 'none';
+  if (show) {
+    const ta = document.getElementById('synopsis-editor-text');
+    ta.value = (currentVideoData && currentVideoData.script_synopsis) || '';
+    ta.focus();
+  }
+}
+
+async function saveScriptSynopsis() {
+  if (!currentVideoId) return;
+  const text = document.getElementById('synopsis-editor-text').value.trim();
+  const btn = document.getElementById('synopsis-save-btn');
+  btn.disabled = true;
+  btn.textContent = 'Saving...';
+  try {
+    const email = document.getElementById('user-email').textContent;
+    const resp = await fetch(`/api/videos/${currentVideoId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, scriptSynopsis: text }),
+    });
+    if (!resp.ok) throw new Error('Save failed');
+    viewVideo(currentVideoId);
+  } catch (err) {
+    alert('Failed to save synopsis: ' + err.message);
+    btn.disabled = false;
+    btn.textContent = 'Save Synopsis';
+  }
+}
+
+async function clearScriptSynopsis() {
+  if (!currentVideoId) return;
+  if (!confirm('Remove the synopsis? You can add a new one or link a script later.')) return;
+  try {
+    const email = document.getElementById('user-email').textContent;
+    await fetch(`/api/videos/${currentVideoId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, scriptSynopsis: '' }),
+    });
+    viewVideo(currentVideoId);
+  } catch (err) {
+    alert('Failed to remove synopsis: ' + err.message);
+  }
+}
+
 async function selectScript(scriptId) {
   if (!scriptId || !currentVideoId) return;
+  if (currentVideoData && (currentVideoData.script_synopsis || '').trim() && !currentVideoData.scriptwriter_script_name
+      && !confirm('Linking a script will replace your synopsis. Continue?')) {
+    const sel = document.getElementById('script-picker-inline-select'); if (sel) sel.value = '';
+    return;
+  }
   const select = document.getElementById('script-picker-inline-select');
   const scriptName = select?.selectedOptions[0]?.dataset?.name || `Script #${scriptId}`;
 
@@ -3231,6 +3485,14 @@ function renderPipelineSteps(jobs) {
       <div style="flex: 1;">
         <div style="font-size: 14px; font-weight: 600; color: ${status === 'pending' ? '#9CA3AF' : '#111'};">${label}${progressText}</div>
         ${job && job.error ? '<div style="font-size: 12px; color: #B91C1C; margin-top: 2px;">' + esc(job.error) + '</div>' : ''}
+        ${(() => {
+          // B-roll notes (retries / reused sections) saved with the job
+          if (!job || !job.output) return '';
+          let out = job.output;
+          if (typeof out === 'string') { try { out = JSON.parse(out); } catch { return ''; } }
+          const notes = Array.isArray(out && out.notes) ? out.notes : [];
+          return notes.map(n => '<div style="font-size: 12px; color: #92400E; margin-top: 2px;">⚠ ' + esc(n) + '</div>').join('');
+        })()}
       </div>
       ${status === 'running' ? '<div class="flex gap-1"><div class="w-2 h-2 bg-amber-500 rounded-full" style="animation: pulse-dot 1.4s infinite ease-in-out both; animation-delay: 0s;"></div><div class="w-2 h-2 bg-amber-500 rounded-full" style="animation: pulse-dot 1.4s infinite ease-in-out both; animation-delay: 0.2s;"></div></div>' : ''}
     </div>`;
@@ -4212,204 +4474,477 @@ async function downloadVideo() {
 }
 
 // ═══════════════════════════════════════════════
-// New Video Dialog
+// New Video Wizard (mirrors DemoForge New Demo wizard)
 // ═══════════════════════════════════════════════
-async function openNewVideoDialog() {
-  const nameInput = document.getElementById('new-video-name');
-  nameInput.value = '';
-  nameInput.style.borderColor = '';
-  document.getElementById('new-video-brand').value = '';
-  document.getElementById('ns-language').value = 'English';
+const NV_TOTAL_STEPS = 3;
+const NV_EXCLUDED_CHANNELS = ['data360'];
+let nvStep = 1;
+let nvProject = null;   // { id, name, sceneData, sceneCount }
+let nvScript = null;    // { kind: 'scriptwriter'|'upload', id, name, data }
+
+function nvEmail() { return document.getElementById('user-email').textContent; }
+
+function nvShowStep(step) {
+  nvStep = step;
+  nvHideMenus();
+  for (let i = 1; i <= NV_TOTAL_STEPS; i++) {
+    const panel = document.getElementById('nv-step-' + i);
+    if (panel) panel.style.display = i === step ? 'flex' : 'none';
+    const prog = document.getElementById('nv-prog-' + i);
+    if (prog) prog.style.background = i <= step ? '#0176D3' : '#e5e7eb';
+    const label = document.getElementById('nv-label-' + i);
+    if (label) {
+      label.style.color = i === step ? '#0176D3' : (i < step ? '#2E7D32' : '#9ca3af');
+      label.style.fontWeight = i === step ? '700' : '600';
+    }
+  }
+  document.getElementById('nv-back-btn').style.display = step > 1 ? 'inline-block' : 'none';
+  document.getElementById('nv-next-btn').style.display = step < NV_TOTAL_STEPS ? 'inline-block' : 'none';
+  document.getElementById('new-video-submit').style.display = step === NV_TOTAL_STEPS ? 'inline-block' : 'none';
   document.getElementById('new-video-error').classList.add('hidden');
+  const body = document.getElementById('nv-body');
+  if (body) body.scrollTop = 0;
+}
+
+function nvClearFieldError(id) {
+  const el = document.getElementById(id);
+  if (el) el.style.border = '1px solid #d1d5db';
+  const anyRed = ['new-video-name', 'new-video-brand', 'nv-project-picker-container']
+    .some(fid => { const f = document.getElementById(fid); return f && f.style.border && f.style.border.includes('rgb(229, 83, 75)'); });
+  if (!anyRed) document.getElementById('new-video-error').classList.add('hidden');
+}
+
+function nvClearValidationErrors() {
+  ['new-video-name', 'new-video-brand'].forEach(id => {
+    const el = document.getElementById(id); if (el) el.style.border = '1px solid #d1d5db';
+  });
+  const pc = document.getElementById('nv-project-picker-container');
+  if (pc) { pc.style.border = ''; pc.style.borderRadius = ''; }
+  document.getElementById('new-video-error').classList.add('hidden');
+}
+
+function nvValidateStep(step) {
+  const missing = [];
+  if (step === 1) {
+    if (!document.getElementById('new-video-name').value.trim()) missing.push({ id: 'new-video-name', label: 'Video Name' });
+    if (!document.getElementById('new-video-brand').value.trim()) missing.push({ id: 'new-video-brand', label: 'Brand Name' });
+  }
+  if (step === 2) {
+    if (!nvProject) missing.push({ id: 'nv-project-picker-container', label: 'PocketSIC Project (select or create one above)' });
+    else if (!nvProject.sceneCount) missing.push({ id: 'nv-project-picker-container', label: 'A PocketSIC project that has scenes' });
+  }
+  // Step 3 is optional
+  return missing;
+}
+
+function nvShowMissing(missing) {
+  missing.forEach(f => {
+    const el = document.getElementById(f.id);
+    if (!el) return;
+    el.style.border = '2px solid #e5534b';
+    if (f.id === 'nv-project-picker-container') el.style.borderRadius = '9px';
+  });
+  const errDiv = document.getElementById('new-video-error');
+  errDiv.innerHTML = '<strong>Please fill in:</strong> ' + missing.map(f => esc(f.label)).join(', ');
+  errDiv.classList.remove('hidden');
+}
+
+function nvWizardNext() {
+  const missing = nvValidateStep(nvStep);
+  nvClearValidationErrors();
+  if (missing.length > 0) { nvShowMissing(missing); return; }
+  nvShowStep(nvStep + 1);
+}
+
+function nvWizardBack() {
+  if (nvStep > 1) nvShowStep(nvStep - 1);
+}
+
+function nvAutoFillBrandName() {
+  const videoName = document.getElementById('new-video-name').value.trim();
+  const brandEl = document.getElementById('new-video-brand');
+  if (brandEl.dataset.autoFilled === 'true' || !brandEl.value.trim()) {
+    const suffixes = /\s+(holiday|campaign|demo|q[1-4]|launch|project|test|preview|poc|pilot|experience)\b.*/i;
+    const brand = videoName.replace(suffixes, '').trim();
+    brandEl.value = brand;
+    brandEl.dataset.autoFilled = brand ? 'true' : '';
+    if (brand) nvClearFieldError('new-video-brand');
+  }
+}
+
+function nvResetWizard() {
+  nvProject = null;
+  nvScript = null;
+  const nameEl = document.getElementById('new-video-name');
+  nameEl.value = '';
+  const brandEl = document.getElementById('new-video-brand');
+  brandEl.value = '';
+  brandEl.dataset.autoFilled = '';
+  document.getElementById('ns-language').value = 'English';
+  document.getElementById('nv-synopsis').value = '';
+  // Step 2 UI
+  document.getElementById('nv-project-applied').style.display = 'none';
+  document.getElementById('nv-project-noscenes').style.display = 'none';
+  document.getElementById('nv-project-loading').style.display = 'none';
+  document.getElementById('nv-project-buttons').style.display = 'flex';
+  document.getElementById('nv-project-hint').style.display = 'block';
+  nvHideMenus();
+  // Step 3 UI
+  document.getElementById('nv-script-applied').style.display = 'none';
+  document.getElementById('nv-script-extracting').style.display = 'none';
+  document.getElementById('nv-script-buttons').style.display = 'flex';
+  nvHideMenus();
+  document.getElementById('nv-synopsis-section').style.display = 'block';
+  nvSetScriptButtonsLocked(false);
+  const btn = document.getElementById('new-video-submit');
+  btn.disabled = false;
+  btn.textContent = 'Create Video';
+  nvClearValidationErrors();
+}
+
+function openNewVideoDialog() {
+  nvResetWizard();
+  nvShowStep(1);
   document.getElementById('new-video-dialog').classList.remove('hidden');
-
-  // Clear red highlight on input
-  nameInput.addEventListener('input', function() { this.style.borderColor = ''; }, { once: false });
-  document.getElementById('new-video-project').addEventListener('change', function() { this.style.borderColor = ''; }, { once: false });
-
-  const email = document.getElementById('user-email').textContent;
-
-  // Load PocketSIC projects
-  const select = document.getElementById('new-video-project');
-  const loading = document.getElementById('project-picker-loading');
-  const error = document.getElementById('project-picker-error');
-
-  select.innerHTML = '<option value="">— Select a project —</option>';
-  select.style.borderColor = '';
-  loading.classList.remove('hidden');
-  error.classList.add('hidden');
-
-  try {
-    const resp = await fetch(`/api/pocketsic/projects?email=${encodeURIComponent(email)}`);
-    if (!resp.ok) {
-      const data = await resp.json();
-      throw new Error(data.error || 'Failed to load projects');
-    }
-    const data = await resp.json();
-    const projects = data.projects || data.items || [];
-    projects.forEach(p => {
-      const projId = p.id;
-      const projName = p.name || p.data?.metadata?.name || p.data?.metadata?.brand || `Project #${p.id}`;
-      select.innerHTML += `<option value="${projId}" data-name="${esc(projName)}">${esc(projName)}</option>`;
-    });
-  } catch (err) {
-    error.textContent = err.message;
-    error.classList.remove('hidden');
-  } finally {
-    loading.classList.add('hidden');
-  }
-
-  // Load Script Writer scripts
-  const scriptSelect = document.getElementById('new-video-script');
-  const scriptLoading = document.getElementById('script-picker-loading');
-  const scriptError = document.getElementById('script-picker-error');
-
-  scriptSelect.innerHTML = '<option value="">— Select a script (optional) —</option>';
-  scriptLoading.classList.remove('hidden');
-  scriptError.classList.add('hidden');
-
-  try {
-    const resp = await fetch(`/api/scriptwriter/scripts?email=${encodeURIComponent(email)}`);
-    if (!resp.ok) {
-      const data = await resp.json();
-      throw new Error(data.error || 'Failed to load scripts');
-    }
-    const data = await resp.json();
-    const scripts = data.scripts || [];
-    scripts.forEach(s => {
-      const label = s.script_name || s.brand_name || `Script #${s.id}`;
-      const brand = s.brand_name ? ` (${s.brand_name})` : '';
-      scriptSelect.innerHTML += `<option value="${s.id}" data-name="${esc(label)}" data-brand="${esc(s.brand_name || '')}">${esc(label)}${esc(brand)}</option>`;
-    });
-  } catch (err) {
-    scriptError.textContent = err.message;
-    scriptError.classList.remove('hidden');
-  } finally {
-    scriptLoading.classList.add('hidden');
-  }
+  document.getElementById('new-video-name').focus();
 }
 
 function closeNewVideoDialog() {
   document.getElementById('new-video-dialog').classList.add('hidden');
+  nvResetWizard();
+  nvShowStep(1);
 }
 
+// ─── Floating dropdowns (same approach as Slide Builder / PocketSIC): move the menu to the top
+// level of the page so the modal's scroll area, header and footer can never clip it. It follows its
+// button while scrolling and opens upward or downward depending on the space available.
+const NV_MENU_WIDTH = 300, NV_MENU_MAX_HEIGHT = 240, NV_MENU_GAP = 6;
+let nvFloatingPlace = null;
+function nvFloatMenu(menu, anchor) {
+  if (menu.parentElement !== document.body) document.body.appendChild(menu);
+  const place = () => {
+    const r = anchor.getBoundingClientRect();
+    const spaceBelow = window.innerHeight - r.bottom - NV_MENU_GAP - 8;
+    const spaceAbove = r.top - NV_MENU_GAP - 8;
+    const openUp = spaceBelow < Math.min(NV_MENU_MAX_HEIGHT, 160) && spaceAbove > spaceBelow;
+    const maxHeight = Math.max(120, Math.min(NV_MENU_MAX_HEIGHT, openUp ? spaceAbove : spaceBelow));
+    const left = Math.max(8, Math.min(r.left, window.innerWidth - NV_MENU_WIDTH - 8));
+    Object.assign(menu.style, {
+      position: 'fixed', left: left + 'px', width: NV_MENU_WIDTH + 'px', maxHeight: maxHeight + 'px',
+      top: openUp ? 'auto' : (r.bottom + NV_MENU_GAP) + 'px',
+      bottom: openUp ? (window.innerHeight - r.top + NV_MENU_GAP) + 'px' : 'auto',
+      marginBottom: '0', zIndex: '10000', overflowY: 'auto',
+    });
+  };
+  nvUnfloatMenu();
+  place();
+  nvFloatingPlace = place;
+  window.addEventListener('scroll', place, true); // capture: scrolling inside the modal body also repositions
+  window.addEventListener('resize', place);
+}
+function nvUnfloatMenu() {
+  if (!nvFloatingPlace) return;
+  window.removeEventListener('scroll', nvFloatingPlace, true);
+  window.removeEventListener('resize', nvFloatingPlace);
+  nvFloatingPlace = null;
+}
+function nvHideMenus() {
+  ['nv-project-picker-dropdown', 'nv-script-picker-dropdown'].forEach(id => {
+    const d = document.getElementById(id); if (d) d.style.display = 'none';
+  });
+  nvUnfloatMenu();
+}
+
+// ── Step 2: PocketSIC project ──
+function nvInitialBadge(initial) {
+  return `<div style="width: 32px; height: 32px; border-radius: 8px; background: linear-gradient(135deg, #0891b2, #22d3ee); color: white; font-weight: 700; font-size: 14px; display: flex; align-items: center; justify-content: center; flex-shrink: 0;">${esc(initial)}</div>`;
+}
+function nvLogoFallback(img) {
+  img.outerHTML = nvInitialBadge(img.dataset.initial || '?');
+}
+
+function nvCreatePocketsicProject() {
+  // Production URL is rewritten to the right staging/production PocketSIC when the page is served
+  window.open('https://pocketsic.aubreydemo.com/projects', '_blank', 'noopener');
+}
+
+async function nvOpenProjectPicker() {
+  const dropdown = document.getElementById('nv-project-picker-dropdown');
+  const content = document.getElementById('nv-project-picker-content');
+  if (dropdown.style.display !== 'none') { nvHideMenus(); return; }
+  nvHideMenus();
+  dropdown.style.display = 'block';
+  nvFloatMenu(dropdown, document.querySelector('#nv-project-picker-container button'));
+  content.innerHTML = '<div style="padding: 16px; text-align: center; font-size: 13px; color: #888;">⏳ Loading projects...</div>';
+  try {
+    const resp = await fetch('/api/pocketsic/projects?email=' + encodeURIComponent(nvEmail()));
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) throw new Error(data.error || 'Failed to load projects');
+    const projects = data.projects || data.items || [];
+    if (projects.length === 0) {
+      content.innerHTML = '<div style="padding: 16px; text-align: center;">' +
+        '<div style="font-size: 13px; color: #888; margin-bottom: 8px;">No PocketSIC projects found</div>' +
+        '<a href="https://pocketsic.aubreydemo.com/projects" target="_blank" rel="noopener noreferrer" style="font-size: 12px; color: #0176D3; font-weight: 600; text-decoration: none;">Create one in PocketSIC →</a></div>';
+      return;
+    }
+    let html = '<div style="padding: 8px 14px; font-size: 11px; font-weight: 700; color: #888; text-transform: uppercase; letter-spacing: 0.05em;">Your PocketSIC Projects</div>';
+    projects.forEach(p => {
+      const name = p.name || p.data?.metadata?.name || p.brand_name || `Project #${p.id}`;
+      const logo = p.brand_logo_url || p.brand_profile?.logoUrl || p.brand_profile?.logo_url || '';
+      const initial = (name || '?').trim().charAt(0).toUpperCase();
+      const thumb = logo
+        ? `<img src="${esc(logo)}" alt="" data-initial="${esc(initial)}" onerror="nvLogoFallback(this)" style="width: 32px; height: 32px; border-radius: 8px; object-fit: contain; background: #f9fafb; flex-shrink: 0;">`
+        : nvInitialBadge(initial);
+      const sub = p.brand_name && p.brand_name !== name ? `<div style="font-size: 11px; color: #9ca3af;">${esc(p.brand_name)}</div>` : '';
+      html += `<button type="button" data-id="${esc(String(p.id))}" data-name="${esc(name)}" onclick="nvSelectProject(this.dataset.id, this.dataset.name)" style="display: flex; align-items: center; gap: 10px; width: 100%; padding: 10px 14px; font-size: 13px; color: #333; background: none; border: none; cursor: pointer; text-align: left;" onmouseover="this.style.background='#ecfeff'" onmouseout="this.style.background='none'">${thumb}<div style="min-width: 0;"><div style="font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${esc(name)}</div>${sub}</div></button>`;
+    });
+    content.innerHTML = html;
+  } catch (err) {
+    content.innerHTML = `<div style="padding: 16px; text-align: center; font-size: 12px; color: #C23934;">${esc(err.message)}</div>`;
+  }
+}
+
+async function nvSelectProject(projectId, projectName) {
+  nvHideMenus();
+  nvClearFieldError('nv-project-picker-container');
+  const pc = document.getElementById('nv-project-picker-container'); if (pc) pc.style.border = '';
+  document.getElementById('nv-project-buttons').style.display = 'none';
+  document.getElementById('nv-project-hint').style.display = 'none';
+  document.getElementById('nv-project-loading').style.display = 'block';
+  const email = nvEmail();
+  try {
+    const [projResp, scenesResp] = await Promise.all([
+      fetch(`/api/pocketsic/projects/${projectId}?email=${encodeURIComponent(email)}`),
+      fetch(`/api/pocketsic/projects/${projectId}/scenes?email=${encodeURIComponent(email)}`),
+    ]);
+    if (!scenesResp.ok) throw new Error('Could not load scenes for this project.');
+    const project = projResp.ok ? ((await projResp.json()).project || {}) : {};
+    const scenesArr = ((await scenesResp.json()).scenes || [])
+      .filter(s => !NV_EXCLUDED_CHANNELS.includes((s.channel || s.channel_type || '').toLowerCase()));
+    const bp = project.brand_profile || {};
+    const sceneData = {
+      brand_name: project.brand_name || bp.name || '',
+      brand_description: project.brand_description || bp.description || '',
+      brand_logo_url: bp.logoUrl || bp.logo_url || bp.logo || project.brand_logo_url || project.logo_url || '',
+      persona_name: project.persona_name || bp.personaName || '',
+      persona_description: project.persona || bp.persona || '',
+      synopsis: project.demo_story_synopsis || bp.demoStorySynopsis || '',
+      cx_summary: project.cx_summary || bp.cxSummary || '',
+      scenes: scenesArr.map(s => ({
+        id: s.id,
+        sceneId: s.id,
+        channel: s.channel || '',
+        channel_type: s.channel || '',
+        name: s.name || '',
+        content_summary: s.name || '',
+        description: s.name || '',
+        config: s.config || {},
+        status: s.status || 'draft',
+      })),
+    };
+    nvProject = { id: projectId, name: projectName || project.name || `Project #${projectId}`, sceneData, sceneCount: scenesArr.length };
+    document.getElementById('nv-project-loading').style.display = 'none';
+    if (nvProject.sceneCount > 0) {
+      document.getElementById('nv-project-applied-name').textContent = nvProject.name;
+      document.getElementById('nv-project-applied-count').textContent = nvProject.sceneCount + ' scene' + (nvProject.sceneCount !== 1 ? 's' : '');
+      document.getElementById('nv-project-applied-link').href = 'https://pocketsic.aubreydemo.com/projects/' + encodeURIComponent(projectId);
+      document.getElementById('nv-project-applied').style.display = 'block';
+      document.getElementById('nv-project-noscenes').style.display = 'none';
+    } else {
+      document.getElementById('nv-project-noscenes-name').textContent = nvProject.name;
+      document.getElementById('nv-project-noscenes').style.display = 'block';
+      document.getElementById('nv-project-applied').style.display = 'none';
+    }
+  } catch (err) {
+    nvProject = null;
+    document.getElementById('nv-project-loading').style.display = 'none';
+    document.getElementById('nv-project-buttons').style.display = 'flex';
+    document.getElementById('nv-project-hint').style.display = 'block';
+    nvShowMissing([{ id: 'nv-project-picker-container', label: err.message || 'PocketSIC Project' }]);
+  }
+}
+
+function nvChangeProject() {
+  nvProject = null;
+  document.getElementById('nv-project-applied').style.display = 'none';
+  document.getElementById('nv-project-noscenes').style.display = 'none';
+  document.getElementById('nv-project-buttons').style.display = 'flex';
+  document.getElementById('nv-project-hint').style.display = 'block';
+}
+
+// ── Step 3: Demo script OR synopsis ──
+function nvSetScriptButtonsLocked(locked) {
+  ['nv-script-select-btn', 'nv-script-upload-btn'].forEach(id => {
+    const b = document.getElementById(id);
+    if (!b) return;
+    b.disabled = locked;
+    b.style.opacity = locked ? '0.45' : '1';
+    b.style.cursor = locked ? 'not-allowed' : 'pointer';
+  });
+  document.getElementById('nv-script-locked-note').style.display = locked ? 'block' : 'none';
+  if (locked) nvHideMenus();
+}
+
+function nvOnSynopsisInput() {
+  nvSetScriptButtonsLocked(!!document.getElementById('nv-synopsis').value.trim());
+}
+
+async function nvOpenScriptPicker() {
+  if (document.getElementById('nv-synopsis').value.trim()) return;
+  const dropdown = document.getElementById('nv-script-picker-dropdown');
+  const content = document.getElementById('nv-script-picker-content');
+  if (dropdown.style.display !== 'none') { nvHideMenus(); return; }
+  nvHideMenus();
+  dropdown.style.display = 'block';
+  nvFloatMenu(dropdown, document.getElementById('nv-script-select-btn'));
+  content.innerHTML = '<div style="padding: 16px; text-align: center; font-size: 13px; color: #888;">⏳ Loading scripts...</div>';
+  try {
+    const resp = await fetch('/api/scriptwriter/scripts?email=' + encodeURIComponent(nvEmail()));
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) throw new Error(data.error || 'Failed to load scripts');
+    const scripts = data.scripts || data.items || (Array.isArray(data) ? data : []);
+    if (scripts.length === 0) {
+      content.innerHTML = '<div style="padding: 16px; text-align: center;">' +
+        '<div style="font-size: 13px; color: #888; margin-bottom: 8px;">No scripts found.</div>' +
+        '<a href="https://scriptwriter.aubreydemo.com/" target="_blank" rel="noopener noreferrer" style="font-size: 12px; color: #0176D3; font-weight: 600; text-decoration: none;">Create one in Script Writer →</a></div>';
+      return;
+    }
+    let html = '<div style="padding: 8px 14px; font-size: 11px; font-weight: 700; color: #888; text-transform: uppercase; letter-spacing: 0.05em;">Your Scripts</div>';
+    scripts.forEach(s => {
+      const name = s.script_name || s.brand_name || s.name || `Script #${s.id}`;
+      const initial = (name || '?').trim().charAt(0).toUpperCase();
+      const date = s.created_at ? new Date(s.created_at).toLocaleDateString() : '';
+      html += `<button type="button" data-id="${esc(String(s.id))}" data-name="${esc(name)}" onclick="nvSelectScript(this.dataset.id, this.dataset.name)" style="display: flex; align-items: center; gap: 10px; width: 100%; padding: 10px 14px; font-size: 13px; color: #333; background: none; border: none; cursor: pointer; text-align: left;" onmouseover="this.style.background='#f5f3ff'" onmouseout="this.style.background='none'"><div style="width: 32px; height: 32px; border-radius: 8px; background: linear-gradient(135deg, #7c3aed, #a78bfa); color: white; font-weight: 700; font-size: 14px; display: flex; align-items: center; justify-content: center; flex-shrink: 0;">${esc(initial)}</div><div style="min-width: 0;"><div style="font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${esc(name)}</div>${date ? `<div style="font-size: 11px; color: #9ca3af;">${esc(date)}</div>` : ''}</div></button>`;
+    });
+    content.innerHTML = html;
+  } catch (err) {
+    content.innerHTML = `<div style="padding: 16px; text-align: center; font-size: 12px; color: #C23934;">${esc(err.message)}</div>`;
+  }
+}
+
+async function nvSelectScript(scriptId, scriptName) {
+  nvHideMenus();
+  document.getElementById('nv-script-buttons').style.display = 'none';
+  document.getElementById('nv-script-extract-status').textContent = 'Loading script from Script Writer';
+  document.getElementById('nv-script-extracting').style.display = 'block';
+  try {
+    const resp = await fetch(`/api/scriptwriter/scripts/${scriptId}?email=${encodeURIComponent(nvEmail())}`);
+    if (!resp.ok) throw new Error('Could not load that script.');
+    const swData = await resp.json();
+    nvScript = { kind: 'scriptwriter', id: scriptId, name: scriptName, data: swData.script || swData };
+    nvApplyScript();
+  } catch (err) {
+    document.getElementById('nv-script-extracting').style.display = 'none';
+    document.getElementById('nv-script-buttons').style.display = 'flex';
+    nvShowError(err.message);
+  }
+}
+
+async function nvHandleScriptUpload(file) {
+  if (!file) return;
+  if (document.getElementById('nv-synopsis').value.trim()) return;
+  if (file.size > 10 * 1024 * 1024) { nvShowError('File is too large (10 MB max).'); return; }
+  document.getElementById('nv-script-buttons').style.display = 'none';
+  document.getElementById('nv-script-extract-status').textContent = 'Reading ' + file.name;
+  document.getElementById('nv-script-extracting').style.display = 'block';
+  try {
+    const form = new FormData();
+    form.append('file', file);
+    const resp = await fetch('/api/upload/extract-script', { method: 'POST', body: form });
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) throw new Error(data.error || 'Could not read that file.');
+    nvScript = {
+      kind: 'upload',
+      id: null,
+      name: data.fileName || file.name,
+      data: { title: data.title, source: 'upload', file_name: data.fileName || file.name, script_data: { full_script: data.text } },
+    };
+    nvApplyScript();
+  } catch (err) {
+    document.getElementById('nv-script-extracting').style.display = 'none';
+    document.getElementById('nv-script-buttons').style.display = 'flex';
+    nvShowError(err.message);
+  }
+}
+
+function nvApplyScript() {
+  document.getElementById('nv-script-extracting').style.display = 'none';
+  document.getElementById('nv-script-applied-name').textContent = nvScript.name;
+  const link = document.getElementById('nv-script-applied-link');
+  if (nvScript.kind === 'scriptwriter' && nvScript.id) {
+    link.href = 'https://scriptwriter.aubreydemo.com/scripts/' + encodeURIComponent(nvScript.id);
+    link.style.display = 'inline';
+  } else {
+    link.style.display = 'none';
+  }
+  document.getElementById('nv-script-applied').style.display = 'flex';
+  document.getElementById('nv-script-buttons').style.display = 'none';
+  // One or the other: a script hides and clears the synopsis
+  document.getElementById('nv-synopsis').value = '';
+  document.getElementById('nv-synopsis-section').style.display = 'none';
+  document.getElementById('new-video-error').classList.add('hidden');
+}
+
+function nvClearScript() {
+  nvScript = null;
+  document.getElementById('nv-script-applied').style.display = 'none';
+  document.getElementById('nv-script-buttons').style.display = 'flex';
+  document.getElementById('nv-synopsis-section').style.display = 'block';
+  nvSetScriptButtonsLocked(false);
+}
+
+function nvShowError(message) {
+  const errDiv = document.getElementById('new-video-error');
+  errDiv.textContent = message;
+  errDiv.classList.remove('hidden');
+}
+
+// Close pickers on outside click
+document.addEventListener('click', (e) => {
+  if (e.target.closest('#nv-project-picker-container, #nv-script-picker-container, #nv-project-picker-dropdown, #nv-script-picker-dropdown')) return;
+  nvHideMenus();
+});
+
 async function createNewVideo() {
-  const name = document.getElementById('new-video-name').value.trim();
-  const brandName = document.getElementById('new-video-brand').value.trim();
-  const projectSelect = document.getElementById('new-video-project');
-  const projectId = projectSelect.value;
-  const projectName = projectSelect.selectedOptions[0]?.dataset?.name || '';
-  const scriptSelect = document.getElementById('new-video-script');
-  const scriptId = scriptSelect.value;
-  const scriptName = scriptSelect.selectedOptions[0]?.dataset?.name || '';
-  const scriptBrand = scriptSelect.selectedOptions[0]?.dataset?.brand || '';
-  const errorEl = document.getElementById('new-video-error');
-
-  // Clear previous red highlights
-  const nameInput = document.getElementById('new-video-name');
-  nameInput.style.borderColor = '';
-  projectSelect.style.borderColor = '';
-
-  // Validate all required fields at once
-  const missing = [];
-  if (!name) missing.push(nameInput);
-  if (!projectId) missing.push(projectSelect);
-
-  if (missing.length > 0) {
-    errorEl.textContent = 'Complete all required fields.';
-    errorEl.classList.remove('hidden');
-    missing.forEach(el => { el.style.borderColor = '#EF4444'; });
-    return;
+  // Re-validate required steps
+  for (const step of [1, 2]) {
+    const missing = nvValidateStep(step);
+    if (missing.length > 0) { nvShowStep(step); nvShowMissing(missing); return; }
   }
 
-  errorEl.classList.add('hidden');
   const btn = document.getElementById('new-video-submit');
   btn.disabled = true;
   btn.textContent = 'Creating...';
 
-  const email = document.getElementById('user-email').textContent;
+  const name = document.getElementById('new-video-name').value.trim();
+  const brandName = document.getElementById('new-video-brand').value.trim();
+  const language = document.getElementById('ns-language').value || 'English';
+  const synopsis = nvScript ? '' : document.getElementById('nv-synopsis').value.trim();
 
   try {
-    // If project selected, fetch project metadata + scenes
-    let sceneData = null;
-    if (projectId) {
-      // Fetch project metadata and scenes in parallel
-      const [projResp, scenesResp] = await Promise.all([
-        fetch(`/api/pocketsic/projects/${projectId}?email=${encodeURIComponent(email)}`),
-        fetch(`/api/pocketsic/projects/${projectId}/scenes?email=${encodeURIComponent(email)}`),
-      ]);
-
-      const project = projResp.ok ? ((await projResp.json()).project || {}) : {};
-      const scenesArr = scenesResp.ok ? ((await scenesResp.json()).scenes || []) : [];
-
-      // Build sceneData in the format the pipeline expects
-      const bp = project.brand_profile || {};
-      sceneData = {
-        brand_name: project.brand_name || bp.name || '',
-        brand_description: project.brand_description || bp.description || '',
-        brand_logo_url: bp.logoUrl || bp.logo_url || bp.logo || project.brand_logo_url || project.logo_url || '',
-        persona_name: project.persona_name || bp.personaName || '',
-        persona_description: project.persona || bp.persona || '',
-        synopsis: project.demo_story_synopsis || bp.demoStorySynopsis || '',
-        cx_summary: project.cx_summary || bp.cxSummary || '',
-        scenes: scenesArr.map(s => ({
-          id: s.id,
-          sceneId: s.id,
-          channel: s.channel || '',
-          channel_type: s.channel || '',
-          name: s.name || '',
-          content_summary: s.name || '',
-          description: s.name || '',
-          config: s.config || {},
-          status: s.status || 'draft',
-        })),
-      };
-    }
-
-    // If script selected, fetch its full data
-    let scriptData = null;
-    if (scriptId) {
-      const swResp = await fetch(`/api/scriptwriter/scripts/${scriptId}?email=${encodeURIComponent(email)}`);
-      if (swResp.ok) {
-        const swData = await swResp.json();
-        scriptData = swData.script || swData;
-      }
-    }
-
-    // Use project/script brand name if no brand name entered
-    const projectBrand = sceneData ? sceneData.brand_name : '';
-    const effectiveBrand = brandName || projectBrand || scriptBrand || null;
-    const language = document.getElementById('ns-language').value;
-
     const resp = await fetch('/api/videos', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        email,
+        email: nvEmail(),
         name,
-        brandName: effectiveBrand,
-        language: language || 'English',
-        pocketsicProjectId: projectId || null,
-        pocketsicProjectName: projectName || null,
-        sceneData,
-        scriptWriterScriptId: scriptId || null,
-        scriptWriterScriptName: scriptName || null,
-        scriptWriterData: scriptData,
+        brandName: brandName || nvProject.sceneData.brand_name || null,
+        language,
+        pocketsicProjectId: nvProject.id,
+        pocketsicProjectName: nvProject.name,
+        sceneData: nvProject.sceneData,
+        scriptWriterScriptId: nvScript && nvScript.kind === 'scriptwriter' ? nvScript.id : null,
+        scriptWriterScriptName: nvScript ? nvScript.name : null,
+        scriptWriterData: nvScript ? nvScript.data : null,
+        scriptSynopsis: synopsis || null,
       }),
     });
-
-    if (!resp.ok) {
-      const data = await resp.json();
-      throw new Error(data.error || 'Failed to create video');
-    }
-
-    const result = await resp.json();
+    const result = await resp.json().catch(() => ({}));
+    if (!resp.ok) throw new Error(result.error || 'Failed to create video');
     closeNewVideoDialog();
     viewVideo(result.video.id);
   } catch (err) {
-    errorEl.textContent = err.message;
-    errorEl.classList.remove('hidden');
-  } finally {
+    nvShowError(err.message);
     btn.disabled = false;
     btn.textContent = 'Create Video';
   }

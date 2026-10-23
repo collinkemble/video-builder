@@ -22,9 +22,10 @@ function getGenAI() {
  * @param {string} params.synopsis - Demo story synopsis
  * @param {Array} params.scenes - Array of scene objects with { id, channel, content_summary }
  * @param {number} params.durationTarget - Target duration in seconds (default 180)
+ * @param {string} params.scriptSynopsis - User-written video synopsis (only used when no demo script is provided)
  * @returns {Promise<object>} Structured narration timeline
  */
-async function generateScript({ brandName, brandDescription, personaName, personaDescription, synopsis, scenes, durationTarget = 180, language = 'English', scriptWriterData = null, customInstructions = '' }) {
+async function generateScript({ brandName, brandDescription, personaName, personaDescription, synopsis, scenes, durationTarget = 180, language = 'English', scriptWriterData = null, customInstructions = '', scriptSynopsis = '' }) {
   const ai = getGenAI();
   const primaryModel = process.env.GEMINI_MODEL || 'gemini-3.7-flash';
 
@@ -55,13 +56,23 @@ async function generateScript({ brandName, brandDescription, personaName, person
       if (sd.body) swParts.push(`REFERENCE SCRIPT:\n${sd.body}`);
       if (sd.content) swParts.push(`REFERENCE SCRIPT:\n${sd.content}`);
     }
+    const scriptSource = scriptWriterData.source === 'upload' ? 'uploaded by the user' : 'from Script Writer';
     if (swParts.length > 0) {
-      scriptWriterSection = `\n\nDEMO SCRIPT (from Script Writer — use this as the primary narrative basis):\n${swParts.join('\n')}`;
+      scriptWriterSection = `\n\nDEMO SCRIPT (${scriptSource} — use this as the primary narrative basis):\n${swParts.join('\n')}`;
     }
   }
 
   const scriptWriterInstruction = scriptWriterData
-    ? `\n- IMPORTANT: A demo script has been provided from Script Writer. Use it as the primary narrative basis — adapt its language, tone, key messages, and story arc to fit the video timeline. Do NOT ignore it.`
+    ? `\n- IMPORTANT: A demo script has been provided (${scriptWriterData.source === 'upload' ? 'uploaded by the user' : 'from Script Writer'}). Use it as the primary narrative basis — adapt its language, tone, key messages, and story arc to fit the video timeline. Do NOT ignore it.`
+    : '';
+
+  // User-written synopsis — only used when there is no demo script (a video uses one or the other)
+  const userSynopsis = !scriptWriterData && typeof scriptSynopsis === 'string' ? scriptSynopsis.trim() : '';
+  const userSynopsisSection = userSynopsis
+    ? `\n\nVIDEO SYNOPSIS (from the user — shape the narration story around this):\n${userSynopsis}`
+    : '';
+  const userSynopsisInstruction = userSynopsis
+    ? `\n- IMPORTANT: The user wrote a VIDEO SYNOPSIS (see above). Use it as the story outline for the narration — follow its storyline, emphasis, and key moments — while keeping scene segments in the given SCENES order.`
     : '';
 
   const customInstructionsSection = customInstructions
@@ -78,7 +89,7 @@ BRAND: ${brandName}
 ${brandDescription ? `BRAND DESCRIPTION: ${brandDescription}` : ''}
 ${personaName ? `PERSONA: ${personaName}` : ''}
 ${personaDescription ? `PERSONA BACKGROUND: ${personaDescription}` : ''}
-${synopsis ? `DEMO STORY SYNOPSIS: ${synopsis}` : ''}${scriptWriterSection}${customInstructionsSection}
+${synopsis ? `DEMO STORY SYNOPSIS: ${synopsis}` : ''}${scriptWriterSection}${userSynopsisSection}${customInstructionsSection}
 
 SCENES (in order):
 ${sceneList}
@@ -93,7 +104,7 @@ Write a narration script that tells a connected customer experience story. The n
 - End with a wrap-up outro that ties the experience together AND reinforces the Salesforce partnership. The outro MUST include a closing line like "This is how ${brandName} and Salesforce are transforming [the customer experience / their industry]" or "Together with Salesforce, ${brandName} is redefining what's possible" or similar. Make it feel like a natural, inspiring conclusion.
 - Be conversational and compelling, NOT a feature walkthrough
 - Each segment's narration should be 2-4 sentences
-- Target ~${durationTarget} seconds total (about ${Math.round(durationTarget / 15)} segments at ~15 seconds each)${scriptWriterInstruction}${customInstructionsPrompt}
+- Target ~${durationTarget} seconds total (about ${Math.round(durationTarget / 15)} segments at ~15 seconds each)${scriptWriterInstruction}${userSynopsisInstruction}${customInstructionsPrompt}
 
 Return ONLY valid JSON in this exact format:
 {

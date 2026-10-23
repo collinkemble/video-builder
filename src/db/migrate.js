@@ -18,6 +18,7 @@ async function migrate() {
       // Add columns that may be missing from existing tables
       const pgMigrations = [
         "ALTER TABLE videos ADD COLUMN IF NOT EXISTS tiny_url VARCHAR(255) DEFAULT NULL",
+        "ALTER TABLE videos ADD COLUMN IF NOT EXISTS script_synopsis TEXT DEFAULT NULL",
       ];
       for (const stmt of pgMigrations) {
         try { await pool.query(stmt); } catch (e) { /* column may already exist */ }
@@ -79,6 +80,7 @@ async function migrate() {
         "ALTER TABLE videos ADD COLUMN public_username VARCHAR(255) DEFAULT NULL",
         "ALTER TABLE videos ADD COLUMN public_password VARCHAR(255) DEFAULT NULL",
         "ALTER TABLE videos ADD COLUMN tiny_url VARCHAR(255) DEFAULT NULL",
+        "ALTER TABLE videos ADD COLUMN script_synopsis TEXT DEFAULT NULL",
       ];
 
       const allAlters = [...sharedAlters, ...appAlters];

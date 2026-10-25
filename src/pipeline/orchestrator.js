@@ -722,7 +722,13 @@ async function getPipelineStatus(videoId, userId) {
  * @param {Array<object>} changes - [{ order, narration?, brollDescription?, regenerateVoiceover?, regenerateBroll? }]
  * @returns {Promise<object>} Updated video record
  */
-async function regenerateSegments(videoId, userId, changes) {
+/**
+ * @param {object} [opts]
+ * @param {boolean} [opts.resume] — resuming after a server restart: the video is mid-rebuild
+ *   (status queued/compositing/uploading), so skip the "must be completed" check.
+ * @param {number} [opts.attempt] — how many times this request has been resumed (restart-loop guard)
+ */
+async function regenerateSegments(videoId, userId, changes, opts = {}) {
   const workDir = path.join(os.tmpdir(), `vb_regen_${videoId}_${Date.now()}`);
   fs.mkdirSync(workDir, { recursive: true });
 
@@ -730,7 +736,15 @@ async function regenerateSegments(videoId, userId, changes) {
     // Load video record
     const [video] = await query('SELECT * FROM videos WHERE id = ? AND user_id = ?', [videoId, userId]);
     if (!video) throw new Error('Video not found');
-    if (video.status !== 'completed') throw new Error('Video must be completed before editing segments');
+    if (!opts.resume && video.status !== 'completed') throw new Error('Video must be completed before editing segments');
+
+    // Remember exactly what was asked for, so a server restart mid-rebuild can resume THIS request
+    // (instead of just re-assembling the old clips). Cleared on success or failure.
+    try {
+      await query('UPDATE videos SET pending_regen = ? WHERE id = ?', [
+        JSON.stringify({ changes, attempt: opts.attempt || 0, startedAt: new Date().toISOString() }), videoId,
+      ]);
+    } catch (e) { console.warn(`[Regen] Could not save pending request (non-fatal): ${e.message}`); }
 
     const segmentAssets = video.segment_assets
       ? (typeof video.segment_assets === 'string' ? JSON.parse(video.segment_assets) : video.segment_assets)
@@ -1447,7 +1461,8 @@ async function regenerateSegments(videoId, userId, changes) {
         duration_actual = ?,
         segment_assets = ?,
         status = 'completed',
-        error = NULL
+        error = NULL,
+        pending_regen = NULL
       WHERE id = ?`,
       [
         urls.videoUrl || video.video_url,
@@ -1465,7 +1480,13 @@ async function regenerateSegments(videoId, userId, changes) {
     return finalVideo;
 
   } catch (err) {
-    await query('UPDATE videos SET status = ?, error = ? WHERE id = ?', ['completed', err.message, videoId]);
+    // Keep the last good video (status completed), record the error, clear the pending request,
+    // and close out any steps still shown as running so the page doesn't look stuck.
+    await query('UPDATE videos SET status = ?, error = ?, pending_regen = NULL WHERE id = ?', ['completed', err.message, videoId]);
+    await query(
+      "UPDATE video_jobs SET status = 'failed', error = ?, completed_at = NOW() WHERE video_id = ? AND status IN ('pending', 'running')",
+      [err.message, videoId]
+    ).catch(() => {});
     cleanupDir(workDir);
     throw err;
   }

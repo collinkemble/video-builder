@@ -20,7 +20,7 @@ const http = require('http');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const BUILD_VERSION = 'v193-broll-no-text';
+const BUILD_VERSION = 'v194-resume-after-restart';
 
 // ─── Video Proxy Base URL ───
 const VIDEO_PROXY_BASE_URL = (process.env.VIDEO_PROXY_BASE_URL || '').replace(/\/+$/, '');
@@ -2816,116 +2816,97 @@ async function checkVeoCapability() {
 /**
  * On startup, recover videos that were interrupted by a dyno restart.
  *
- * Videos that were deep enough in the pipeline (compositing/uploading) AND
- * already have segment assets (clips) get auto-resumed via the regeneration
- * path — no user action needed.
- *
- * Videos still in early stages (scripting/voiceover/capturing) are reset to
- * draft so users can click Generate again.
+ *  • A section regeneration (or any rebuild of a finished video) that was in progress is RESUMED
+ *    with the exact request the user made (saved in videos.pending_regen), not just re-assembled.
+ *    Restart-loop guard: a request is resumed at most twice, then stopped with a clear message.
+ *  • A finished video is never reset to a blank draft — it keeps its last good version.
+ *  • First-time generations interrupted early (scripting/voiceover/capturing) go back to draft
+ *    so the user can click Generate again.
  */
 async function recoverStaleJobs() {
+  const parse = (v) => { if (!v) return null; if (typeof v !== 'string') return v; try { return JSON.parse(v); } catch { return null; } };
+  const closeJobs = (videoId, msg) => query(
+    "UPDATE video_jobs SET status = 'failed', error = ?, completed_at = NOW() WHERE video_id = ? AND status IN ('pending', 'running')",
+    [msg, videoId]
+  ).catch(() => {});
   try {
     const stale = await query(
-      "SELECT id, name, status, user_id, segment_assets, voiceover_url, narration_script FROM videos WHERE status IN ('queued', 'scripting', 'voiceover', 'capturing', 'compositing', 'uploading')"
+      "SELECT id, name, status, user_id, segment_assets, voiceover_url, video_url, narration_script, pending_regen FROM videos WHERE status IN ('queued', 'scripting', 'voiceover', 'capturing', 'compositing', 'uploading') OR pending_regen IS NOT NULL"
     );
     if (stale.length === 0) return;
-
     console.log(`[Recovery] Found ${stale.length} interrupted video(s).`);
 
+    let resumeIndex = 0;
     for (const v of stale) {
-      // Check if video was far enough along to auto-resume
-      const hasSegmentAssets = v.segment_assets && (() => {
-        try {
-          const sa = typeof v.segment_assets === 'string' ? JSON.parse(v.segment_assets) : v.segment_assets;
-          return sa && sa.clips && Object.keys(sa.clips).length > 0;
-        } catch { return false; }
-      })();
+      const sa = parse(v.segment_assets);
+      const hasClips = !!(sa && sa.clips && Object.keys(sa.clips).length > 0);
+      const pending = parse(v.pending_regen);
+      const script = parse(v.narration_script);
+      const wasRebuild = !!pending || (hasClips && ['queued', 'compositing', 'uploading'].includes(v.status) && !!(v.video_url || v.voiceover_url));
 
-      const canAutoResume = hasSegmentAssets && v.voiceover_url &&
-        ['compositing', 'uploading'].includes(v.status);
+      if (hasClips && wasRebuild) {
+        // Upload already finished before the restart and nothing else was requested — just mark it done
+        if (!pending && v.status === 'uploading' && v.video_url) {
+          await query("UPDATE videos SET status = 'completed', error = NULL WHERE id = ?", [v.id]);
+          await query("UPDATE video_jobs SET status = 'completed', completed_at = NOW() WHERE video_id = ? AND status IN ('pending', 'running')", [v.id]);
+          console.log(`[Recovery] Video ${v.id} ("${v.name}") had finished uploading — marked completed.`);
+          continue;
+        }
 
-      if (canAutoResume) {
-        // If the video was uploading and already has a video_url, the upload completed
-        // before the restart — just mark it as completed, don't re-run the pipeline
-        if (v.status === 'uploading') {
-          const [fresh] = await query('SELECT video_url FROM videos WHERE id = ?', [v.id]);
-          if (fresh && fresh.video_url) {
-            await query("UPDATE videos SET status = 'completed', error = NULL WHERE id = ?", [v.id]);
+        const attempt = ((pending && pending.attempt) || 0) + 1;
+        if (attempt > 2) {
+          const msg = 'This rebuild was interrupted by server restarts more than once, so it was stopped. Your last finished video is kept — please try the change again.';
+          await query('UPDATE videos SET status = ?, error = ?, pending_regen = NULL WHERE id = ?', [v.video_url ? 'completed' : 'failed', msg, v.id]);
+          await closeJobs(v.id, msg);
+          console.warn(`[Recovery] Video ${v.id} ("${v.name}") hit the restart-loop limit — stopped.`);
+          continue;
+        }
+
+        let changes = pending && Array.isArray(pending.changes) && pending.changes.length ? pending.changes : null;
+        if (!changes && script && Array.isArray(script.segments)) {
+          // No saved request (e.g. a first full render cut off while assembling) — re-assemble from the saved clips
+          changes = script.segments.map(seg => ({ order: seg.order, regenerateVoiceover: false, regenerateBroll: false, narration: seg.narration }));
+        }
+        if (!changes) {
+          await query('UPDATE videos SET status = ?, error = NULL, pending_regen = NULL WHERE id = ?', [v.video_url ? 'completed' : 'draft', v.id]);
+          await closeJobs(v.id, 'Interrupted by a server restart');
+          console.log(`[Recovery] Video ${v.id} ("${v.name}") had nothing to resume — restored.`);
+          continue;
+        }
+
+        const what = pending ? `the requested change (${changes.filter(c => c.regenerateBroll || c.regenerateVoiceover).length || changes.length} section(s))` : 'assembly of the saved clips';
+        await query("UPDATE videos SET status = 'queued', error = NULL WHERE id = ?", [v.id]);
+        await closeJobs(v.id, 'Interrupted by a server restart — resuming automatically');
+        console.log(`[Recovery] Video ${v.id} ("${v.name}") was ${v.status} — resuming ${what} (attempt ${attempt}/2).`);
+
+        const delay = 3000 + (resumeIndex++) * 2000; // let the server finish starting; stagger resumes
+        setTimeout(async () => {
+          try {
+            const { regenerateSegments } = require('./src/pipeline/orchestrator');
+            await regenerateSegments(v.id, v.user_id, changes, { resume: true, attempt });
+            console.log(`[Recovery] ✅ Video ${v.id} resumed and finished.`);
+          } catch (err) {
+            // regenerateSegments already restored the last good video and closed out the steps
+            console.error(`[Recovery] Resume failed for video ${v.id}: ${err.message}`);
             await query(
-              "UPDATE video_jobs SET status = 'completed', completed_at = NOW() WHERE video_id = ? AND status IN ('pending', 'running')",
-              [v.id]
-            );
-            console.log(`[Recovery] Video ${v.id} ("${v.name}") was uploading but already has video_url — marked completed.`);
-            continue;
+              "UPDATE videos SET status = CASE WHEN video_url IS NOT NULL THEN 'completed' ELSE 'failed' END, error = ?, pending_regen = NULL WHERE id = ? AND status NOT IN ('completed', 'failed')",
+              [`Resume after restart failed: ${err.message}. Try the change again.`, v.id]
+            ).catch(() => {});
+            await closeJobs(v.id, `Resume after restart failed: ${err.message}`);
           }
-        }
+        }, delay);
+        continue;
+      }
 
-        // Video has all assets — auto-resume by requeueing the full pipeline
-        // The pipeline will detect existing segment_assets and skip to composite
-        console.log(`[Recovery] Video ${v.id} ("${v.name}") was ${v.status} with segment assets — auto-resuming.`);
-
-        // Mark as queued and clear error so UI shows progress
-        await query(
-          "UPDATE videos SET status = 'queued', error = NULL WHERE id = ?",
-          [v.id]
-        );
-        await query(
-          "UPDATE video_jobs SET status = 'failed', error = 'Interrupted by restart — auto-resuming', completed_at = NOW() WHERE video_id = ? AND status IN ('pending', 'running')",
-          [v.id]
-        );
-
-        // Build the changes list — regenerate all segments (voiceover exists, just need to recomposite)
-        // We pass an empty changes array with regenerateBroll=false for all segments
-        // This will download existing clips from segment_assets and recomposite
-        try {
-          const script = v.narration_script
-            ? (typeof v.narration_script === 'string' ? JSON.parse(v.narration_script) : v.narration_script)
-            : null;
-          if (script && script.segments) {
-            // Use regenerateSegments with no actual changes — just triggers recomposite from existing clips
-            const noOpChanges = script.segments.map(seg => ({
-              order: seg.order,
-              regenerateVoiceover: false,
-              regenerateBroll: false,
-              narration: seg.narration, // pass narration to satisfy validation
-            }));
-
-            // Schedule auto-resume after server is fully started (2s delay)
-            setTimeout(async () => {
-              try {
-                console.log(`[Recovery] Auto-resuming video ${v.id} via regenerateSegments...`);
-                const { regenerateSegments } = require('./src/pipeline/orchestrator');
-                await regenerateSegments(v.id, v.user_id, noOpChanges);
-                console.log(`[Recovery] ✅ Video ${v.id} auto-resume completed successfully.`);
-              } catch (err) {
-                console.error(`[Recovery] Auto-resume failed for video ${v.id}: ${err.message}`);
-                // On failure, reset to completed (since it has segment_assets) so user can manually retry
-                await query(
-                  "UPDATE videos SET status = 'completed', error = ? WHERE id = ?",
-                  [`Auto-resume failed: ${err.message}. Try regenerating any section to rebuild the video.`, v.id]
-                );
-              }
-            }, 2000);
-
-          } else {
-            // No script — can't auto-resume, reset to draft
-            await query("UPDATE videos SET status = 'draft', error = NULL WHERE id = ?", [v.id]);
-            console.log(`[Recovery] Video ${v.id} has segment assets but no script — reset to draft.`);
-          }
-        } catch (parseErr) {
-          await query("UPDATE videos SET status = 'draft', error = NULL WHERE id = ?", [v.id]);
-          console.log(`[Recovery] Video ${v.id} script parse failed — reset to draft.`);
-        }
+      // Early-stage interruption (first generation) — never wipe a finished video
+      if (v.video_url) {
+        await query("UPDATE videos SET status = 'completed', error = ?, pending_regen = NULL WHERE id = ?",
+          ['Interrupted by a server restart. Your last finished video is kept — click Generate to try again.', v.id]);
+        await closeJobs(v.id, 'Interrupted by a server restart');
+        console.log(`[Recovery] Video ${v.id} ("${v.name}") was ${v.status} — kept its finished video.`);
       } else {
-        // Early-stage interruption — reset to draft
-        await query(
-          "UPDATE videos SET status = 'draft', error = NULL WHERE id = ?",
-          [v.id]
-        );
-        await query(
-          "UPDATE video_jobs SET status = 'failed', error = 'Interrupted by restart', completed_at = NOW() WHERE video_id = ? AND status IN ('pending', 'running')",
-          [v.id]
-        );
+        await query("UPDATE videos SET status = 'draft', error = NULL, pending_regen = NULL WHERE id = ?", [v.id]);
+        await closeJobs(v.id, 'Interrupted by restart');
         console.log(`[Recovery] Video ${v.id} ("${v.name}") was ${v.status} — reset to draft.`);
       }
     }

@@ -1785,6 +1785,7 @@ async function viewVideo(id, skipPush) {
     const sceneDataObj = typeof video.scene_data === 'string' ? JSON.parse(video.scene_data || '{}') : (video.scene_data || {});
     const hasScenes = (sceneDataObj.scenes || []).length > 0;
 
+    let autoStarted = false;
     if (hasScript) {
       renderScript(scriptData);
     } else if (isProcessing) {
@@ -1796,6 +1797,10 @@ async function viewVideo(id, skipPush) {
       // Nothing depends on this tab staying open.
       renderScript(null);
       showScriptBeingWritten();
+      autoStarted = true;
+      // Show the pipeline panel right away, before the server even answers
+      document.getElementById('pipeline-progress').classList.remove('hidden');
+      renderPipelineSteps([]);
       startGeneration(false, { auto: true });
     } else {
       renderScript(null);
@@ -1804,6 +1809,8 @@ async function viewVideo(id, skipPush) {
     // Pipeline progress
     if (isProcessing) {
       startStatusPolling(id);
+    } else if (autoStarted) {
+      // Just started above — startGeneration begins progress updates; don't stop or hide them here
     } else {
       stopStatusPolling();
       // For ANY non-processing video, fetch pipeline jobs and show them if they
@@ -3541,6 +3548,9 @@ async function pollStatus(videoId) {
     }
 
     const video = data.video;
+    if (video && String(videoId) === String(currentVideoId) && ['queued','scripting','voiceover','capturing','compositing','uploading'].includes(video.status)) {
+      document.getElementById('pipeline-progress').classList.remove('hidden');
+    }
     if (video) {
       const badge = document.getElementById('detail-status-badge');
       badge.className = 'status-badge status-' + video.status;

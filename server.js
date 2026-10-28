@@ -20,7 +20,7 @@ const http = require('http');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const BUILD_VERSION = 'v197-server-driven-start';
+const BUILD_VERSION = 'v198-pipeline-on-load';
 
 // ─── Video Proxy Base URL ───
 const VIDEO_PROXY_BASE_URL = (process.env.VIDEO_PROXY_BASE_URL || '').replace(/\/+$/, '');

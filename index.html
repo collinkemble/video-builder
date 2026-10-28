@@ -1509,6 +1509,8 @@ function syncMobileAdminNav() {
 let currentPage = 'videos';
 
 function showPage(page, skipPush) {
+  // Leaving or switching pages: stop any music preview that is playing
+  if (typeof stopMusicPreview === 'function') stopMusicPreview();
   currentPage = page;
 
   document.getElementById('videos-home').classList.toggle('hidden', page !== 'videos');
@@ -1626,6 +1628,7 @@ let currentVideoData = null;
 let statusPollInterval = null;
 
 async function viewVideo(id, skipPush) {
+  if (typeof stopMusicPreview === 'function') stopMusicPreview();
   const email = document.getElementById('user-email').textContent;
   showPage('video-detail', true);
 
@@ -4588,6 +4591,8 @@ function toggleMusicPreview() {
     .then(r => r.json())
     .then(data => {
       if (!data.preview_url) return;
+      // User left the video page while the track was loading — don't start it
+      if (currentPage !== 'video-detail' || musicPreviewAudio) return;
       musicPreviewAudio = new Audio(data.preview_url);
       musicPreviewAudio.volume = musicPreviewLevel() || 0.15;
       musicPreviewPlaying = true;
@@ -4621,6 +4626,7 @@ function setMusicPreviewIcon(playing) {
   if (stopIcon) stopIcon.style.display = playing ? 'block' : 'none';
 }
 
+window.addEventListener('pagehide', () => stopMusicPreview());
 document.getElementById('edit-music')?.addEventListener('change', () => {
   stopMusicPreview();
   updateMusicPreviewButton();

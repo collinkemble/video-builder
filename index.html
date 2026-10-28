@@ -1787,10 +1787,16 @@ async function viewVideo(id, skipPush) {
 
     if (hasScript) {
       renderScript(scriptData);
-    } else if (hasScenes && !isProcessing) {
-      // Auto-generate the narration script in the background
-      renderScript(null); // show empty state briefly
-      autoGenerateScript(id);
+    } else if (isProcessing) {
+      // The pipeline writes the script as its first step — it appears here when ready
+      renderScript(null);
+      showScriptBeingWritten();
+    } else if (hasScenes && video.status === 'draft' && !video.error) {
+      // New video: start the whole pipeline on the server (it writes the script first).
+      // Nothing depends on this tab staying open.
+      renderScript(null);
+      showScriptBeingWritten();
+      startGeneration(false, { auto: true });
     } else {
       renderScript(null);
     }
@@ -2279,6 +2285,9 @@ function renderScript(script) {
   const data = typeof script === 'string' ? JSON.parse(script || 'null') : script;
   const scriptInstr = document.getElementById('script-instructions');
   if (!data || !data.segments || data.segments.length === 0) {
+    if (!data) window._currentScript = null; // don't carry over the previously viewed video's script
+    if (window._scriptEmptyDefault === undefined) window._scriptEmptyDefault = empty.innerHTML;
+    else empty.innerHTML = window._scriptEmptyDefault;
     container.classList.add('hidden');
     empty.classList.remove('hidden');
     addBtn.classList.add('hidden');
@@ -3004,6 +3013,13 @@ async function generateScriptOnly() {
 }
 
 // Auto-generate script when first opening a video that has scenes but no script
+function showScriptBeingWritten() {
+  const empty = document.getElementById('script-empty');
+  if (!empty) return;
+  empty.innerHTML = '<p style="color: #0176D3; font-size: 14px;">✨ Writing the narration script... (this is the first pipeline step — it will appear here when ready)</p>';
+  empty.classList.remove('hidden');
+}
+
 async function autoGenerateScript(videoId) {
   const email = document.getElementById('user-email').textContent;
   const btn = document.getElementById('gen-script-btn');
@@ -3514,6 +3530,16 @@ async function pollStatus(videoId) {
 
     renderPipelineSteps(data.jobs || []);
 
+    const scriptJob = (data.jobs || []).find(j => j.step === 'script');
+    const scriptShown = window._currentScript && window._currentScript.segments && window._currentScript.segments.length;
+    if (scriptJob && scriptJob.status === 'completed' && !scriptShown && !window._fetchingScript && String(videoId) === String(currentVideoId)) {
+      window._fetchingScript = true;
+      fetch(`/api/videos/${videoId}?email=${encodeURIComponent(email)}`).then(r => r.ok ? r.json() : null).then(body => {
+        const v = body && (body.video || body);
+        if (v && v.narration_script && String(videoId) === String(currentVideoId)) renderScript(v.narration_script);
+      }).catch(() => {}).finally(() => { window._fetchingScript = false; });
+    }
+
     const video = data.video;
     if (video) {
       const badge = document.getElementById('detail-status-badge');
@@ -3612,7 +3638,7 @@ function renderPipelineSteps(jobs) {
 // ═══════════════════════════════════════════════
 // Video Generation
 // ═══════════════════════════════════════════════
-async function startGeneration(force = false) {
+async function startGeneration(force = false, opts = {}) {
   if (!currentVideoId) return;
   const email = document.getElementById('user-email').textContent;
   const btn = document.getElementById('generate-btn');
@@ -3648,14 +3674,23 @@ async function startGeneration(force = false) {
 
     const data = await resp.json();
 
-    // If pipeline is already running, offer to force-restart
+    // Already generating — show its progress instead of starting over
     if (resp.status === 409 && !force) {
-      if (confirm('Pipeline appears stuck. Force restart?')) {
-        btn.disabled = false;
+      btn.disabled = false;
+      if (data.running || opts.auto) {
+        if (!opts.auto && confirm('This video is generating right now (' + statusText(data.status) + ').\n\nClick OK to RESTART it from the beginning, or Cancel to keep it going and watch its progress.')) {
+          return startGeneration(true);
+        }
+        btn.textContent = '⚠️ Pipeline Running (click to restart)';
+        startStatusPolling(currentVideoId);
+        return;
+      }
+      // Marked as generating but nothing is running on the server — genuinely stuck
+      if (confirm('This video\'s pipeline appears stuck (nothing is running on the server). Restart it?')) {
         return startGeneration(true);
       }
-      btn.disabled = false;
       btn.textContent = '🎬 Generate Video';
+      startStatusPolling(currentVideoId);
       return;
     }
 

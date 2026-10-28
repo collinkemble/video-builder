@@ -93,10 +93,10 @@ function getQueueInfo(videoId) {
 
   let position = null;
   if (videoId) {
-    if (pipelineRunning && _currentVideoId === videoId) {
+    if (pipelineRunning && String(_currentVideoId) === String(videoId)) {
       position = 0; // Currently running
     } else {
-      const idx = pipelineQueue.findIndex(t => t.videoId === videoId);
+      const idx = pipelineQueue.findIndex(t => String(t.videoId) === String(videoId));
       if (idx >= 0) {
         position = idx + 1; // 1-based queue position
       }
@@ -595,7 +595,8 @@ async function _runPipelineImpl(videoId, userId, options = {}) {
           voiceover_url = ?,
           duration_actual = ?,
           status = 'completed',
-          error = NULL
+          error = NULL,
+          pending_regen = NULL
         WHERE id = ?`,
         [
           urls.videoUrl || null,
@@ -623,7 +624,7 @@ async function _runPipelineImpl(videoId, userId, options = {}) {
 
   } catch (err) {
     // Mark video as failed
-    await query('UPDATE videos SET status = ?, error = ? WHERE id = ?', ['failed', err.message, videoId]);
+    await query('UPDATE videos SET status = ?, error = ?, pending_regen = NULL WHERE id = ?', ['failed', err.message, videoId]);
     cleanupDir(workDir);
     throw err;
   }

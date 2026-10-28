@@ -20,7 +20,7 @@ const http = require('http');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const BUILD_VERSION = 'v196-music-preview-stop';
+const BUILD_VERSION = 'v197-server-driven-start';
 
 // ─── Video Proxy Base URL ───
 const VIDEO_PROXY_BASE_URL = (process.env.VIDEO_PROXY_BASE_URL || '').replace(/\/+$/, '');
@@ -1289,12 +1289,14 @@ app.post('/api/videos/:id/generate', async (req, res) => {
     const ownerId = video.user_id;
     // Allow force-restart if stuck (client sends force=true)
     const isProcessing = ['scripting', 'voiceover', 'capturing', 'compositing', 'uploading'].includes(video.status);
-    if (isProcessing && !req.body.force) {
-      return res.status(409).json({ error: 'Video is already being generated. Click again to force restart.', status: video.status });
+    const q = getQueueInfo(req.params.id);
+    const actuallyRunning = q.position !== null; // running or waiting in this server's queue
+    if ((isProcessing || (video.status === 'queued' && actuallyRunning)) && !req.body.force) {
+      return res.status(409).json({ error: 'Video is already being generated.', status: video.status, running: actuallyRunning });
     }
 
     // Reset status and clear previous jobs
-    await query('UPDATE videos SET status = ?, error = NULL, video_url = NULL, thumbnail_url = NULL, voiceover_url = NULL WHERE id = ?', ['draft', req.params.id]);
+    await query('UPDATE videos SET status = ?, error = NULL, video_url = NULL, thumbnail_url = NULL, voiceover_url = NULL, pending_regen = NULL WHERE id = ?', ['draft', req.params.id]);
     await query('DELETE FROM video_jobs WHERE video_id = ?', [req.params.id]);
 
     // Clean up old R2 assets in background before regenerating
@@ -2895,7 +2897,9 @@ async function recoverStaleJobs() {
     for (const v of stale) {
       const sa = parse(v.segment_assets);
       const hasClips = !!(sa && sa.clips && Object.keys(sa.clips).length > 0);
-      const pending = parse(v.pending_regen);
+      const pendingRaw = parse(v.pending_regen);
+      const fullRun = !!(pendingRaw && pendingRaw.fullRun); // a resumed first generation, not a section rebuild
+      const pending = fullRun ? null : pendingRaw;
       const script = parse(v.narration_script);
       const wasRebuild = !!pending || (hasClips && ['queued', 'compositing', 'uploading'].includes(v.status) && !!(v.video_url || v.voiceover_url));
 
@@ -2908,7 +2912,7 @@ async function recoverStaleJobs() {
           continue;
         }
 
-        const attempt = ((pending && pending.attempt) || 0) + 1;
+        const attempt = ((pendingRaw && pendingRaw.attempt) || 0) + 1;
         if (attempt > 2) {
           const msg = 'This rebuild was interrupted by server restarts more than once, so it was stopped. Your last finished video is kept — please try the change again.';
           await query('UPDATE videos SET status = ?, error = ?, pending_regen = NULL WHERE id = ?', [v.video_url ? 'completed' : 'failed', msg, v.id]);
@@ -2961,9 +2965,33 @@ async function recoverStaleJobs() {
         await closeJobs(v.id, 'Interrupted by a server restart');
         console.log(`[Recovery] Video ${v.id} ("${v.name}") was ${v.status} — kept its finished video.`);
       } else {
-        await query("UPDATE videos SET status = 'draft', error = NULL, pending_regen = NULL WHERE id = ?", [v.id]);
-        await closeJobs(v.id, 'Interrupted by restart');
-        console.log(`[Recovery] Video ${v.id} ("${v.name}") was ${v.status} — reset to draft.`);
+        // First generation cut off by a restart (e.g. a deploy). If the full pipeline was running
+        // (it has step rows), start it again automatically — a saved script is reused.
+        // A script-only "Regenerate Script" run has no step rows and just goes back to draft.
+        const attempt = ((pendingRaw && pendingRaw.attempt) || 0) + 1;
+        let hadPipeline = v.status === 'queued'; // was waiting in line to start
+        try { const j = await query('SELECT COUNT(*) AS n FROM video_jobs WHERE video_id = ?', [v.id]); hadPipeline = hadPipeline || Number(j[0] && j[0].n) > 0; } catch { /* ignore */ }
+        if (hadPipeline && attempt <= 2) {
+          await query("UPDATE videos SET status = 'queued', error = NULL, pending_regen = ? WHERE id = ?", [JSON.stringify({ fullRun: true, attempt }), v.id]);
+          await query('DELETE FROM video_jobs WHERE video_id = ?', [v.id]).catch(() => {});
+          console.log(`[Recovery] Video ${v.id} ("${v.name}") was ${v.status} — restarting its generation automatically (attempt ${attempt}/2).`);
+          const delay = 3000 + (resumeIndex++) * 2000;
+          setTimeout(() => {
+            const { runPipeline } = require('./src/pipeline/orchestrator');
+            runPipeline(v.id, v.user_id).then(() => syncVideoToProxy(v.id).catch(() => {})).catch(err => {
+              console.error(`[Recovery] Restarted generation failed for video ${v.id}: ${err.message}`);
+            });
+          }, delay);
+        } else if (hadPipeline) {
+          const msg = 'Generation was interrupted by server restarts more than once, so it was stopped. Click Generate Video to try again.';
+          await query("UPDATE videos SET status = 'failed', error = ?, pending_regen = NULL WHERE id = ?", [msg, v.id]);
+          await closeJobs(v.id, msg);
+          console.warn(`[Recovery] Video ${v.id} ("${v.name}") hit the restart-loop limit — stopped.`);
+        } else {
+          await query("UPDATE videos SET status = 'draft', error = NULL, pending_regen = NULL WHERE id = ?", [v.id]);
+          await closeJobs(v.id, 'Interrupted by restart');
+          console.log(`[Recovery] Video ${v.id} ("${v.name}") was ${v.status} — reset to draft.`);
+        }
       }
     }
   } catch (err) {

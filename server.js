@@ -20,7 +20,7 @@ const http = require('http');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const BUILD_VERSION = 'v194-resume-after-restart';
+const BUILD_VERSION = 'v195-music-library-volume';
 
 // ─── Video Proxy Base URL ───
 const VIDEO_PROXY_BASE_URL = (process.env.VIDEO_PROXY_BASE_URL || '').replace(/\/+$/, '');
@@ -95,6 +95,19 @@ async function generateTinyUrlForVideo(videoId) {
 const VIDEO_SYNC_SECRET = process.env.VIDEO_SYNC_SECRET || '';
 
 /**
+ * Description shown on public pages, with the music credit appended when the track's licence
+ * requires one (library tracks are CC BY 4.0). Not saved to the database.
+ */
+function publicDescription(video) {
+  const desc = (video.description || '').trim();
+  if (!video.music_track_id || video.music_track_id === 'none' || Number(video.music_volume) === 0) return desc || null;
+  let credit = null;
+  try { credit = require('./src/pipeline/musicTracks').creditFor(video.music_track_id); } catch { /* ignore */ }
+  if (!credit) return desc || null;
+  return (desc ? desc + '\n\n' : '') + 'Music: ' + credit;
+}
+
+/**
  * Push a video's public data to the proxy app so it can serve
  * the public player page outside the private space.
  * Non-blocking — failures are logged but don't break the flow.
@@ -103,12 +116,13 @@ async function syncVideoToProxy(videoId) {
   if (!VIDEO_PROXY_BASE_URL || !VIDEO_SYNC_SECRET) return;
   try {
     const rows = await query(
-      'SELECT id, name, brand_name, brand_logo_url, description, video_url, thumbnail_url, status, public_enabled, public_password, tiny_url FROM videos WHERE id = ?',
+      'SELECT id, name, brand_name, brand_logo_url, description, video_url, thumbnail_url, status, public_enabled, public_password, tiny_url, music_track_id, music_volume FROM videos WHERE id = ?',
       [videoId]
     );
     if (rows.length === 0) return;
 
-    const video = rows[0];
+    const { music_track_id, music_volume, ...video } = rows[0];
+    video.description = publicDescription(rows[0]);
     const body = JSON.stringify({ secret: VIDEO_SYNC_SECRET, ...video });
     const url = new URL(`${VIDEO_PROXY_BASE_URL}/video/sync`);
 
@@ -920,7 +934,7 @@ app.post('/api/videos', async (req, res) => {
         voiceId || 'default',
         lang,
         durationTarget || 180,
-        'corporate-technology',
+        require('./src/pipeline/musicTracks').DEFAULT_TRACK_ID,
         scriptWriterScriptId || null,
         scriptWriterScriptName || null,
         scriptWriterData ? JSON.stringify(scriptWriterData) : null,
@@ -995,7 +1009,12 @@ app.put('/api/videos/:id', async (req, res) => {
     }
     if (musicTrackId !== undefined && musicTrackId !== null) {
       sets.push('music_track_id = ?');
-      params.push(musicTrackId === '' ? 'corporate-technology' : musicTrackId);
+      params.push(musicTrackId === '' ? require('./src/pipeline/musicTracks').DEFAULT_TRACK_ID : musicTrackId);
+    }
+    const { musicVolume } = req.body;
+    if (musicVolume !== undefined && musicVolume !== null && musicVolume !== '') {
+      const v = Math.round(Number(musicVolume));
+      if (Number.isFinite(v)) { sets.push('music_volume = ?'); params.push(Math.max(0, Math.min(100, v))); }
     }
     if (customInstructions !== undefined && customInstructions !== null) {
       sets.push('custom_instructions = ?');
@@ -1297,6 +1316,35 @@ app.post('/api/videos/:id/generate', async (req, res) => {
 });
 
 // POST /api/videos/:id/regenerate-segments — selectively regenerate specific segments
+// POST /api/videos/:id/remix-audio — re-mix the finished video's audio with the current music
+// track and volume. Re-assembles the saved clips and voiceover; no new footage or voiceover.
+app.post('/api/videos/:id/remix-audio', async (req, res) => {
+  try {
+    const { email } = req.body || {};
+    if (!email) return res.status(400).json({ error: 'Email required' });
+    const user = await getOrCreateUser(email);
+    const rows = isAdmin(email)
+      ? await query('SELECT * FROM videos WHERE id = ?', [req.params.id])
+      : await query('SELECT * FROM videos WHERE id = ? AND user_id = ?', [req.params.id, user.id]);
+    if (rows.length === 0) return res.status(404).json({ error: 'Video not found' });
+    const video = rows[0];
+    if (video.status !== 'completed') return res.status(409).json({ error: 'The video needs to finish generating before its music can be changed.' });
+    const sa = video.segment_assets ? (typeof video.segment_assets === 'string' ? JSON.parse(video.segment_assets) : video.segment_assets) : null;
+    const script = video.narration_script ? (typeof video.narration_script === 'string' ? JSON.parse(video.narration_script) : video.narration_script) : null;
+    if (!sa || !sa.clips || !script || !Array.isArray(script.segments)) {
+      return res.status(409).json({ error: 'This video was made before quick re-mixing was available. Click Generate Video to rebuild it with the new music.' });
+    }
+    const changes = script.segments.map(seg => ({ order: seg.order, regenerateVoiceover: false, regenerateBroll: false }));
+    res.json({ success: true, message: 'Re-mixing audio' });
+    regenerateSegments(req.params.id, video.user_id, changes)
+      .then(() => syncVideoToProxy(parseInt(req.params.id)))
+      .catch(err => { console.error(`[Remix] Video ${req.params.id} failed: ${err.message}`); });
+  } catch (err) {
+    console.error('Remix audio failed:', err);
+    res.status(500).json({ error: 'Failed to re-mix audio' });
+  }
+});
+
 app.post('/api/videos/:id/regenerate-segments', async (req, res) => {
   try {
     const { email, changes } = req.body;
@@ -1339,7 +1387,7 @@ app.post('/api/videos/:id/regenerate-segments', async (req, res) => {
     // Start regeneration in background (use video owner's ID, not admin's)
     res.json({ success: true, message: 'Segment regeneration started. Poll /api/videos/:id/status for progress.' });
 
-    regenerateSegments(req.params.id, video.user_id, changes).catch(err => {
+    regenerateSegments(req.params.id, video.user_id, changes).then(() => syncVideoToProxy(parseInt(req.params.id)).catch(() => {})).catch(err => {
       console.error(`Segment regeneration failed for video ${req.params.id}:`, err.message);
     });
   } catch (err) {
@@ -1571,23 +1619,28 @@ app.post('/api/voices/:voiceId/preview', async (req, res) => {
 // MUSIC TRACKS — Curated royalty-free background music
 // ═══════════════════════════════════════════════
 
-const { MUSIC_TRACKS } = require('./src/pipeline/musicTracks');
+const musicLib = require('./src/pipeline/musicTracks');
 
-// GET /api/music-tracks — list available background music tracks
+// GET /api/music-tracks — list available background music tracks (grouped by category on the page)
 app.get('/api/music-tracks', (req, res) => {
   res.json({
-    tracks: MUSIC_TRACKS.map(t => ({
+    defaultTrackId: musicLib.DEFAULT_TRACK_ID,
+    defaultVolume: musicLib.DEFAULT_MUSIC_VOLUME,
+    tracks: musicLib.getMusicTracks().map(t => ({
       id: t.id,
       name: t.name,
+      category: t.category,
       mood: t.mood,
       duration: t.duration,
+      legacy: t.legacy,
+      credit: t.credit,
     })),
   });
 });
 
 // GET /api/music-tracks/:id/preview — get preview URL for a track
 app.get('/api/music-tracks/:id/preview', (req, res) => {
-  const track = MUSIC_TRACKS.find(t => t.id === req.params.id);
+  const track = musicLib.getTrack(req.params.id);
   if (!track) return res.status(404).json({ error: 'Track not found' });
   // Return a server-proxied URL so CORS/auth issues don't block browser playback
   res.json({ preview_url: `/api/music-tracks/${track.id}/stream` });
@@ -1595,7 +1648,7 @@ app.get('/api/music-tracks/:id/preview', (req, res) => {
 
 // GET /api/music-tracks/:id/stream — proxy the audio file for browser playback
 app.get('/api/music-tracks/:id/stream', async (req, res) => {
-  const track = MUSIC_TRACKS.find(t => t.id === req.params.id);
+  const track = musicLib.getTrack(req.params.id);
   if (!track) return res.status(404).json({ error: 'Track not found' });
 
   try {
@@ -2260,8 +2313,8 @@ async function createSharedVideoCopy(sourceVideo, senderEmail, recipientEmail) {
     `INSERT INTO videos (user_id, name, brand_name, brand_logo_url, pocketsic_project_id, pocketsic_project_name,
       scene_data, narration_script, voiceover_timestamps, video_url, thumbnail_url, voiceover_url,
       voice_id, language, duration_target, duration_actual, music_track_id, scriptwriter_script_id, scriptwriter_script_name, scriptwriter_data,
-      persona_image_url, script_synopsis, status, shared_by, shared_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
+      persona_image_url, script_synopsis, music_volume, status, shared_by, shared_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
     [
       recipientUser.id,
       sourceVideo.name,
@@ -2285,6 +2338,7 @@ async function createSharedVideoCopy(sourceVideo, senderEmail, recipientEmail) {
       sourceVideo.scriptwriter_data ? (typeof sourceVideo.scriptwriter_data === 'string' ? sourceVideo.scriptwriter_data : JSON.stringify(sourceVideo.scriptwriter_data)) : null,
       sourceVideo.persona_image_url || null,
       sourceVideo.script_synopsis || null,
+      sourceVideo.music_volume == null ? 50 : sourceVideo.music_volume,
       sourceVideo.status === 'completed' ? 'completed' : 'draft',
       senderEmail,
     ]
@@ -2649,7 +2703,7 @@ function renderWatchPage(video, showLogin) {
 app.get('/watch/:id', async (req, res) => {
   try {
     const rows = await query(
-      'SELECT id, name, brand_name, brand_logo_url, description, video_url, thumbnail_url, status, public_enabled, public_password FROM videos WHERE id = ?',
+      'SELECT id, name, brand_name, brand_logo_url, description, video_url, thumbnail_url, status, public_enabled, public_password, music_track_id, music_volume FROM videos WHERE id = ?',
       [req.params.id]
     );
 
@@ -2661,6 +2715,7 @@ app.get('/watch/:id', async (req, res) => {
     }
 
     const video = rows[0];
+    video.description = publicDescription(video);
     const needsAuth = !!video.public_password;
 
     res.send(renderWatchPage(video, needsAuth));
@@ -2735,7 +2790,7 @@ app.get('/watch/:id/verify', async (req, res) => {
     }
 
     const rows = await query(
-      'SELECT id, name, description, video_url, thumbnail_url, brand_logo_url, status, public_enabled FROM videos WHERE id = ?',
+      'SELECT id, name, description, video_url, thumbnail_url, brand_logo_url, status, public_enabled, music_track_id, music_volume FROM videos WHERE id = ?',
       [req.params.id]
     );
 
@@ -2746,7 +2801,7 @@ app.get('/watch/:id/verify', async (req, res) => {
     const video = rows[0];
     res.json({
       name: video.name,
-      description: video.description,
+      description: publicDescription(video),
       video_url: video.status === 'completed' ? video.video_url : null,
       thumbnail_url: video.thumbnail_url,
       brand_logo_url: video.brand_logo_url,
@@ -2865,7 +2920,8 @@ async function recoverStaleJobs() {
         let changes = pending && Array.isArray(pending.changes) && pending.changes.length ? pending.changes : null;
         if (!changes && script && Array.isArray(script.segments)) {
           // No saved request (e.g. a first full render cut off while assembling) — re-assemble from the saved clips
-          changes = script.segments.map(seg => ({ order: seg.order, regenerateVoiceover: false, regenerateBroll: false, narration: seg.narration }));
+          // No narration here — sending it makes the rebuild record a brand-new voiceover
+          changes = script.segments.map(seg => ({ order: seg.order, regenerateVoiceover: false, regenerateBroll: false }));
         }
         if (!changes) {
           await query('UPDATE videos SET status = ?, error = NULL, pending_regen = NULL WHERE id = ?', [v.video_url ? 'completed' : 'draft', v.id]);

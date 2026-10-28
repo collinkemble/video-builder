@@ -83,6 +83,7 @@ CREATE TABLE IF NOT EXISTS videos (
   custom_instructions TEXT DEFAULT NULL,
   script_synopsis TEXT DEFAULT NULL,
   pending_regen TEXT DEFAULT NULL,
+  music_volume INTEGER DEFAULT 50,
   segment_assets JSONB DEFAULT NULL,
 
   -- Metadata

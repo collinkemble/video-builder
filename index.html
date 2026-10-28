@@ -486,6 +486,20 @@
                 <svg id="music-preview-stop" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#032D60" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="display:none;"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
               </button>
             </div>
+            <div id="music-volume-row" class="flex items-center gap-2" style="margin-top: 8px;">
+              <span style="font-size: 11px; font-weight: 600; color: #032D60; min-width: 76px;">Music volume</span>
+              <input id="edit-music-volume" type="range" min="0" max="100" step="5" value="50" class="flex-1" style="accent-color: #0176D3;" oninput="onMusicVolumeInput()">
+              <span id="music-volume-label" style="font-size: 11px; color: #6B7280; min-width: 82px; text-align: right;">50 · Default</span>
+            </div>
+            <div id="music-credit-wrap" style="display:none; margin-top: 6px; font-size: 11px; color: #6B7280; line-height: 1.4;">
+              <span id="music-credit-text"></span>
+              <button type="button" onclick="copyMusicCredit()" id="music-credit-copy" style="margin-left: 4px; color: #0176D3; font-weight: 600; background: none; border: none; cursor: pointer; padding: 0;">Copy credit</button>
+              <div style="margin-top: 2px;">This credit is added to the public player page automatically. Include it wherever you share the downloaded video.</div>
+            </div>
+            <div id="music-apply-wrap" style="display:none; margin-top: 8px; padding: 8px 10px; border-radius: 8px; background: #EFF6FF; border: 1px solid #BFDBFE;">
+              <div style="font-size: 12px; color: #032D60; margin-bottom: 6px;">Your music settings changed. Apply them to the finished video (about a minute, no new footage or voiceover).</div>
+              <button type="button" id="music-apply-btn" onclick="applyMusicChanges()" style="font-size: 12px; font-weight: 600; color: white; background: #0176D3; border: none; border-radius: 6px; padding: 6px 12px; cursor: pointer;">Apply music changes</button>
+            </div>
           </div>
         </div>
 
@@ -1652,6 +1666,10 @@ async function viewVideo(id, skipPush) {
     document.getElementById('edit-voice').value = video.voice_id || 'default';
     document.getElementById('edit-duration').value = String(video.duration_target || 180);
     document.getElementById('edit-music').value = video.music_track_id || 'corporate-technology';
+    document.getElementById('edit-music-volume').value = String(video.music_volume == null ? 50 : video.music_volume);
+    updateMusicVolumeLabel();
+    updateMusicCredit();
+    document.getElementById('music-apply-wrap').style.display = 'none';
     document.getElementById('edit-custom-instructions').value = video.custom_instructions || '';
     document.getElementById('edit-description').value = video.description || '';
     updateMusicPreviewButton();
@@ -1684,6 +1702,7 @@ async function viewVideo(id, skipPush) {
       voice: video.voice_id || 'default',
       duration: String(video.duration_target || 180),
       music: video.music_track_id || 'corporate-technology',
+      'music-volume': String(video.music_volume == null ? 50 : video.music_volume),
       'custom-instructions': video.custom_instructions || '',
       description: video.description || '',
       publicEnabled: !!video.public_enabled,
@@ -3673,7 +3692,7 @@ function toggleMoreSettings() {
 function checkSettingsChanged() {
   const orig = window._origSettings;
   if (!orig) return;
-  let changed = ['name', 'brand', 'language', 'voice', 'duration', 'music', 'custom-instructions', 'description'].some(f => {
+  let changed = ['name', 'brand', 'language', 'voice', 'duration', 'music', 'music-volume', 'custom-instructions', 'description'].some(f => {
     const el = document.getElementById('edit-' + f);
     return el && el.value !== orig[f];
   });
@@ -3711,6 +3730,9 @@ async function saveVideoSettings() {
     const voiceId = document.getElementById('edit-voice').value;
     const durationTarget = parseInt(document.getElementById('edit-duration').value);
     const musicTrackId = document.getElementById('edit-music').value;
+    const musicVolume = parseInt(document.getElementById('edit-music-volume').value, 10);
+    const prevMusic = window._origSettings ? window._origSettings.music : musicTrackId;
+    const prevVolume = window._origSettings ? window._origSettings['music-volume'] : String(musicVolume);
     const customInstructions = document.getElementById('edit-custom-instructions').value.trim();
     const description = document.getElementById('edit-description').value.trim();
 
@@ -3722,7 +3744,7 @@ async function saveVideoSettings() {
     if (!name) { alert('Name is required.'); btn.textContent = '💾 Save Settings'; btn.disabled = false; return; }
 
     const email = document.getElementById('user-email').textContent;
-    const body = { email, name, brandName, language, voiceId, durationTarget, musicTrackId, customInstructions, description, publicEnabled };
+    const body = { email, name, brandName, language, voiceId, durationTarget, musicTrackId, musicVolume, customInstructions, description, publicEnabled };
     // Only send password fields if password protection is enabled
     if (passwordEnabled) {
       body.publicPassword = publicPassword;
@@ -3737,7 +3759,13 @@ async function saveVideoSettings() {
     });
     if (!resp.ok) throw new Error('Save failed');
 
-    window._origSettings = { name, brand: brandName, language, voice: voiceId, duration: String(durationTarget), music: musicTrackId, 'custom-instructions': customInstructions, description };
+    const musicChanged = prevMusic !== musicTrackId || prevVolume !== String(musicVolume);
+    window._origSettings = { name, brand: brandName, language, voice: voiceId, duration: String(durationTarget), music: musicTrackId, 'music-volume': String(musicVolume), 'custom-instructions': customInstructions, description };
+    if (currentVideoData) { currentVideoData.music_track_id = musicTrackId; currentVideoData.music_volume = musicVolume; }
+    // Finished video: offer a quick re-mix so the change shows up without regenerating
+    if (musicChanged && currentVideoData && currentVideoData.status === 'completed' && currentVideoData.video_url) {
+      document.getElementById('music-apply-wrap').style.display = 'block';
+    }
     document.getElementById('detail-breadcrumb').textContent = name;
     hideSaveSettingsBar();
     btn.textContent = '✓ Saved!';
@@ -3749,7 +3777,7 @@ async function saveVideoSettings() {
   }
 }
 
-['edit-name', 'edit-brand', 'edit-language', 'edit-voice', 'edit-duration', 'edit-music', 'edit-custom-instructions', 'edit-description'].forEach(id => {
+['edit-name', 'edit-brand', 'edit-language', 'edit-voice', 'edit-duration', 'edit-music', 'edit-music-volume', 'edit-custom-instructions', 'edit-description'].forEach(id => {
   const el = document.getElementById(id);
   if (el) {
     el.addEventListener('input', checkSettingsChanged);
@@ -4456,12 +4484,84 @@ async function loadMusicTracks() {
     const resp = await fetch('/api/music-tracks');
     const data = await resp.json();
     const select = document.getElementById('edit-music');
-    select.innerHTML = '<option value="none">None</option>';
-    (data.tracks || []).forEach(t => {
-      select.innerHTML += `<option value="${esc(t.id)}">${esc(t.name)} — ${esc(t.mood)}</option>`;
+    const current = select.value;
+    window._musicTracks = data.tracks || [];
+    const groups = {};
+    window._musicTracks.forEach(t => { (groups[t.category] = groups[t.category] || []).push(t); });
+    let html = '<option value="none">None</option>';
+    Object.keys(groups).forEach(cat => {
+      const label = cat === 'Electronic' ? 'Electronic (older tracks)' : cat;
+      html += `<optgroup label="${esc(label)}">` + groups[cat].map(t => `<option value="${esc(t.id)}">${esc(t.name)} — ${esc(t.mood)}</option>`).join('') + '</optgroup>';
     });
+    select.innerHTML = html;
+    if (current && [...select.options].some(o => o.value === current)) select.value = current;
+    else if (currentVideoData && currentVideoData.music_track_id) select.value = currentVideoData.music_track_id;
     updateMusicPreviewButton();
+    updateMusicCredit();
   } catch (err) { console.log('Failed to load music tracks:', err.message); }
+}
+
+// Same curve as the server mixer: 0 = off, 50 = default level, 100 = loudest.
+function musicVolumeGainDb(v) { v = Math.max(0, Math.min(100, Number(v))); return v === 0 ? null : -22.4 + v * 0.16; }
+function musicPreviewLevel() {
+  const db = musicVolumeGainDb(document.getElementById('edit-music-volume').value);
+  return db === null ? 0 : Math.min(1, Math.pow(10, (db + 6.4) / 20));
+}
+function updateMusicVolumeLabel() {
+  const el = document.getElementById('edit-music-volume');
+  const v = parseInt(el.value, 10);
+  const word = v === 0 ? 'Off' : v <= 30 ? 'Quiet' : v < 50 ? 'Soft' : v === 50 ? 'Default' : v <= 75 ? 'Louder' : 'Loud';
+  document.getElementById('music-volume-label').textContent = v === 0 ? 'Off' : `${v} · ${word}`;
+  const noTrack = document.getElementById('edit-music').value === 'none';
+  document.getElementById('music-volume-row').style.opacity = noTrack ? '0.4' : '1';
+  el.disabled = noTrack;
+}
+function onMusicVolumeInput() {
+  updateMusicVolumeLabel();
+  if (musicPreviewAudio) musicPreviewAudio.volume = musicPreviewLevel();
+  updateMusicCredit();
+  checkSettingsChanged();
+}
+function updateMusicCredit() {
+  const id = document.getElementById('edit-music').value;
+  const vol = parseInt(document.getElementById('edit-music-volume').value, 10);
+  const t = (window._musicTracks || []).find(x => x.id === id);
+  const wrap = document.getElementById('music-credit-wrap');
+  if (t && t.credit && vol > 0) {
+    document.getElementById('music-credit-text').textContent = 'Music credit: ' + t.credit;
+    wrap.style.display = 'block';
+  } else wrap.style.display = 'none';
+}
+function copyMusicCredit() {
+  const txt = document.getElementById('music-credit-text').textContent.replace(/^Music credit: /, 'Music: ');
+  const btn = document.getElementById('music-credit-copy');
+  const done = () => { btn.textContent = 'Copied!'; setTimeout(() => { btn.textContent = 'Copy credit'; }, 1500); };
+  if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(txt).then(done).catch(() => { fallbackCopy(txt); done(); });
+  else { fallbackCopy(txt); done(); }
+}
+function fallbackCopy(txt) {
+  const ta = document.createElement('textarea'); ta.value = txt; document.body.appendChild(ta); ta.select();
+  try { document.execCommand('copy'); } catch {} ta.remove();
+}
+async function applyMusicChanges() {
+  const btn = document.getElementById('music-apply-btn');
+  btn.disabled = true; btn.textContent = 'Starting...';
+  try {
+    const email = document.getElementById('user-email').textContent;
+    const resp = await fetch(`/api/videos/${currentVideoId}/remix-audio`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email }),
+    });
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) throw new Error(data.error || 'Could not start the re-mix');
+    document.getElementById('music-apply-wrap').style.display = 'none';
+    startStatusPolling(currentVideoId);
+    const badge = document.getElementById('detail-status-badge');
+    if (badge) { badge.className = 'status-badge status-compositing'; badge.textContent = 'Updating music...'; }
+  } catch (err) {
+    alert(err.message);
+  } finally {
+    btn.disabled = false; btn.textContent = 'Apply music changes';
+  }
 }
 
 function updateMusicPreviewButton() {
@@ -4489,7 +4589,7 @@ function toggleMusicPreview() {
     .then(data => {
       if (!data.preview_url) return;
       musicPreviewAudio = new Audio(data.preview_url);
-      musicPreviewAudio.volume = 0.5;
+      musicPreviewAudio.volume = musicPreviewLevel() || 0.15;
       musicPreviewPlaying = true;
       setMusicPreviewIcon(true);
       musicPreviewAudio.play().catch(err => {
@@ -4524,6 +4624,8 @@ function setMusicPreviewIcon(playing) {
 document.getElementById('edit-music')?.addEventListener('change', () => {
   stopMusicPreview();
   updateMusicPreviewButton();
+  updateMusicVolumeLabel();
+  updateMusicCredit();
 });
 
 // ═══════════════════════════════════════════════

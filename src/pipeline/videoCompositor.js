@@ -52,6 +52,8 @@ async function composeVideo({
   brollImages,  // { order: imagePath } — still PNG images from b-roll generator
   voiceoverPath,
   musicTrackUrl, // URL to a background music MP3 (optional)
+  musicVolume = 50, // 0–100 (0 = no music); see musicTracks.musicFilterChain
+  musicTrackId = null, // for the per-track level adjustment
   brandName,
   brandLogoUrl,  // URL to the brand logo (for intro overlay)
   outputDir,
@@ -372,10 +374,10 @@ async function composeVideo({
 
   const finalVideoPath = path.join(workDir, `video_${Date.now()}.mp4`);
   if (effectiveVoiceoverPath && fs.existsSync(effectiveVoiceoverPath)) {
-    await overlayAudio(silentVideoPath, effectiveVoiceoverPath, finalVideoPath, onProgress, musicPath);
+    await overlayAudio(silentVideoPath, effectiveVoiceoverPath, finalVideoPath, onProgress, musicPath, musicVolume, musicTrackId);
   } else if (musicPath) {
     // No voiceover but has music — overlay just the music
-    await overlayMusicOnly(silentVideoPath, musicPath, finalVideoPath, onProgress);
+    await overlayMusicOnly(silentVideoPath, musicPath, finalVideoPath, onProgress, musicVolume, musicTrackId);
   } else {
     fs.copyFileSync(silentVideoPath, finalVideoPath);
   }
@@ -1204,7 +1206,10 @@ function getAudioDuration(audioPath) {
  * Uses the LONGER of the two audio streams so narration never gets cut off.
  * Background music is mixed at low volume (-18dB) and looped to fill the video.
  */
-async function overlayAudio(videoPath, audioPath, outputPath, onProgress, musicPath) {
+async function overlayAudio(videoPath, audioPath, outputPath, onProgress, musicPath, musicVolume = 50, musicTrackId = null) {
+  // Music: loudness evened out, then the user's volume. Volume 0 = no music.
+  const musicChain = require('./musicTracks').musicFilterChain(musicVolume, musicTrackId);
+  if (!musicChain) musicPath = null;
   const audioDur = await getAudioDuration(audioPath);
   const videoDur = await getVideoDuration(videoPath);
   const targetDuration = Math.max(videoDur, audioDur + 1.0);
@@ -1222,7 +1227,7 @@ async function overlayAudio(videoPath, audioPath, outputPath, onProgress, musicP
         '-i', audioPath,
         '-stream_loop', '-1', '-i', musicPath,
         '-filter_complex',
-        '[0:a]volume=1.0[vid_audio];[1:a]volume=1.0[voice];[2:a]volume=0.12[music];[vid_audio][voice][music]amix=inputs=3:duration=longest:dropout_transition=3[aout]',
+        '[0:a]volume=1.0[vid_audio];[1:a]volume=1.0[voice];[2:a]' + musicChain + '[music];[vid_audio][voice][music]amix=inputs=3:duration=longest:dropout_transition=3[aout]',
         '-map', '0:v:0',
         '-map', '[aout]',
         '-c:v', 'copy',
@@ -1238,7 +1243,7 @@ async function overlayAudio(videoPath, audioPath, outputPath, onProgress, musicP
         '-i', audioPath,
         '-stream_loop', '-1', '-i', musicPath,
         '-filter_complex',
-        '[1:a]volume=1.0[voice];[2:a]volume=0.12[music];[voice][music]amix=inputs=2:duration=longest:dropout_transition=3[aout]',
+        '[1:a]volume=1.0[voice];[2:a]' + musicChain + '[music];[voice][music]amix=inputs=2:duration=longest:dropout_transition=3[aout]',
         '-map', '0:v:0',
         '-map', '[aout]',
         '-c:v', 'copy',
@@ -1288,13 +1293,18 @@ async function overlayAudio(videoPath, audioPath, outputPath, onProgress, musicP
 /**
  * Overlay only background music (no voiceover) onto a video.
  */
-function overlayMusicOnly(videoPath, musicPath, outputPath, onProgress) {
+function overlayMusicOnly(videoPath, musicPath, outputPath, onProgress, musicVolume = 50, musicTrackId = null) {
+  // No narration: music sits 8 dB higher than under a voice (capped at -2 dB)
+  const m = require('./musicTracks');
+  const db = m.musicGainDb(musicVolume);
+  const t = musicTrackId ? m.getTrack(musicTrackId) : null;
+  const chain = db === null ? 'volume=0' : 'aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo,volume=' + (Math.min(-2, db + 8) + ((t && t.gainOffsetDb) || 0)).toFixed(2) + 'dB';
   // Video is already encoded — copy it, only encode audio
   return runFfmpeg([
     '-y',
     '-i', videoPath,
     '-stream_loop', '-1', '-i', musicPath,
-    '-filter_complex', '[1:a]volume=0.3[music]',
+    '-filter_complex', '[1:a]' + chain + '[music]',
     '-map', '0:v:0',
     '-map', '[music]',
     '-c:v', 'copy',

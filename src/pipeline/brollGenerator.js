@@ -394,8 +394,36 @@ async function extendBrollVideo({ videoRef, prompt, outputDir, extensionNumber =
     return { filePath: outputPath, videoRef: res.interactionId };
   } catch (err) {
     console.warn('[B-Roll Extend] Extension #' + extensionNumber + ' failed: ' + err.message);
-    return null;
+    return { error: err };
   }
+}
+
+/** Short, neutral continuation prompt — used when Google rejects the full one. */
+function buildMinimalContinuationPrompt(hasPersona) {
+  return 'Continue the same shot smoothly in the same place, same lighting and camera style, natural forward motion, one unbroken take.' +
+    (hasPersona ? ' The same single person, mouth closed.' : ' No people.');
+}
+
+/**
+ * Extend with retries that react to the real cause:
+ *   busy/timeout → same prompt after a backoff; rejected → once more with a minimal prompt.
+ * Records Google's reason in stats so the notes can explain failures.
+ */
+async function extendWithRetry({ videoRef, desc, brandName, hasPersona, outputDir, extensionNumber, stats }) {
+  const prompts = [buildContinuationPrompt(desc, brandName, hasPersona), buildMinimalContinuationPrompt(hasPersona)];
+  const delays = [8000, 20000, 40000];
+  let level = 0, transient = 0;
+  for (let attempt = 1; attempt <= 4; attempt++) {
+    const r = await extendBrollVideo({ videoRef, prompt: prompts[level], outputDir, extensionNumber });
+    if (r && r.filePath) { if (stats && attempt > 1) stats.extensionRetried = (stats.extensionRetried || 0) + 1; return r; }
+    const err = (r && r.error) || new Error('unknown error');
+    const kind = classifyOmniError(err);
+    if (stats) stats.errors.push({ kind, extension: true, message: (err.message || '').replace(/^.*?HTTP \d+:\s*/, '').substring(0, 200) });
+    if (kind === 'transient' && transient < delays.length) { await new Promise(res => setTimeout(res, delays[transient++])); continue; }
+    if (level < prompts.length - 1) { level++; await new Promise(res => setTimeout(res, 2000)); continue; }
+    break;
+  }
+  return null;
 }
 
 /** Continuation prompt that keeps the same person, outfit and setting — and the same PLACE. */
@@ -681,8 +709,18 @@ async function toSingleShotDescription(desc) {
 }
 
 async function generateSectionFootage({ seg, clipsNeeded, brandName, brandDescription = '', personaDescription = '', outputDir, personaImageUrl = null, stats = null, logPrefix = '[B-Roll]' }) {
-  const { reviewShot, PROBLEM_LABELS } = require('./brollQa');
-  const MAX_RETAKES = Number(process.env.BROLL_QA_RETAKES || 2);
+  const { reviewShot, trimToCleanSpan, PROBLEM_LABELS } = require('./brollQa');
+  const MAX_RETAKES = Number(process.env.BROLL_QA_RETAKES || 4);
+  // Positive instructions for re-takes. Naming the defect ("the person was talking") tends to
+  // prime the model to repeat it, so describe what we WANT instead.
+  const FIX_HINTS = {
+    talking: 'The person keeps their mouth gently closed the entire time — a quiet, silent moment.',
+    scene_cut: 'The camera holds one unbroken take from the first frame to the last, in a single location.',
+    dissolve: 'The camera holds one unbroken take from the first frame to the last, in a single location.',
+    duplicate_person: 'Exactly one person is in the frame the whole time.',
+    reverse_motion: 'Everything moves forward naturally at normal speed.',
+    visible_text: 'Framed closer, against a plain softly blurred background. Every surface is blank — no letters, signs, numbers or logos anywhere; signage stays out of frame.',
+  };
   const desc = await toSingleShotDescription(seg.brollDescription || 'Professional lifestyle footage');
   const mediaPaths = [];
   let remaining = Math.max(1, clipsNeeded);
@@ -704,11 +742,8 @@ async function generateSectionFootage({ seg, clipsNeeded, brandName, brandDescri
     let videoRef = initial.videoRef;
     let clipsInChain = 1;
     while (clipsInChain < target && videoRef) {
-      const ext = await extendBrollVideo({
-        videoRef,
-        prompt: buildContinuationPrompt(desc, brandName, !!personaImageUrl),
-        outputDir,
-        extensionNumber: clipsInChain,
+      const ext = await extendWithRetry({
+        videoRef, desc, brandName, hasPersona: !!personaImageUrl, outputDir, extensionNumber: clipsInChain, stats,
       });
       if (!ext) {
         if (stats) stats.extensionFailures++;
@@ -733,16 +768,46 @@ async function generateSectionFootage({ seg, clipsNeeded, brandName, brandDescri
 
     // Quality check every shot; re-make failed shots (up to MAX_RETAKES) and keep the cleanest take.
     let best = null;
+    const seenProblems = new Set();
     for (let take = 0; take <= MAX_RETAKES; take++) {
       let chainDesc = baseDesc;
-      if (take > 0 && best) {
-        const avoid = [...new Set(best.review.problems.map(p => PROBLEM_LABELS[p.type] || p.type))].join(' and ');
-        chainDesc = baseDesc + '. This must be ONE continuous take in one place with natural forward motion only — the previous take had ' + avoid + ', which must not happen.';
+      if (take > 0 && seenProblems.size) {
+        const hints = [...new Set([...seenProblems].map(t => FIX_HINTS[t]).filter(Boolean))].join(' ');
+        chainDesc = baseDesc + '. ' + hints;
       }
-      const shot = await makeShot(chainDesc, target);
+      // Later re-takes are single ~10s shots: extensions are where most cuts and crossfades appear
+      const takeTarget = take === 0 ? target : take === 1 ? Math.min(target, 2) : 1;
+      const shot = await makeShot(chainDesc, takeTarget);
       if (!shot) break;
       let review = { ok: true, problems: [] };
       try { review = await reviewShot(shot.filePath); } catch (e) { console.warn(logPrefix + ' QA failed (accepting shot): ' + e.message); }
+      if (!review.ok) {
+        review.problems.forEach(p => seenProblems.add(p.type));
+        // Salvage: keep the longest clean stretch, then re-check it
+        try {
+          const trimmed = await trimToCleanSpan(shot.filePath, review.problems, outputDir);
+          if (trimmed) {
+            const r2 = await reviewShot(trimmed.filePath);
+            if (r2.ok) {
+              console.log(logPrefix + ' Segment ' + seg.order + ': kept a clean ' + trimmed.seconds + 's stretch of shot ' + (chain + 1) + ' (cut out ' + review.problems.map(p => p.type + '@' + p.second + 's').join(', ') + ')');
+              if (stats) { stats.qa.checked++; stats.qa.failed++; review.problems.forEach(p => { stats.qa.types[p.type] = (stats.qa.types[p.type] || 0) + 1; }); stats.qa.trimmed = (stats.qa.trimmed || 0) + 1; }
+              try { fs.unlinkSync(shot.filePath); } catch {}
+              shot.filePath = trimmed.filePath;
+              shot.clipsInChain = Math.max(1, Math.round(trimmed.seconds / OMNI_CLIP_SECONDS));
+              shot.trimmed = true;
+              review = r2;
+            } else {
+              try { fs.unlinkSync(trimmed.filePath); } catch {}
+            }
+          }
+        } catch (e) { console.warn(logPrefix + ' Trim failed: ' + e.message); }
+      }
+      if (shot.trimmed) {
+        if (best) { try { fs.unlinkSync(best.filePath); } catch {} }
+        best = { ...shot, review };
+        if (take > 0 && stats) stats.qa.fixed++;
+        break;
+      }
       if (stats) {
         stats.qa.checked++;
         if (!review.ok) { stats.qa.failed++; review.problems.forEach(p => { stats.qa.types[p.type] = (stats.qa.types[p.type] || 0) + 1; }); }
@@ -763,9 +828,15 @@ async function generateSectionFootage({ seg, clipsNeeded, brandName, brandDescri
       if (take < MAX_RETAKES) {
         if (stats) stats.qa.retakes++;
         console.warn(logPrefix + ' Segment ' + seg.order + ': shot ' + (chain + 1) + ' failed quality check (' + review.problems.map(p => p.type + '@' + p.second + 's').join(', ') + ') — re-making it');
-      } else if (stats) {
-        stats.qa.unresolved.push({ order: seg.order, problems: [...new Set(review.problems.map(p => p.type))] });
       }
+    }
+    // Never use a take that still has a defect. The section loops its clean footage instead,
+    // or (if it has none) borrows clean b-roll from another section.
+    if (best && !best.review.ok) {
+      if (stats) stats.qa.unresolved.push({ order: seg.order, problems: [...new Set(best.review.problems.map(p => p.type))], dropped: true, hadOther: mediaPaths.length > 0 });
+      console.warn(logPrefix + ' Segment ' + seg.order + ': no clean take after ' + (MAX_RETAKES + 1) + ' tries — not using it');
+      try { fs.unlinkSync(best.filePath); } catch {}
+      best = null;
     }
     if (!best) break;
 
@@ -804,18 +875,24 @@ function summarizeBrollStats(stats) {
     const kinds = Object.keys(stats.qa.types).map(t => PROBLEM_LABELS[t] || t).join(', ');
     notes.push('Quality check re-made ' + stats.qa.retakes + ' shot' + (stats.qa.retakes === 1 ? '' : 's') + ' (found: ' + kinds + ')' + (stats.qa.fixed ? '; ' + stats.qa.fixed + ' fixed' : '') + '.');
   }
+  if (stats.qa && stats.qa.trimmed) {
+    notes.push(stats.qa.trimmed + ' shot' + (stats.qa.trimmed === 1 ? ' was' : 's were') + ' trimmed to cut out a flawed moment (the clean part was kept and re-checked).');
+  }
   if (stats.qa && stats.qa.unresolved.length) {
     const { PROBLEM_LABELS } = require('./brollQa');
-    notes.push(stats.qa.unresolved.map(u => 'Section ' + u.order + ' still has ' + u.problems.map(t => PROBLEM_LABELS[t] || t).join(' and ')).join('; ') + ' after re-takes — the cleanest take was used. Regenerate that section to try again.');
+    notes.push(stats.qa.unresolved.map(u => 'Section ' + u.order + ': every take had ' + u.problems.map(t => PROBLEM_LABELS[t] || t).join(' or ') + ', so none was used — ' + (u.hadOther ? 'its other clean footage fills the time' : 'it uses clean b-roll from another section')).join('; ') + '. You can regenerate those sections to try for new footage.');
   }
   const transient = stats.errors.filter(e => e.kind === 'transient').length;
   if (transient) notes.push('Google was busy ' + transient + ' time' + (transient === 1 ? '' : 's') + '; those clips were retried with the same prompt.');
   if (stats.extensionFailures) {
-    notes.push(stats.extensionFailures + ' extension' + (stats.extensionFailures === 1 ? '' : 's') + ' failed, so some shots are shorter and loop to fill their section.');
+    const extErr = {};
+    stats.errors.filter(e => e.extension && e.kind !== 'transient').forEach(e => { extErr[e.message] = (extErr[e.message] || 0) + 1; });
+    const why = Object.entries(extErr).sort((a, b) => b[1] - a[1])[0];
+    notes.push(stats.extensionFailures + ' extension' + (stats.extensionFailures === 1 ? '' : 's') + ' still failed after retries, so some shots are shorter and loop to fill their section' + (why ? ' (Google said: "' + why[0] + '")' : '') + '.');
   }
   // Google's own words, most common first (excluding the photo block already explained)
   const counts = {};
-  stats.errors.filter(e => e.kind !== 'transient' && !(e.photo && e.kind === 'blocked')).forEach(e => { counts[e.message] = (counts[e.message] || 0) + 1; });
+  stats.errors.filter(e => e.kind !== 'transient' && !e.extension && !(e.photo && e.kind === 'blocked' && stats.photoBlocked)).forEach(e => { counts[e.message] = (counts[e.message] || 0) + 1; });
   const top = Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, 2);
   top.forEach(([m, n]) => notes.push('Google said' + (n > 1 ? ' (' + n + '×)' : '') + ': "' + m + '"'));
   return notes;

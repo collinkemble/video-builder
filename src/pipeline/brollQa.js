@@ -139,4 +139,49 @@ async function reviewShot(filePath) {
   return { ok: problems.length === 0, problems, ...(error ? { error } : {}) };
 }
 
-module.exports = { reviewShot, detectRewinds, geminiReview, PROBLEM_LABELS };
+// ── 3. Salvage: keep the longest clean stretch of a shot ──
+function probeDuration(filePath) {
+  return new Promise((resolve) => {
+    const p = spawn(FFMPEG, ['-hide_banner', '-i', filePath]);
+    let err = '';
+    p.stderr.on('data', d => { err += d; });
+    p.on('error', () => resolve(0));
+    p.on('close', () => {
+      const m = err.match(/Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)/);
+      resolve(m ? (+m[1]) * 3600 + (+m[2]) * 60 + parseFloat(m[3]) : 0);
+    });
+  });
+}
+
+/**
+ * Cut the problem moments out of a shot and keep the longest clean stretch (≥ minSeconds).
+ * Each problem removes a window of ±pad seconds around its time. Problems without a time
+ * can't be located, so the shot can't be salvaged. Returns { filePath, seconds } or null.
+ * The caller must re-check the result (problem times are approximate).
+ */
+async function trimToCleanSpan(filePath, problems, outputDir, { pad = 1.5, minSeconds = 4 } = {}) {
+  if (!problems || !problems.length) return null;
+  if (problems.some(p => !Number.isFinite(Number(p.second)))) return null;
+  const dur = await probeDuration(filePath);
+  if (!dur) return null;
+  const bad = problems.map(p => [Math.max(0, Number(p.second) - pad), Math.min(dur, Number(p.second) + pad)]).sort((a, b) => a[0] - b[0]);
+  const merged = [];
+  bad.forEach(w => { const last = merged[merged.length - 1]; if (last && w[0] <= last[1]) last[1] = Math.max(last[1], w[1]); else merged.push(w.slice()); });
+  let best = null, cursor = 0.2;
+  for (const w of [...merged, [dur - 0.2, dur]]) {
+    const len = w[0] - cursor;
+    if (len > 0 && (!best || len > best.len)) best = { start: cursor, len };
+    cursor = Math.max(cursor, w[1]);
+  }
+  if (!best || best.len < minSeconds) return null;
+  const out = require('path').join(outputDir || require('os').tmpdir(), 'broll_trim_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7) + '.mp4');
+  await new Promise((resolve, reject) => {
+    const p = spawn(FFMPEG, ['-y', '-v', 'error', '-ss', best.start.toFixed(2), '-i', filePath, '-t', best.len.toFixed(2), '-an', '-c:v', 'libx264', '-preset', 'fast', '-crf', '20', '-pix_fmt', 'yuv420p', out]);
+    let e = ''; p.stderr.on('data', d => { e += d; });
+    p.on('error', reject);
+    p.on('close', code => code === 0 ? resolve() : reject(new Error('trim failed: ' + e.slice(-200))));
+  });
+  return { filePath: out, seconds: +best.len.toFixed(2), start: +best.start.toFixed(2) };
+}
+
+module.exports = { reviewShot, detectRewinds, geminiReview, trimToCleanSpan, probeDuration, PROBLEM_LABELS };

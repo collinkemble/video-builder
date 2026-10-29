@@ -261,9 +261,14 @@ async function getPersonaImage(url) {
 
 // Persona photos that Google's safety filter has blocked ("Input blocked"). Once blocked, we stop
 // sending that photo and describe the person in words instead, so no attempts are wasted.
-const _blockedPersonaPhotos = new Set();
-function isPersonaPhotoBlocked(url) { return !!url && _blockedPersonaPhotos.has(url); }
-function markPersonaPhotoBlocked(url) { if (url) _blockedPersonaPhotos.add(url); }
+// Remembered PER VIDEO (on that video's stats object), never across videos: one bad prompt in one
+// video must not stop every later video from using the photo.
+function isPersonaPhotoBlocked(url, stats) { return !!url && !!(stats && stats.blockedPhotos && stats.blockedPhotos.has(url)); }
+function markPersonaPhotoBlocked(url, stats) {
+  if (!url || !stats) return;
+  if (!stats.blockedPhotos) stats.blockedPhotos = new Set();
+  stats.blockedPhotos.add(url);
+}
 
 // Written description of the persona's look, made once per photo with Gemini (vision).
 const _personaLookCache = new Map();
@@ -544,10 +549,10 @@ function truncate(str, maxLen) {
  *   • Only the very last resort drops the person entirely.
  */
 async function generateBroll({ description, brandName, brandDescription = '', personaDescription = '', outputDir, segmentType = '', segmentChannel = '', personaImageUrl = null, stats = null }) {
-  const MAX_ATTEMPTS = 6;
+  const MAX_ATTEMPTS = 8;
   const TRANSIENT_DELAYS_MS = [5000, 10000, 20000, 40000, 60000];
 
-  let mode = !personaImageUrl ? 'none' : (isPersonaPhotoBlocked(personaImageUrl) ? 'described' : 'photo');
+  let mode = !personaImageUrl ? 'none' : (isPersonaPhotoBlocked(personaImageUrl, stats) ? 'described' : 'photo');
   let promptLevel = 0; // 0 = full + context, 1 = full description only, 2 = minimal
   let transientCount = 0;
 
@@ -594,11 +599,17 @@ async function generateBroll({ description, brandName, brandDescription = '', pe
     }
 
     // Blocked or other content problem
-    if (mode === 'photo' && err.usedPhoto && kind === 'blocked') {
-      markPersonaPhotoBlocked(personaImageUrl);
+    if (mode === 'photo' && err.usedPhoto && kind === 'blocked' && promptLevel < 2) {
+      // Usually it's the WORDING Google objects to, not the photo — keep the photo, simplify the prompt
+      promptLevel++;
+      console.warn('[B-Roll] Blocked with the persona photo — keeping the photo and simplifying the prompt (level ' + promptLevel + ')');
+    } else if (mode === 'photo' && err.usedPhoto && kind === 'blocked') {
+      // Blocked even with the plainest prompt → it really is the photo (for this video)
+      markPersonaPhotoBlocked(personaImageUrl, stats);
       if (stats) stats.photoBlocked = true;
       mode = 'described';
-      console.warn('[B-Roll] Google blocked the persona photo — describing the person in words instead');
+      promptLevel = 0; // describing the person in words: go back to the full scene description
+      console.warn('[B-Roll] Google blocked the persona photo even with a minimal prompt — describing the person in words instead');
     } else if (promptLevel < 2) {
       promptLevel++;
     } else if (mode !== 'none') {

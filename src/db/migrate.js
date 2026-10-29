@@ -20,7 +20,8 @@ async function migrate() {
         "ALTER TABLE videos ADD COLUMN IF NOT EXISTS tiny_url VARCHAR(255) DEFAULT NULL",
         "ALTER TABLE videos ADD COLUMN IF NOT EXISTS script_synopsis TEXT DEFAULT NULL",
         "ALTER TABLE videos ADD COLUMN IF NOT EXISTS pending_regen TEXT DEFAULT NULL",
-        "ALTER TABLE videos ADD COLUMN IF NOT EXISTS music_volume INTEGER DEFAULT 50",
+        "ALTER TABLE videos ADD COLUMN IF NOT EXISTS music_volume INTEGER DEFAULT 30",
+        "ALTER TABLE videos ALTER COLUMN music_volume SET DEFAULT 30",
       ];
       for (const stmt of pgMigrations) {
         try { await pool.query(stmt); } catch (e) { /* column may already exist */ }
@@ -84,7 +85,7 @@ async function migrate() {
         "ALTER TABLE videos ADD COLUMN tiny_url VARCHAR(255) DEFAULT NULL",
         "ALTER TABLE videos ADD COLUMN script_synopsis TEXT DEFAULT NULL",
         "ALTER TABLE videos ADD COLUMN pending_regen TEXT DEFAULT NULL",
-        "ALTER TABLE videos ADD COLUMN music_volume INT DEFAULT 50",
+        "ALTER TABLE videos ADD COLUMN music_volume INT DEFAULT 30",
       ];
 
       const allAlters = [...sharedAlters, ...appAlters];

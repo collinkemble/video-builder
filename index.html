@@ -488,8 +488,8 @@
             </div>
             <div id="music-volume-row" class="flex items-center gap-2" style="margin-top: 8px;">
               <span style="font-size: 11px; font-weight: 600; color: #032D60; min-width: 76px;">Music volume</span>
-              <input id="edit-music-volume" type="range" min="0" max="100" step="5" value="50" class="flex-1" style="accent-color: #0176D3;" oninput="onMusicVolumeInput()">
-              <span id="music-volume-label" style="font-size: 11px; color: #6B7280; min-width: 82px; text-align: right;">50 · Default</span>
+              <input id="edit-music-volume" type="range" min="0" max="100" step="5" value="30" class="flex-1" style="accent-color: #0176D3;" oninput="onMusicVolumeInput()">
+              <span id="music-volume-label" style="font-size: 11px; color: #6B7280; min-width: 82px; text-align: right;">30 · Default</span>
             </div>
             <div id="music-credit-wrap" style="display:none; margin-top: 6px; font-size: 11px; color: #6B7280; line-height: 1.4;">
               <span id="music-credit-text"></span>
@@ -1669,7 +1669,7 @@ async function viewVideo(id, skipPush) {
     document.getElementById('edit-voice').value = video.voice_id || 'default';
     document.getElementById('edit-duration').value = String(video.duration_target || 180);
     document.getElementById('edit-music').value = video.music_track_id || 'corporate-technology';
-    document.getElementById('edit-music-volume').value = String(video.music_volume == null ? 50 : video.music_volume);
+    document.getElementById('edit-music-volume').value = String(video.music_volume == null ? 30 : video.music_volume);
     updateMusicVolumeLabel();
     updateMusicCredit();
     document.getElementById('music-apply-wrap').style.display = 'none';
@@ -1705,7 +1705,7 @@ async function viewVideo(id, skipPush) {
       voice: video.voice_id || 'default',
       duration: String(video.duration_target || 180),
       music: video.music_track_id || 'corporate-technology',
-      'music-volume': String(video.music_volume == null ? 50 : video.music_volume),
+      'music-volume': String(video.music_volume == null ? 30 : video.music_volume),
       'custom-instructions': video.custom_instructions || '',
       description: video.description || '',
       publicEnabled: !!video.public_enabled,
@@ -4558,7 +4558,7 @@ function musicPreviewLevel() {
 function updateMusicVolumeLabel() {
   const el = document.getElementById('edit-music-volume');
   const v = parseInt(el.value, 10);
-  const word = v === 0 ? 'Off' : v <= 30 ? 'Quiet' : v < 50 ? 'Soft' : v === 50 ? 'Default' : v <= 75 ? 'Louder' : 'Loud';
+  const word = v === 0 ? 'Off' : v === 30 ? 'Default' : v < 30 ? 'Quiet' : v <= 50 ? 'Medium' : v <= 75 ? 'Louder' : 'Loud';
   document.getElementById('music-volume-label').textContent = v === 0 ? 'Off' : `${v} · ${word}`;
   const noTrack = document.getElementById('edit-music').value === 'none';
   document.getElementById('music-volume-row').style.opacity = noTrack ? '0.4' : '1';

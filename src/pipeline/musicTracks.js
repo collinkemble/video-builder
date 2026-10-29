@@ -43,7 +43,9 @@ const LEGACY = [
 ];
 
 const DEFAULT_TRACK_ID = 'life-of-riley';
-const DEFAULT_MUSIC_VOLUME = 50; // 0–100; 50 matches the level videos had before the volume control existed
+// 0–100 for new videos. The level curve is unchanged: 50 = the level videos had before the volume control existed,
+// 30 ≈ 3 dB quieter (music sits further under the narration).
+const DEFAULT_MUSIC_VOLUME = 30;
 
 function libraryUrl(id) {
   let base = '';

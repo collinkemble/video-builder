@@ -485,7 +485,7 @@ async function _runPipelineImpl(videoId, userId, options = {}) {
         brollImages,
         voiceoverPath: voiceoverResult.audioPath,
         musicTrackUrl,
-        musicVolume: video.music_volume == null ? 50 : video.music_volume,
+        musicVolume: video.music_volume == null ? require('./musicTracks').DEFAULT_MUSIC_VOLUME : video.music_volume,
         musicTrackId: video.music_track_id || null,
         brandName: video.brand_name || sceneData.brand_name || '',
         brandLogoUrl,
@@ -1396,7 +1396,7 @@ async function regenerateSegments(videoId, userId, changes, opts = {}) {
       const audioArgs = ['-y', '-i', silentPath, '-i', voiceoverPath];
       let filterComplex;
 
-      const musicChain = require('./musicTracks').musicFilterChain(video.music_volume == null ? 50 : video.music_volume, video.music_track_id);
+      const musicChain = require('./musicTracks').musicFilterChain(video.music_volume == null ? require('./musicTracks').DEFAULT_MUSIC_VOLUME : video.music_volume, video.music_track_id);
       if (musicPath && fs.existsSync(musicPath) && musicChain) {
         // Loop the music so long videos never go silent at the end
         audioArgs.push('-stream_loop', '-1', '-i', musicPath);

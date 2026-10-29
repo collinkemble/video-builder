@@ -20,7 +20,7 @@ const http = require('http');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const BUILD_VERSION = 'v198-pipeline-on-load';
+const BUILD_VERSION = 'v199-music-default-30';
 
 // ─── Video Proxy Base URL ───
 const VIDEO_PROXY_BASE_URL = (process.env.VIDEO_PROXY_BASE_URL || '').replace(/\/+$/, '');
@@ -921,8 +921,8 @@ app.post('/api/videos', async (req, res) => {
     const synopsisToStore = scriptWriterData ? null : ((typeof scriptSynopsis === 'string' && scriptSynopsis.trim()) || null);
     const result = await query(
       `INSERT INTO videos (user_id, name, brand_name, brand_logo_url, pocketsic_project_id, pocketsic_project_name,
-        scene_data, voice_id, language, duration_target, music_track_id, scriptwriter_script_id, scriptwriter_script_name, scriptwriter_data, script_synopsis, status)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft')`,
+        scene_data, voice_id, language, duration_target, music_track_id, scriptwriter_script_id, scriptwriter_script_name, scriptwriter_data, script_synopsis, music_volume, status)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft')`,
       [
         user.id,
         name.trim(),
@@ -939,6 +939,7 @@ app.post('/api/videos', async (req, res) => {
         scriptWriterScriptName || null,
         scriptWriterData ? JSON.stringify(scriptWriterData) : null,
         synopsisToStore,
+        require('./src/pipeline/musicTracks').DEFAULT_MUSIC_VOLUME,
       ]
     );
 
@@ -2340,7 +2341,7 @@ async function createSharedVideoCopy(sourceVideo, senderEmail, recipientEmail) {
       sourceVideo.scriptwriter_data ? (typeof sourceVideo.scriptwriter_data === 'string' ? sourceVideo.scriptwriter_data : JSON.stringify(sourceVideo.scriptwriter_data)) : null,
       sourceVideo.persona_image_url || null,
       sourceVideo.script_synopsis || null,
-      sourceVideo.music_volume == null ? 50 : sourceVideo.music_volume,
+      sourceVideo.music_volume == null ? require('./src/pipeline/musicTracks').DEFAULT_MUSIC_VOLUME : sourceVideo.music_volume,
       sourceVideo.status === 'completed' ? 'completed' : 'draft',
       senderEmail,
     ]

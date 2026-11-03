@@ -1006,9 +1006,9 @@ async function regenerateSegments(videoId, userId, changes, opts = {}) {
             const assetExt = isVideo ? 'mp4' : 'png';
             const assetLocalPath = path.join(workDir, `custom_download_${c.order}.${assetExt}`);
 
-            const assetResp = await fetch(seg.customAssetUrl);
-            if (!assetResp.ok) throw new Error(`Failed to download custom asset: ${assetResp.status}`);
-            fs.writeFileSync(assetLocalPath, Buffer.from(await assetResp.arrayBuffer()));
+            const { downloadAsset, customAssetError } = require('../utils/r2');
+            try { await downloadAsset(seg.customAssetUrl, assetLocalPath); }
+            catch (err) { throw new Error(customAssetError(c.order, err)); }
 
             const normalizedPath = path.join(workDir, `regen_clip_${c.order}.mp4`);
             const ffmpegPath = process.env.FFMPEG_PATH || 'ffmpeg';

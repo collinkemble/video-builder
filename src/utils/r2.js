@@ -51,9 +51,12 @@ async function uploadVideoAssets(userId, videoId, files) {
   return result;
 }
 
-/** Delete all files for a video except persona images (kept across regenerations). */
+/**
+ * Delete a video's generated files before a regeneration. Keeps what the USER provided and the
+ * new render still needs: persona images and uploaded custom-scene files (custom_*).
+ */
 async function deleteVideoAssets(userId, videoId) {
-  const keys = (await storage.listKeys(`videos/${userId}/${videoId}/`)).filter(k => !k.includes('/persona_'));
+  const keys = (await storage.listKeys(`videos/${userId}/${videoId}/`)).filter(k => !k.includes('/persona_') && !/\/custom_[^/]*$/.test(k));
   const n = await storage.deleteKeys(keys);
   console.log(`[storage] Cleaned up ${n} files for video ${userId}/${videoId}`);
   return n;
@@ -81,8 +84,44 @@ async function downloadFile(url, outputPath) {
   return outputPath;
 }
 
+/**
+ * Download an asset to a local file. Files in this app's storage are read directly from the
+ * bucket (not via the public URL), so access rules on the public URL can't block the render.
+ * A missing file throws an error with code 'ASSET_MISSING'.
+ */
+async function downloadAsset(url, outputPath) {
+  const key = storage.isStorageUrl(url) ? storage.urlToKey(url) : null;
+  if (key) {
+    try {
+      const { buffer } = await storage.getObjectBuffer(key);
+      fs.writeFileSync(outputPath, buffer);
+      return outputPath;
+    } catch (err) {
+      const missing = err && (err.name === 'NoSuchKey' || err.Code === 'NoSuchKey' || (err.$metadata && err.$metadata.httpStatusCode === 404));
+      if (missing) { const e = new Error('file is no longer in storage'); e.code = 'ASSET_MISSING'; throw e; }
+      console.warn(`[storage] Direct read of ${key} failed (${err.message}) — trying the public URL`);
+    }
+  }
+  const resp = await fetch(url);
+  if (!resp.ok) {
+    const e = new Error(`download failed (HTTP ${resp.status})`);
+    if (resp.status === 403 || resp.status === 404) e.code = 'ASSET_MISSING';
+    throw e;
+  }
+  fs.writeFileSync(outputPath, Buffer.from(await resp.arrayBuffer()));
+  return outputPath;
+}
+
+/** User-facing message for a custom scene whose file can't be loaded. */
+function customAssetError(order, err) {
+  return err && err.code === 'ASSET_MISSING'
+    ? `The uploaded file for the custom scene in section ${order} is missing. Please upload it again in that section, then regenerate.`
+    : `Could not load the uploaded file for the custom scene in section ${order}: ${err.message}`;
+}
+
 module.exports = {
   uploadFile, getPresignedUrl, deleteFile, uploadVideoAssets, deleteVideoAssets, uploadSegmentClips, downloadFile,
+  downloadAsset, customAssetError,
   // pass-throughs for callers that need the generic helper
   isStorageUrl: storage.isStorageUrl, urlToKey: storage.urlToKey, isConfigured: storage.isConfigured,
   assertNoEmbeddedImages: storage.assertNoEmbeddedImages,

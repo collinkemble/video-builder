@@ -93,10 +93,10 @@ function getQueueInfo(videoId) {
 
   let position = null;
   if (videoId) {
-    if (pipelineRunning && _currentVideoId === videoId) {
+    if (pipelineRunning && String(_currentVideoId) === String(videoId)) {
       position = 0; // Currently running
     } else {
-      const idx = pipelineQueue.findIndex(t => t.videoId === videoId);
+      const idx = pipelineQueue.findIndex(t => String(t.videoId) === String(videoId));
       if (idx >= 0) {
         position = idx + 1; // 1-based queue position
       }
@@ -485,6 +485,8 @@ async function _runPipelineImpl(videoId, userId, options = {}) {
         brollImages,
         voiceoverPath: voiceoverResult.audioPath,
         musicTrackUrl,
+        musicVolume: video.music_volume == null ? require('./musicTracks').DEFAULT_MUSIC_VOLUME : video.music_volume,
+        musicTrackId: video.music_track_id || null,
         brandName: video.brand_name || sceneData.brand_name || '',
         brandLogoUrl,
         outputDir: workDir,
@@ -593,7 +595,8 @@ async function _runPipelineImpl(videoId, userId, options = {}) {
           voiceover_url = ?,
           duration_actual = ?,
           status = 'completed',
-          error = NULL
+          error = NULL,
+          pending_regen = NULL
         WHERE id = ?`,
         [
           urls.videoUrl || null,
@@ -621,7 +624,7 @@ async function _runPipelineImpl(videoId, userId, options = {}) {
 
   } catch (err) {
     // Mark video as failed
-    await query('UPDATE videos SET status = ?, error = ? WHERE id = ?', ['failed', err.message, videoId]);
+    await query('UPDATE videos SET status = ?, error = ?, pending_regen = NULL WHERE id = ?', ['failed', err.message, videoId]);
     cleanupDir(workDir);
     throw err;
   }
@@ -1393,10 +1396,12 @@ async function regenerateSegments(videoId, userId, changes, opts = {}) {
       const audioArgs = ['-y', '-i', silentPath, '-i', voiceoverPath];
       let filterComplex;
 
-      if (musicPath && fs.existsSync(musicPath)) {
-        audioArgs.push('-i', musicPath);
+      const musicChain = require('./musicTracks').musicFilterChain(video.music_volume == null ? require('./musicTracks').DEFAULT_MUSIC_VOLUME : video.music_volume, video.music_track_id);
+      if (musicPath && fs.existsSync(musicPath) && musicChain) {
+        // Loop the music so long videos never go silent at the end
+        audioArgs.push('-stream_loop', '-1', '-i', musicPath);
         filterComplex = '[1:a]aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo[vo];' +
-          '[2:a]aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo,volume=0.12[bg];' +
+          '[2:a]' + musicChain + '[bg];' +
           '[vo][bg]amix=inputs=2:duration=first:dropout_transition=3[aout]';
         audioArgs.push('-filter_complex', filterComplex, '-map', '0:v', '-map', '[aout]');
       } else {

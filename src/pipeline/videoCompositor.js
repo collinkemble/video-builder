@@ -75,19 +75,9 @@ async function composeVideo({
         const ext = entry.isVideo ? 'mp4' : 'png';
         const localPath = path.join(workDir, `custom_asset_${entry.order}_${idx}.${ext}`);
         console.log(`[Compositor] Downloading custom asset for segment ${entry.order}: ${sp}`);
-        const resp = await fetch(sp);
-        if (!resp.ok) throw new Error(`Failed to download custom asset: HTTP ${resp.status}`);
-        // Stream to file to reduce memory pressure
-        // Use Readable.fromWeb() because Node 24 native fetch returns a Web ReadableStream
-        const { Readable } = require('stream');
-        const fileStream = fs.createWriteStream(localPath);
-        const nodeStream = Readable.fromWeb(resp.body);
-        await new Promise((resolve, reject) => {
-          nodeStream.pipe(fileStream);
-          fileStream.on('finish', resolve);
-          fileStream.on('error', reject);
-          nodeStream.on('error', reject);
-        });
+        const { downloadAsset, customAssetError } = require('../utils/r2');
+        try { await downloadAsset(sp, localPath); }
+        catch (err) { throw new Error(customAssetError(entry.order, err)); }
         entry.sourcePaths[idx] = localPath;
         if (idx === 0) entry.sourcePath = localPath;
         const dlSize = fs.statSync(localPath).size;

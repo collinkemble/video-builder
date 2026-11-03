@@ -20,7 +20,7 @@ const http = require('http');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const BUILD_VERSION = 'v201-broll-no-defects';
+const BUILD_VERSION = 'v202-music-prod';
 
 // ─── Video Proxy Base URL ───
 const VIDEO_PROXY_BASE_URL = (process.env.VIDEO_PROXY_BASE_URL || '').replace(/\/+$/, '');
@@ -3040,6 +3040,8 @@ async function start() {
     }
 
     await recoverStaleJobs();
+    // Background: copy any missing music tracks into this app's storage (first boot on a new env)
+    require('./src/pipeline/musicTracks').ensureMusicLibrary().catch(e => console.warn('[Music] Library check failed:', e.message));
   } catch (err) {
     console.error('⚠️  Database migration failed:', err.message);
     console.warn('  Features requiring a database will not work until JAWSDB_URL is configured');

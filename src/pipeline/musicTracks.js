@@ -102,7 +102,36 @@ function musicFilterChain(volume, trackId) {
   return 'aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo,volume=' + total + 'dB';
 }
 
+/**
+ * Make sure every library track is in THIS app's storage (videos/_music/). Missing tracks are
+ * copied once from the seed copy (staging's public storage by default). Safe to run on every boot.
+ */
+async function ensureMusicLibrary() {
+  const storage = require('../utils/storage');
+  if (!storage.isConfigured || !storage.isConfigured()) return;
+  const seedBase = (process.env.MUSIC_SEED_BASE_URL || 'https://d1vf0mzqz17dz6.cloudfront.net').replace(/\/$/, '');
+  const own = storage.getPublicUrl ? (storage.getPublicUrl() || '').replace(/\/$/, '') : '';
+  let copied = 0, failed = 0;
+  for (const t of LIBRARY) {
+    const key = 'videos/_music/' + t.id + '.mp3';
+    try {
+      if (await storage.headObject(key)) continue;
+      if (own && own === seedBase) { failed++; console.warn('[Music] ' + key + ' missing and this app is the seed source'); continue; }
+      const resp = await fetch(seedBase + '/' + key);
+      if (!resp.ok) throw new Error('HTTP ' + resp.status);
+      const buf = Buffer.from(await resp.arrayBuffer());
+      await storage.putObject(key, buf, 'audio/mpeg', { contentLength: buf.length, cacheControl: 'public, max-age=31536000, immutable' });
+      copied++;
+    } catch (err) {
+      failed++;
+      console.warn('[Music] Could not add ' + key + ': ' + err.message);
+    }
+  }
+  console.log('[Music] Library check: ' + (LIBRARY.length - failed) + '/' + LIBRARY.length + ' tracks available' + (copied ? ' (' + copied + ' copied in)' : ''));
+}
+
 module.exports = {
+  ensureMusicLibrary,
   getMusicTracks, getTrack, getMusicTrackUrl, creditFor, musicGainDb, musicFilterChain,
   DEFAULT_TRACK_ID, DEFAULT_MUSIC_VOLUME,
 };

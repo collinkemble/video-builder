@@ -18,23 +18,18 @@ function getGenAI() {
 // ════════════════════════════════════════════════════════════════
 
 // Rules for clips WITH persona reference image — person is OK since the model matches them
-const VIDEO_PROMPT_RULES_WITH_PERSONA = `Style: Cinematic b-roll footage. Smooth, slow camera movement. Warm natural lighting. Shallow depth of field. High production value.
-CRITICAL RULES YOU MUST FOLLOW:
-1. ABSOLUTELY NO screens of any kind — no phone screens, laptop screens, tablet screens, computer monitors, TV screens, smartwatch screens, or any digital display showing content.
-2. ABSOLUTELY NO close-ups of devices — do not show any device screen from an angle where you can see what is displayed.
-3. DO NOT generate images of people looking at screens, typing on keyboards, or using touchscreens in close-up.
-4. ABSOLUTELY NO TALKING — the person must NEVER be speaking, talking to camera, mouthing words, lip-syncing, or moving their lips at any point. Their mouth must stay CLOSED or in a natural resting smile. Show them in SILENT lifestyle moments only — walking, looking, enjoying, contemplating. This is b-roll footage with a voiceover, NOT a talking-head video. If you show moving lips the clip is unusable.
-5. Feature the person from the reference image as the MAIN character. Show them in lifestyle moments: walking, shopping, enjoying products, in beautiful environments. IMPORTANT: Dress the person in clothing appropriate for the scene — if they are exercising, put them in athletic wear; if at a formal event, put them in formal attire; if outdoors hiking, put them in outdoor gear. Do NOT keep them in whatever outfit they are wearing in the reference image if it does not match the activity. Their face and identity stay the same, but their wardrobe MUST fit the scene.
-6. Every surface in the scene must be COMPLETELY CLEAN AND SMOOTH. This is the MOST IMPORTANT rule. All glasses must be perfectly plain, smooth, transparent glass — like simple kitchen tumblers or plain pint glasses you'd buy unprinted from a store. All bottles must be completely bare glass with zero printing or paper on them. All packaging must be plain solid single colors. All clothing must be solid colors. All storefronts and signs must be out of focus or show abstract shapes only. Think of this as a "stock footage" world where no brands exist — every object is a generic, unprinted, clean version of itself.
-7. Slow cinematic motion only — no rapid movement.
-8. ABSOLUTELY NO morphing between people — the person must remain the SAME throughout. Do NOT transition one person into a different person.
-9. Show only ONE person (the reference person) per shot. Never add random other people.
-10. NO delivery trucks, shipping vehicles, or logistics imagery.
-11. ONE single continuous shot — no scene cuts, no edits, no jumps to a different location or angle.
-12. NO transitions of any kind — no dissolves, crossfades, fades to or from black, or blending between scenes. The whole clip happens in ONE place.
-13. Natural forward motion only — time always moves forward. People walk FORWARD in the direction they are facing and never walk or move backwards. Nothing is reversed, rewound, or played in slow motion.
-14. The person appears exactly ONCE in the frame — never two copies of them, no ghosting, no doubles, no reflections of a second version of them.
-15. ZERO readable text anywhere in the frame — no letters, words, numbers or logos on store signs, storefronts, awnings, windows, posters, packaging, labels, clothing, vehicles or screens. Signs and awnings are completely blank; frame shots so signage is out of view or fully out of focus.`;
+// Short and positively worded on purpose. The old 13-rule list ("ABSOLUTELY NO morphing between people",
+// "do NOT transition one person into a different person", outfit-change orders…) next to a face photo
+// tripped Google's input filter ("Input blocked") on many otherwise harmless scenes.
+const VIDEO_PROMPT_RULES_WITH_PERSONA = `Style: cinematic lifestyle b-roll — smooth, slow camera movement, warm natural light, shallow depth of field, high production value.
+Requirements:
+- One continuous shot in one place from start to finish, with no cuts, fades or dissolves.
+- The person from the reference image is the only person in the shot, the same person the whole time.
+- They are silent: mouth closed or a soft natural smile, never speaking.
+- Natural forward motion at normal speed.
+- No phones, laptops or screens showing content.
+- Every sign, storefront, package, label and garment is plain, with no readable text or logos.
+- No delivery trucks or shipping imagery.`;
 
 // Rules for clips WITHOUT persona reference — NO PEOPLE to avoid random strangers
 const VIDEO_PROMPT_RULES_NO_PERSONA = `Style: Cinematic b-roll footage. Smooth, slow camera movement. Warm natural lighting. Shallow depth of field. High production value.
@@ -339,11 +334,13 @@ function classifyOmniError(err) {
 async function generateBrollVideo({ description, brandName, brandDescription = '', personaDescription = '', outputDir, segmentType = '', segmentChannel = '', personaImageUrl = null, personaMode = null, personaLook = '' }) {
   let contextHint = '';
   if (segmentType === 'intro') {
-    contextHint = 'This is the OPENING shot of the video — use a wide, establishing cinematic shot that sets the mood. ';
+    contextHint = 'This is the opening scene of the video — a wide, establishing cinematic view that sets the mood. ';
   } else if (segmentType === 'outro') {
-    contextHint = 'This is the CLOSING shot of the video — use a warm, conclusive cinematic shot that feels like a satisfying ending. ';
+    // Wording matters with a face photo: "last shot", "ending", "conclusive" were blocked by Google's filter
+    contextHint = 'This is the final scene of the video — a warm, calm, inviting wide view. ';
   } else if (segmentType === 'transition') {
-    contextHint = 'This is a TRANSITION shot bridging two scenes' + (segmentChannel ? ' (coming from: ' + segmentChannel + ')' : '') + ' — show movement, travel, or passage of time. ';
+    // Avoid "passage of time" with a face reference — reads as aging a real person and gets blocked
+    contextHint = 'This is a short connecting shot between scenes — gentle camera movement through the setting. ';
   }
 
   const mode = personaMode || (personaImageUrl ? 'photo' : 'none');
@@ -355,7 +352,10 @@ async function generateBrollVideo({ description, brandName, brandDescription = '
   const noTalking = 'CRITICAL: The person must NOT be talking or moving their lips at any point — this is silent b-roll with a voiceover, not a talking-head shot. ';
   const wardrobe = 'ADAPT their clothing to the scene — athletic wear for exercise, formal wear for formal events, casual for casual. Their IDENTITY stays the same; their WARDROBE fits the activity. ';
   if (usePhoto) {
-    personaPromptHint = 'IMPORTANT: The main character is the person shown in <IMAGE_REF_0>. Match their face, hair, skin tone, body type, and facial features exactly. ' + wardrobe + noTalking;
+    // Softer than "match their face … exactly", which (with some scene wording) triggered Google's likeness filter
+    // No outfit-change instructions with a photo: asking Google to change a real-looking person's clothing
+    // ("ADAPT their clothing…", "do NOT keep their outfit") is what its filter blocked.
+    personaPromptHint = 'IMPORTANT: The main character is the person shown in <IMAGE_REF_0>; keep them recognizably the same person throughout. ' + noTalking;
   } else if (useDescribed) {
     personaPromptHint = 'IMPORTANT: The main character is a fictional person with this exact look, kept identical in every shot: ' + personaLook + ' ' + wardrobe + noTalking;
   }
@@ -601,9 +601,9 @@ async function generateBroll({ description, brandName, brandDescription = '', pe
   let transientCount = 0;
 
   const minimal = segmentType === 'intro'
-    ? 'Beautiful cinematic opening shot. Slow camera movement across a stunning modern environment. Warm golden lighting.'
+    ? 'Beautiful cinematic opening scene. Slow camera movement across a stunning modern environment. Warm golden lighting.'
     : segmentType === 'outro'
-    ? 'Warm cinematic closing shot. Slow pull-back camera movement. Beautiful golden hour lighting.'
+    ? 'Warm cinematic final scene. Slow pull-back camera movement. Beautiful golden hour lighting.'
     : 'Smooth cinematic lifestyle footage. Slow camera movement. Beautiful lighting. ' + description.substring(0, 80) + '.';
 
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {

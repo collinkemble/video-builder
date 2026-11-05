@@ -201,6 +201,15 @@ async function downloadOmniFile(uri) {
  * @param {string|Array} input - prompt text, or [image part, text part] for a persona reference
  * @param {string} [previousInteractionId] - set to extend an earlier clip
  */
+// Only one large video response is decoded at a time: each response holds the clip several times
+// over in memory (JSON text, base64 string, decoded buffer). Parallel decoding exhausted the dyno.
+let _decodeChain = Promise.resolve();
+function oneAtATime(fn) {
+  const run = _decodeChain.then(fn, fn);
+  _decodeChain = run.catch(() => {});
+  return run;
+}
+
 async function omniGenerate({ input, previousInteractionId = null, label = 'Omni' }) {
   const body = { model: omniModel(), input, response_format: OMNI_RESPONSE_FORMAT };
   if (previousInteractionId) body.previous_interaction_id = previousInteractionId;
@@ -209,7 +218,11 @@ async function omniGenerate({ input, previousInteractionId = null, label = 'Omni
     fetch(`${OMNI_BASE}/interactions`, { method: 'POST', headers: omniHeaders(), body: JSON.stringify(body) }),
     OMNI_CALL_TIMEOUT_MS, label
   );
-  const json = await raceTimeout(resp.json(), 120000, `${label} response`).catch(() => ({}));
+  return oneAtATime(() => readOmniResponse(resp, label, started));
+}
+
+async function readOmniResponse(resp, label, started) {
+  let json = await raceTimeout(resp.json(), 120000, `${label} response`).catch(() => ({}));
   if (!resp.ok) {
     const msg = json?.error?.message || JSON.stringify(json).slice(0, 300);
     const err = new Error(`${label} HTTP ${resp.status}: ${msg}`);
@@ -219,9 +232,12 @@ async function omniGenerate({ input, previousInteractionId = null, label = 'Omni
   const part = findVideoPart(json);
   if (!part) throw new Error(`${label}: response contained no video (${JSON.stringify(json).slice(0, 200)})`);
   const buffer = part.data ? Buffer.from(part.data, 'base64') : await downloadOmniFile(part.uri);
+  part.data = null; // free the base64 copy right away
   const outTokens = json?.usage?.total_output_tokens;
   console.log(`[B-Roll Omni] ${label}: ok in ${Math.round((Date.now() - started) / 1000)}s (${(buffer.length / 1024 / 1024).toFixed(1)}MB${outTokens ? `, ${outTokens} output tokens` : ''})`);
-  return { buffer, interactionId: json.id || null };
+  const interactionId = json.id || null;
+  json = null;
+  return { buffer, interactionId };
 }
 
 /** Download the persona photo (public URL, then presigned-URL fallback). Returns { base64, mimeType } or null. */
@@ -908,7 +924,7 @@ async function generateAllBroll(segments, brandName, outputDir, onProgress, pers
   const stats = newBrollStats();
   const plan = segments.map(seg => ({ seg, clipsNeeded: calcClipsNeeded(seg, timestamps, allSegments) }));
   const totalSegments = segments.length;
-  console.log('[B-Roll] Generating b-roll for ' + totalSegments + ' section(s) with ' + omniModel() + ' (≤30s continuous shots, max 5 in parallel)' + (personaImageUrl ? ' with persona photo' : '') + '...');
+  console.log('[B-Roll] Generating b-roll for ' + totalSegments + ' section(s) with ' + omniModel() + ' (≤30s continuous shots, ' + Math.max(1, Math.min(5, Number(process.env.BROLL_PARALLEL || 2))) + ' sections at a time)' + (personaImageUrl ? ' with persona photo' : '') + '...');
 
   const results = new Array(plan.length).fill(null);
   let completed = 0;
@@ -936,7 +952,8 @@ async function generateAllBroll(segments, brandName, outputDir, onProgress, pers
   const BROLL_STAGE_TIMEOUT_MS = 40 * 60 * 1000;
   let timedOut = false;
   const workers = [];
-  for (let w = 0; w < Math.min(5, plan.length); w++) {
+  const PARALLEL = Math.max(1, Math.min(5, Number(process.env.BROLL_PARALLEL || 2)));
+  for (let w = 0; w < Math.min(PARALLEL, plan.length); w++) {
     if (w > 0) await new Promise(r => setTimeout(r, 2000));
     workers.push(worker());
   }

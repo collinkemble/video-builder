@@ -87,7 +87,14 @@ const REVIEW_PROMPT = 'You are a strict video quality reviewer for silent b-roll
   '"ok" is true only if there are no problems. Do not report minor softness, lighting changes, or normal camera movement.';
 
 let _ai = null;
-async function geminiReview(filePath) {
+// One review at a time: each sends the whole clip (base64) and holds it in memory.
+let _reviewChain = Promise.resolve();
+function geminiReview(filePath) {
+  const run = _reviewChain.then(() => geminiReviewNow(filePath), () => geminiReviewNow(filePath));
+  _reviewChain = run.catch(() => {});
+  return run;
+}
+async function geminiReviewNow(filePath) {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) return [];
   if (!_ai) _ai = new GoogleGenAI({ apiKey });

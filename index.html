@@ -126,7 +126,7 @@
       border-radius: 999px; text-transform: uppercase; letter-spacing: 0.04em;
     }
     .status-draft { background: #F3F4F6; color: #6B7280; }
-    .status-scripting, .status-voiceover, .status-capturing, .status-compositing, .status-uploading {
+    .status-scripting, .status-voiceover, .status-capturing, .status-broll, .status-compositing, .status-uploading {
       background: #FEF3C7; color: #92400E;
     }
     .status-queued { background: #EDE9FE; color: #5B21B6; }
@@ -1470,7 +1470,7 @@ function showToast(msg, duration = 3000) {
 function fmtDate(d) { return d ? new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—'; }
 
 function statusText(s) {
-  const map = { draft: 'Draft', queued: 'Queued', scripting: 'Scripting', voiceover: 'Voiceover', capturing: 'Capturing', compositing: 'Compositing', uploading: 'Uploading', completed: 'Completed', failed: 'Failed' };
+  const map = { draft: 'Draft', queued: 'Queued', scripting: 'Scripting', voiceover: 'Voiceover', capturing: 'Capturing', broll: 'B-Roll', compositing: 'Compositing', uploading: 'Uploading', completed: 'Completed', failed: 'Failed' };
   return map[s] || s;
 }
 
@@ -1575,7 +1575,7 @@ async function loadVideos() {
 
     grid.innerHTML = videos.map((v) => {
       const safeName = esc(v.name).replace(/'/g, "\\'");
-      const isProcessing = ['queued','scripting','voiceover','capturing','compositing','uploading'].includes(v.status);
+      const isProcessing = ['queued','scripting','voiceover','capturing','broll','compositing','uploading'].includes(v.status);
       const thumbStyle = v.thumbnail_url
         ? `background-image: url('${v.thumbnail_url}'); background-size: cover; background-position: center;`
         : 'background: linear-gradient(135deg, #032D60, #0176D3);';
@@ -1753,7 +1753,7 @@ async function viewVideo(id, skipPush) {
 
     // Generate button state — always clickable so user can force-restart stuck pipelines
     const genBtn = document.getElementById('generate-btn');
-    const isProcessing = ['queued','scripting','voiceover','capturing','compositing','uploading'].includes(video.status);
+    const isProcessing = ['queued','scripting','voiceover','capturing','broll','compositing','uploading'].includes(video.status);
     genBtn.disabled = false;
     genBtn.textContent = video.status === 'queued' ? '⏳ Queued (click to restart)' : (isProcessing ? '⚠️ Pipeline Running (click to restart)' : (video.status === 'completed' ? '🔄 Regenerate All Sections' : '🎬 Generate Video'));
 
@@ -3548,7 +3548,7 @@ async function pollStatus(videoId) {
     }
 
     const video = data.video;
-    if (video && String(videoId) === String(currentVideoId) && ['queued','scripting','voiceover','capturing','compositing','uploading'].includes(video.status)) {
+    if (video && String(videoId) === String(currentVideoId) && ['queued','scripting','voiceover','capturing','broll','compositing','uploading'].includes(video.status)) {
       document.getElementById('pipeline-progress').classList.remove('hidden');
     }
     if (video) {

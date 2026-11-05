@@ -20,7 +20,7 @@ const http = require('http');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const BUILD_VERSION = 'v202-music-prod';
+const BUILD_VERSION = 'v203-broll-recovery';
 
 // ─── Video Proxy Base URL ───
 const VIDEO_PROXY_BASE_URL = (process.env.VIDEO_PROXY_BASE_URL || '').replace(/\/+$/, '');
@@ -1289,7 +1289,7 @@ app.post('/api/videos/:id/generate', async (req, res) => {
     const video = rows[0];
     const ownerId = video.user_id;
     // Allow force-restart if stuck (client sends force=true)
-    const isProcessing = ['scripting', 'voiceover', 'capturing', 'compositing', 'uploading'].includes(video.status);
+    const isProcessing = ['scripting', 'voiceover', 'capturing', 'broll', 'compositing', 'uploading'].includes(video.status);
     const q = getQueueInfo(req.params.id);
     const actuallyRunning = q.position !== null; // running or waiting in this server's queue
     if ((isProcessing || (video.status === 'queued' && actuallyRunning)) && !req.body.force) {
@@ -2889,7 +2889,7 @@ async function recoverStaleJobs() {
   ).catch(() => {});
   try {
     const stale = await query(
-      "SELECT id, name, status, user_id, segment_assets, voiceover_url, video_url, narration_script, pending_regen FROM videos WHERE status IN ('queued', 'scripting', 'voiceover', 'capturing', 'compositing', 'uploading') OR pending_regen IS NOT NULL"
+      "SELECT id, name, status, user_id, segment_assets, voiceover_url, video_url, narration_script, pending_regen FROM videos WHERE status IN ('queued', 'scripting', 'voiceover', 'capturing', 'broll', 'compositing', 'uploading') OR pending_regen IS NOT NULL"
     );
     if (stale.length === 0) return;
     console.log(`[Recovery] Found ${stale.length} interrupted video(s).`);
@@ -3159,7 +3159,7 @@ async function start() {
     // Mark any currently-running pipeline video so recovery knows it was interrupted cleanly
     try {
       const stale = await query(
-        "SELECT id, name, status FROM videos WHERE status IN ('queued', 'scripting', 'voiceover', 'capturing', 'compositing', 'uploading')"
+        "SELECT id, name, status FROM videos WHERE status IN ('queued', 'scripting', 'voiceover', 'capturing', 'broll', 'compositing', 'uploading')"
       );
       for (const v of stale) {
         console.log(`[Shutdown] Marking video ${v.id} ("${v.name}") as interrupted (was: ${v.status}).`);

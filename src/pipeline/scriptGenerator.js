@@ -25,13 +25,21 @@ function getGenAI() {
  * @param {string} params.scriptSynopsis - User-written video synopsis (only used when no demo script is provided)
  * @returns {Promise<object>} Structured narration timeline
  */
-async function generateScript({ brandName, brandDescription, personaName, personaDescription, synopsis, scenes, durationTarget = 180, language = 'English', scriptWriterData = null, customInstructions = '', scriptSynopsis = '' }) {
+async function generateScript({ brandName, brandDescription, personaName, personaDescription, synopsis, scenes, durationTarget = 180, language = 'English', scriptWriterData = null, customInstructions = '', scriptSynopsis = '', cxSummary = '' }) {
   const ai = getGenAI();
   const primaryModel = process.env.GEMINI_MODEL || 'gemini-3.7-flash';
 
-  const sceneList = scenes.map((s, i) =>
-    `  ${i + 1}. Scene ID ${s.id} — Channel: ${s.channel}${s.content_summary ? ` — ${s.content_summary}` : ''}`
-  ).join('\n');
+  // Each scene carries what the demo script says happens in that channel (when matched), so the
+  // narration follows the script instead of inventing events from the scene name alone.
+  const sceneList = scenes.map((s, i) => {
+    let line = `  ${i + 1}. Scene ID ${s.id} — Channel: ${s.channel}${s.content_summary ? ` — ${s.content_summary}` : ''}`;
+    if (s.scriptSection && Array.isArray(s.scriptSection.talk) && s.scriptSection.talk.length) {
+      line += `\n     WHAT HAPPENS HERE (demo script, "${s.scriptSection.title}" section — narrate THESE events, in this order):\n` +
+        s.scriptSection.talk.map(t => `       - ${t}`).join('\n');
+    }
+    return line;
+  }).join('\n');
+  const scenesHaveScript = scenes.some(s => s.scriptSection && s.scriptSection.talk && s.scriptSection.talk.length);
 
   // Build Script Writer reference section if we have data from the Script Writer app
   let scriptWriterSection = '';
@@ -55,6 +63,19 @@ async function generateScript({ brandName, brandDescription, personaName, person
       if (typeof sd === 'string') swParts.push(`REFERENCE SCRIPT:\n${sd}`);
       if (sd.body) swParts.push(`REFERENCE SCRIPT:\n${sd.body}`);
       if (sd.content) swParts.push(`REFERENCE SCRIPT:\n${sd.content}`);
+      // Script Writer's current format: rows of { type: chapter|section|channel|script, text, talk, visual }.
+      // Previously ignored entirely — so the demo script never reached the narration.
+      if (Array.isArray(sd.rows) && sd.rows.length) {
+        if (sd.synopsis) swParts.push(`SYNOPSIS: ${sd.synopsis}`);
+        if (sd.cx_summary) swParts.push(`CUSTOMER JOURNEY (in order): ${sd.cx_summary}`);
+        const lines = [];
+        for (const r of sd.rows) {
+          if (!r) continue;
+          if (r.type === 'chapter' || r.type === 'section' || r.type === 'channel') lines.push(`\n[${String(r.text || '').trim()}]`);
+          else if (r.type === 'script' && r.talk) lines.push(`- ${String(r.talk).trim()}`);
+        }
+        if (lines.length) swParts.push(`PRESENTER TALK TRACK (the story, step by step):${lines.join('\n')}`);
+      }
     }
     const scriptSource = scriptWriterData.source === 'upload' ? 'uploaded by the user' : 'from Script Writer';
     if (swParts.length > 0) {
@@ -63,8 +84,11 @@ async function generateScript({ brandName, brandDescription, personaName, person
   }
 
   const scriptWriterInstruction = scriptWriterData
-    ? `\n- IMPORTANT: A demo script has been provided (${scriptWriterData.source === 'upload' ? 'uploaded by the user' : 'from Script Writer'}). Use it as the primary narrative basis — adapt its language, tone, key messages, and story arc to fit the video timeline. Do NOT ignore it.`
+    ? `\n- IMPORTANT: A demo script has been provided (${scriptWriterData.source === 'upload' ? 'uploaded by the user' : 'from Script Writer'}). Use it as the primary narrative basis — adapt its language, tone, key messages, and story arc to fit the video timeline. Do NOT ignore it.` +
+      `\n- FOLLOW THE DEMO SCRIPT'S STORY EXACTLY: each scene's narration must describe what the demo script says happens in that channel${scenesHaveScript ? ' (see "WHAT HAPPENS HERE" under each scene)' : ''}, in the same order and with the same key moments (e.g. what she looks at, asks, buys, books, receives). Rewrite the presenter talk track as third-person story narration — no presenter phrases like "today we'll see" or "click to". Do NOT invent events, motivations, offers, or channels that are not in the demo script, and do NOT move an event to a different scene.`
     : '';
+  const journeySection = cxSummary && !(scriptWriterData && scriptWriterData.script_data)
+    ? `\nCUSTOMER JOURNEY (in order): ${cxSummary}` : '';
 
   // User-written synopsis — only used when there is no demo script (a video uses one or the other)
   const userSynopsis = !scriptWriterData && typeof scriptSynopsis === 'string' ? scriptSynopsis.trim() : '';
@@ -89,9 +113,9 @@ BRAND: ${brandName}
 ${brandDescription ? `BRAND DESCRIPTION: ${brandDescription}` : ''}
 ${personaName ? `PERSONA: ${personaName}` : ''}
 ${personaDescription ? `PERSONA BACKGROUND: ${personaDescription}` : ''}
-${synopsis ? `DEMO STORY SYNOPSIS: ${synopsis}` : ''}${scriptWriterSection}${userSynopsisSection}${customInstructionsSection}
+${synopsis ? `DEMO STORY SYNOPSIS: ${synopsis}` : ''}${journeySection}${scriptWriterSection}${userSynopsisSection}${customInstructionsSection}
 
-SCENES (in order):
+SCENES (in this exact order — keep scene segments in this order):
 ${sceneList}
 
 Write a narration script that tells a connected customer experience story. The narration should:

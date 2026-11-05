@@ -475,10 +475,11 @@
               <option value="300">~5 minutes</option>
             </select>
           </div>
-          <div>
+          <div class="min-w-0">
             <label class="block text-xs font-bold mb-1" style="color: #032D60;">Background Music</label>
-            <div class="flex items-center gap-2">
-              <select id="edit-music" class="flex-1 px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm">
+            <div class="flex items-center gap-2 min-w-0">
+              <!-- min-width:0 lets the select shrink; otherwise its longest option widens the whole section -->
+              <select id="edit-music" style="min-width: 0; max-width: 100%; text-overflow: ellipsis;" class="flex-1 w-0 px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm">
                 <option value="none">None</option>
               </select>
               <button id="music-preview-btn" type="button" title="Preview track" onclick="toggleMusicPreview()" class="flex items-center justify-center w-9 h-9 rounded-lg border border-gray-300 hover:bg-gray-100 transition-colors" style="min-width: 36px; opacity: 0.35; pointer-events: none;">
@@ -491,7 +492,7 @@
               <input id="edit-music-volume" type="range" min="0" max="100" step="5" value="30" class="flex-1" style="accent-color: #0176D3;" oninput="onMusicVolumeInput()">
               <span id="music-volume-label" style="font-size: 11px; color: #6B7280; min-width: 82px; text-align: right;">30 · Default</span>
             </div>
-            <div id="music-credit-wrap" style="display:none; margin-top: 6px; font-size: 11px; color: #6B7280; line-height: 1.4;">
+            <div id="music-credit-wrap" style="display:none; margin-top: 6px; font-size: 11px; color: #6B7280; line-height: 1.4; overflow-wrap: anywhere;">
               <span id="music-credit-text"></span>
               <button type="button" onclick="copyMusicCredit()" id="music-credit-copy" style="margin-left: 4px; color: #0176D3; font-weight: 600; background: none; border: none; cursor: pointer; padding: 0;">Copy credit</button>
               <div style="margin-top: 2px;">This credit is added to the public player page automatically. Include it wherever you share the downloaded video.</div>

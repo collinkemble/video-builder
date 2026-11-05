@@ -399,9 +399,9 @@ async function _runPipelineImpl(videoId, userId, options = {}) {
         if (seg.type === 'intro') {
           seg.brollDescription = `Wide cinematic establishing shot of a beautiful environment related to ${brandDesc}. Warm, inviting atmosphere.`;
         } else if (seg.type === 'outro') {
-          seg.brollDescription = `Warm, inspiring cinematic closing shot — golden hour lighting, beautiful environment related to ${brandDesc}. Satisfying, uplifting mood.`;
+          seg.brollDescription = `Warm, inspiring cinematic final scene — golden hour lighting, beautiful environment related to ${brandDesc}. Satisfying, uplifting mood.`;
         } else {
-          seg.brollDescription = `Cinematic transition shot — atmospheric environment related to ${brandDesc}, passage of time.`;
+          seg.brollDescription = `Cinematic transition shot — atmospheric environment related to ${brandDesc}, gentle camera movement.`;
         }
         seg.visualType = 'broll';
         console.log(`[Pipeline] Added missing brollDescription to ${seg.type} segment (order ${seg.order})`);

@@ -2839,7 +2839,7 @@ async function regenerateWithNewSection() {
     }
 
     // Start polling & update status badge
-    startStatusPolling(currentVideoId);
+    startRebuildPolling(currentVideoId);
     const badge = document.getElementById('detail-status-badge');
     if (badge) {
       badge.className = 'status-badge status-compositing';
@@ -3458,7 +3458,7 @@ async function startSegmentRegeneration(changes) {
     }
 
     // Start polling & update status badge
-    startStatusPolling(currentVideoId);
+    startRebuildPolling(currentVideoId);
     const badge = document.getElementById('detail-status-badge');
     badge.className = 'status-badge status-compositing';
     badge.textContent = 'Editing...';
@@ -3518,6 +3518,16 @@ async function runSmartEdit() {
 const STEP_LABELS = { script: '📝 Script', voiceover: '🎙️ Voiceover', capture: '📸 Capture', broll: '🖼️ B-Roll', composite: '🎬 Composite', upload: '☁️ Upload' };
 const STEP_ORDER = ['script', 'voiceover', 'capture', 'broll', 'composite', 'upload'];
 
+// After starting a rebuild of a finished video (section edit, music re-mix) the server takes a moment
+// to mark it as in progress. Until it does, keep showing the "Preparing" panel instead of treating the
+// still-"completed" status as done (which hid the pipeline until a manual refresh).
+function startRebuildPolling(videoId) {
+  window._awaitingRebuild = { id: String(videoId), since: Date.now(), seen: false };
+  document.getElementById('pipeline-progress').classList.remove('hidden');
+  renderPipelineSteps([]);
+  startStatusPolling(videoId);
+}
+
 function startStatusPolling(videoId) {
   stopStatusPolling();
   document.getElementById('pipeline-progress').classList.remove('hidden');
@@ -3535,6 +3545,19 @@ async function pollStatus(videoId) {
     const resp = await fetch(`/api/videos/${videoId}/status?email=${encodeURIComponent(email)}`);
     if (!resp.ok) return;
     const data = await resp.json();
+
+    const aw = window._awaitingRebuild;
+    if (aw && aw.id === String(videoId)) {
+      const st = data.video && data.video.status;
+      const inProgress = ['queued','scripting','voiceover','capturing','broll','compositing','uploading'].includes(st);
+      if (inProgress) aw.seen = true;
+      else if (!aw.seen && Date.now() - aw.since < 45000) {
+        // Rebuild not picked up yet — keep the panel up and keep checking
+        document.getElementById('pipeline-progress').classList.remove('hidden');
+        renderPipelineSteps([]);
+        return;
+      } else window._awaitingRebuild = null;
+    }
 
     renderPipelineSteps(data.jobs || []);
 
@@ -4603,7 +4626,7 @@ async function applyMusicChanges() {
     const data = await resp.json().catch(() => ({}));
     if (!resp.ok) throw new Error(data.error || 'Could not start the re-mix');
     document.getElementById('music-apply-wrap').style.display = 'none';
-    startStatusPolling(currentVideoId);
+    startRebuildPolling(currentVideoId);
     const badge = document.getElementById('detail-status-badge');
     if (badge) { badge.className = 'status-badge status-compositing'; badge.textContent = 'Updating music...'; }
   } catch (err) {

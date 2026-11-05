@@ -20,7 +20,7 @@ const http = require('http');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const BUILD_VERSION = 'v206-music-jazz-pop';
+const BUILD_VERSION = 'v207-rebuild-progress';
 
 // ─── Video Proxy Base URL ───
 const VIDEO_PROXY_BASE_URL = (process.env.VIDEO_PROXY_BASE_URL || '').replace(/\/+$/, '');

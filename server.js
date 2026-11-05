@@ -20,7 +20,7 @@ const http = require('http');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const BUILD_VERSION = 'v208-source-links';
+const BUILD_VERSION = 'v209-narration-follows-script';
 
 // ─── Video Proxy Base URL ───
 const VIDEO_PROXY_BASE_URL = (process.env.VIDEO_PROXY_BASE_URL || '').replace(/\/+$/, '');
@@ -1179,53 +1179,17 @@ app.post('/api/videos/:id/generate-script', async (req, res) => {
     const video = rows[0];
     const sceneData = typeof video.scene_data === 'string' ? JSON.parse(video.scene_data || '{}') : (video.scene_data || {});
 
-    // Order scenes using CX Summary keyword matching (same logic as orchestrator.js)
-    const rawScenes = (sceneData.scenes || []).slice();
-    const cxSummary = sceneData.cx_summary || '';
-    let scenes;
-    if (cxSummary && rawScenes.length > 1) {
-      const cxLower = cxSummary.toLowerCase();
-      const channelKeywords = {
-        insta: ['instagram', 'insta'],
-        site: ['website', 'e-commerce', 'ecommerce', 'web site', 'online'],
-        email: ['email', 'e-mail'],
-        imessage: ['imessage', 'i-message', 'sms', 'text message', 'text '],
-        retailcloud: ['retail cloud', 'in-store', 'in store', 'store visit', ' pos ', ' pos,', 'associate', 'clienteling'],
-        autocloud: ['auto cloud', 'autocloud', 'dealership', 'showroom'],
-        slack: ['slack'],
-        whatsapp: ['whatsapp', 'whats app'],
-        tiktok: ['tiktok', 'tik tok'],
-        facebook: ['facebook'],
-        x: ['twitter', ' x '],
-        sms: ['sms'],
-        loyalty: ['loyalty'],
-        portal: ['portal', 'self-service'],
-      };
-      const scenesWithPos = rawScenes.map(s => {
-        const ch = (s.channel || s.channel_type || '').toLowerCase();
-        let minPos = Infinity;
-        const keywords = channelKeywords[ch] || [ch];
-        for (const kw of keywords) {
-          const pos = cxLower.indexOf(kw);
-          if (pos !== -1 && pos < minPos) minPos = pos;
-        }
-        return { scene: s, pos: minPos };
-      });
-      const matched = scenesWithPos.filter(sp => sp.pos !== Infinity).length;
-      if (matched >= rawScenes.length / 2) {
-        scenesWithPos.sort((a, b) => {
-          if (a.pos === Infinity && b.pos === Infinity) return 0;
-          if (a.pos === Infinity) return 1;
-          if (b.pos === Infinity) return -1;
-          return a.pos - b.pos;
-        });
-        scenes = scenesWithPos.map(sp => sp.scene);
-      } else {
-        scenes = rawScenes;
-      }
-    } else {
-      scenes = rawScenes;
-    }
+    // Journey order: demo script's channel sections > journey summary > PocketSIC creation order.
+    // (Same helper as the pipeline, so the narration and the video always agree.)
+    const scriptWriterData = video.scriptwriter_data
+      ? (typeof video.scriptwriter_data === 'string' ? JSON.parse(video.scriptwriter_data) : video.scriptwriter_data)
+      : null;
+    const ordered = require('./src/pipeline/sceneOrder').orderScenes(sceneData.scenes || [], {
+      cxSummary: sceneData.cx_summary || (scriptWriterData && scriptWriterData.cx_summary) || '',
+      scriptWriterData,
+    });
+    const scenes = ordered.scenes;
+    console.log(`[Script] Video ${req.params.id}: scene order by ${ordered.method}: ${scenes.map(s => s.channel || s.channel_type).join(' > ')}`);
 
     if (scenes.length === 0) {
       return res.status(400).json({ error: 'No scenes found. Import a PocketSIC project first.' });
@@ -1236,10 +1200,6 @@ app.post('/api/videos/:id/generate-script', async (req, res) => {
     res.json({ success: true, status: 'scripting', message: 'Script generation started' });
 
     // Run script generation in background (do NOT await)
-    const scriptWriterData = video.scriptwriter_data
-      ? (typeof video.scriptwriter_data === 'string' ? JSON.parse(video.scriptwriter_data) : video.scriptwriter_data)
-      : null;
-
     generateScript({
       brandName: video.brand_name || sceneData.brand_name || 'Brand',
       brandDescription: sceneData.brand_description || '',
@@ -1250,7 +1210,9 @@ app.post('/api/videos/:id/generate-script', async (req, res) => {
         id: s.id || s.sceneId,
         channel: s.channel || s.channel_type || '',
         content_summary: s.content_summary || s.description || s.name || '',
+        scriptSection: s.scriptSection || null,
       })),
+      cxSummary: sceneData.cx_summary || (scriptWriterData && scriptWriterData.cx_summary) || '',
       durationTarget: video.duration_target || 180,
       language: video.language || 'English',
       scriptWriterData,

@@ -31,13 +31,24 @@ const LIBRARY = [
   { id: 'backbay-lounge', name: 'Backbay Lounge', category: 'Jazz & Lounge', mood: 'Smooth, upscale — piano & guitar', duration: 267 },
   { id: 'bossa-antigua', name: 'Bossa Antigua', category: 'Jazz & Lounge', mood: 'Relaxed bossa nova — guitar', duration: 283 },
   { id: 'lobby-time', name: 'Lobby Time', category: 'Jazz & Lounge', mood: 'Light, polished — vibraphone & piano', duration: 193 },
-  // Classical & luxury (Kevin MacLeod performances, CC BY 4.0). title = name used in the credit line
-  { id: 'gymnopedie-no-1', name: 'Gymnopedie No. 1', category: 'Classical & Luxury', mood: 'Serene, refined — solo piano (Satie)', duration: 187 },
-  { id: 'canon-in-d', name: 'Canon in D Major', category: 'Classical & Luxury', mood: 'Timeless, graceful — violin, harp & bass (Pachelbel)', duration: 356 },
-  { id: 'prelude-in-c', name: 'Prelude in C', title: 'Prelude in C - BWV 846', category: 'Classical & Luxury', mood: 'Flowing, poised — solo piano (Bach)', duration: 179 },
-  { id: 'brandenburg-no-4', name: 'Brandenburg Concerto No. 4', title: 'Brandenburg Concerto No. 4 in G, Movement I (Allegro), BWV 1049', category: 'Classical & Luxury', mood: 'Bright, stately — flute, strings & harpsichord (Bach)', duration: 438 },
-  { id: 'there-is-romance', name: 'There is Romance', category: 'Classical & Luxury', mood: 'Tender, intimate — solo piano', duration: 198 },
-  { id: 'aquarium', name: 'Aquarium', category: 'Classical & Luxury', mood: 'Polished, a little mysterious — flute, piano & strings', duration: 144 },
+  { id: 'jazz-brunch', name: 'Jazz Brunch', category: 'Jazz & Lounge', mood: 'Easy, upscale café — electric piano & guitar', duration: 323 },
+  { id: 'apero-hour', name: 'Apero Hour', category: 'Jazz & Lounge', mood: 'Cool, relaxed — guitar & organ', duration: 283 },
+  { id: 'samba-isobel', name: 'Samba Isobel', category: 'Jazz & Lounge', mood: 'Bright samba-jazz — piano trio', duration: 250 },
+  { id: 'in-your-arms', name: 'In Your Arms', category: 'Jazz & Lounge', mood: 'Elegant 1940s big band — horns', duration: 169 },
+  { id: 'george-street-shuffle', name: 'George Street Shuffle', category: 'Jazz & Lounge', mood: 'Light, friendly — vibraphone & piano', duration: 268 },
+  // Pop
+  { id: 'sunshine', name: 'Sunshine', category: 'Pop', mood: 'Bright, feel-good — piano & guitar', duration: 202 },
+  { id: 'glitter-blast', name: 'Glitter Blast', category: 'Pop', mood: 'Playful, sparkly — ukulele, flute & glockenspiel', duration: 178 },
+  { id: 'funky-chunk', name: 'Funky Chunk', category: 'Pop', mood: 'Upbeat funk-pop — bass, keys & horns', duration: 239 },
+  { id: 'shaving-mirror', name: 'Shaving Mirror', category: 'Pop', mood: 'Bouncy, confident — guitar, organ & horns', duration: 206 },
+  { id: 'celebration', name: 'Celebration', category: 'Pop', mood: 'Warm, celebratory — saxes & trombones', duration: 278 },
+  // Classical (Kevin MacLeod performances, CC BY 4.0). title = name used in the credit line
+  { id: 'gymnopedie-no-1', name: 'Gymnopedie No. 1', category: 'Classical', mood: 'Serene, refined — solo piano (Satie)', duration: 187 },
+  { id: 'canon-in-d', name: 'Canon in D Major', category: 'Classical', mood: 'Timeless, graceful — violin, harp & bass (Pachelbel)', duration: 356 },
+  { id: 'prelude-in-c', name: 'Prelude in C', title: 'Prelude in C - BWV 846', category: 'Classical', mood: 'Flowing, poised — solo piano (Bach)', duration: 179 },
+  { id: 'brandenburg-no-4', name: 'Brandenburg Concerto No. 4', title: 'Brandenburg Concerto No. 4 in G, Movement I (Allegro), BWV 1049', category: 'Classical', mood: 'Bright, stately — flute, strings & harpsichord (Bach)', duration: 438 },
+  { id: 'there-is-romance', name: 'There is Romance', category: 'Classical', mood: 'Tender, intimate — solo piano', duration: 198 },
+  { id: 'aquarium', name: 'Aquarium', category: 'Classical', mood: 'Polished, a little mysterious — flute, piano & strings', duration: 144 },
 ];
 
 const LEGACY = [

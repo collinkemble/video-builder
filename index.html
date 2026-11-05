@@ -1901,7 +1901,9 @@ function renderPocketsicCard(video) {
         <div style="display: flex; align-items: center; gap: 12px; padding: 10px 0;">
           <div style="width: 36px; height: 36px; border-radius: 10px; background: linear-gradient(135deg, #032D60, #0176D3); display: flex; align-items: center; justify-content: center; font-size: 16px; color: white; flex-shrink: 0;">📱</div>
           <div style="flex: 1; min-width: 0;">
-            <div style="font-weight: 600; font-size: 14px; color: #111; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${esc(video.pocketsic_project_name || 'Project #' + video.pocketsic_project_id)}</div>
+            ${video.pocketsic_project_id
+              ? `<a href="${POCKETSIC_WEB}/projects/${encodeURIComponent(video.pocketsic_project_id)}" target="_blank" rel="noopener" title="Open this project in PocketSIC" style="display: block; font-weight: 600; font-size: 14px; color: #0176D3; text-decoration: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" onmouseover="this.style.textDecoration='underline'" onmouseout="this.style.textDecoration='none'">${esc(video.pocketsic_project_name || 'Project #' + video.pocketsic_project_id)} ↗</a>`
+              : `<div style="font-weight: 600; font-size: 14px; color: #111; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${esc(video.pocketsic_project_name || 'Project')}</div>`}
             <div style="font-size: 12px; color: #888;">${sceneCount} scene${sceneCount !== 1 ? 's' : ''} imported</div>
           </div>
           <span style="font-size: 11px; color: #888; background: #F3F4F6; padding: 2px 8px; border-radius: 6px;">PocketSIC</span>
@@ -1937,6 +1939,11 @@ function renderPocketsicCard(video) {
   }
 }
 
+// Base addresses of the other apps. The server swaps these for the staging/production address
+// of the environment this page is served from.
+const POCKETSIC_WEB = 'https://pocketsic.aubreydemo.com';
+const SCRIPTWRITER_WEB = 'https://scriptwriter.aubreydemo.com';
+
 function renderScriptWriterCard(video) {
   const mount = document.getElementById('scriptwriter-card');
   const hasScript = !!(video.scriptwriter_script_name || video.scriptwriter_script_id);
@@ -1957,7 +1964,9 @@ function renderScriptWriterCard(video) {
         <div style="display: flex; align-items: center; gap: 12px; padding: 10px 0;">
           <div style="width: 36px; height: 36px; border-radius: 10px; background: linear-gradient(135deg, #7C3AED, #A78BFA); display: flex; align-items: center; justify-content: center; font-size: 16px; color: white; flex-shrink: 0;">📝</div>
           <div style="flex: 1; min-width: 0;">
-            <div style="font-weight: 600; font-size: 14px; color: #111; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${esc(video.scriptwriter_script_name || 'Script #' + video.scriptwriter_script_id)}</div>
+            ${video.scriptwriter_script_id && swData.source !== 'upload'
+              ? `<a href="${SCRIPTWRITER_WEB}/scripts/${encodeURIComponent(video.scriptwriter_script_id)}" target="_blank" rel="noopener" title="Open this script in Script Writer" style="display: block; font-weight: 600; font-size: 14px; color: #0176D3; text-decoration: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" onmouseover="this.style.textDecoration='underline'" onmouseout="this.style.textDecoration='none'">${esc(video.scriptwriter_script_name || 'Script #' + video.scriptwriter_script_id)} ↗</a>`
+              : `<div style="font-weight: 600; font-size: 14px; color: #111; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${esc(video.scriptwriter_script_name || 'Script #' + video.scriptwriter_script_id)}</div>`}
             <div style="font-size: 12px; color: #888; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${esc(synopsis)}</div>
           </div>
           <span style="font-size: 11px; color: #888; background: #F3F4F6; padding: 2px 8px; border-radius: 6px;">${swData.source === 'upload' ? 'Uploaded' : 'Script Writer'}</span>

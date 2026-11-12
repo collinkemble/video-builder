@@ -1171,7 +1171,7 @@ async function regenerateSegments(videoId, userId, changes, opts = {}) {
     }
 
     if (brollJobId) {
-      const notes = regenBrollStats ? [...summarizeBrollStats(regenBrollStats), ...regenBrollStats.notes] : [];
+      const notes = regenBrollStats ? [...require("./brollGenerator").summarizeBrollStats(regenBrollStats), ...regenBrollStats.notes] : [];
       await completeJob(brollJobId, {
         clips: Object.keys(newBrollClips).length,
         ...(regenBrollStats ? { retried: regenBrollStats.retried, reused: regenBrollStats.reused } : {}),

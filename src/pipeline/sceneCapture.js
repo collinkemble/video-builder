@@ -75,8 +75,7 @@ function shouldInteract(channel) {
   const ch = normalizeChannel(channel);
   // These channels have video/animation that plays on its own
   if (ch.includes('insta') || ch.includes('social') || ch.includes('facebook') || ch.includes('tiktok')) return false;
-  // Email is mostly static
-  if (ch.includes('email')) return false;
+  // Email: PocketSIC email scenes are threads that open the next email on each click (handled below)
   // Everything else (website, chat, imessage, sms, whatsapp, retail, etc.) needs clicks
   return true;
 }
@@ -87,6 +86,8 @@ function shouldInteract(channel) {
  */
 function getSceneType(channel) {
   const ch = normalizeChannel(channel);
+  // Email thread (checked first — "email" must not fall into another type)
+  if (ch.includes('email') || ch.includes('mail')) return 'email';
   // Messaging: iMessage, Apple Messages, SMS, Text, WhatsApp, etc.
   // "applemessages" includes "message" — check that too
   if (ch.includes('imessage') || ch.includes('sms') || ch.includes('text') || ch.includes('whatsapp') || ch.includes('message')) return 'messaging';
@@ -627,6 +628,26 @@ async function performGenericClick(page, clickIndex) {
 /**
  * Capture a single PocketSIC scene as a VIDEO CLIP with interactions.
  */
+/**
+ * EMAIL scenes (PocketSIC email.ejs): a thread of N emails; the first is open on load and each
+ * click on the page opens the next one. Clicking N times wraps back to the first, so click N-1 times.
+ */
+async function setupEmailInteraction(page) {
+  const total = await page.evaluate(() => document.querySelectorAll('[id^="expanded"]').length);
+  const clickLimit = Math.max(0, total - 1);
+  console.log(`[SceneCapture] Email thread with ${total} email(s) → ${clickLimit} click(s)`);
+  return { clickLimit, clickInterval: 4000, clickFn: 'email' };
+}
+
+async function performEmailClick(page, clickIndex) {
+  await page.evaluate(() => document.body.click());
+  const shown = await page.evaluate(() => {
+    const open = [...document.querySelectorAll('[id^="expanded"]')].findIndex(el => el.style.display === 'block');
+    return open + 1;
+  });
+  console.log(`[SceneCapture] Email click #${clickIndex + 1}: now showing email ${shown}`);
+}
+
 async function captureScene({ sceneId, channel, duration, outputDir, browser }) {
   const ownBrowser = !browser;
   if (ownBrowser) {
@@ -700,6 +721,9 @@ async function captureScene({ sceneId, channel, duration, outputDir, browser }) 
         case 'retail':
           interactionStrategy = await setupRetailInteraction(page);
           break;
+        case 'email':
+          interactionStrategy = await setupEmailInteraction(page);
+          break;
         default:
           interactionStrategy = { clickLimit: 4, clickInterval: 2500, clickFn: 'generic' };
       }
@@ -708,6 +732,15 @@ async function captureScene({ sceneId, channel, duration, outputDir, browser }) 
       clickFn = interactionStrategy.clickFn;
       chatInfo = interactionStrategy.chatInfo;
       clickIntervalSecs = interactionStrategy.clickInterval / 1000;
+
+      // Email thread: make sure every email in the thread gets shown (2s in, then one per interval)
+      if (clickFn === 'email' && clickLimit > 0) {
+        const needed = 2 + clickLimit * clickIntervalSecs + 4;
+        if (needed > captureDuration) {
+          console.log(`[SceneCapture] Extending email capture from ${captureDuration}s to ${needed.toFixed(1)}s to show all ${clickLimit + 1} emails`);
+          captureDuration = Math.min(needed, 45);
+        }
+      }
 
       // For scenes with a click schedule (website or retail), extend capture duration
       // to ensure all clicks fit within the recording window
@@ -818,6 +851,9 @@ async function captureScene({ sceneId, channel, duration, outputDir, browser }) 
               break;
             case 'retail':
               await performRetailClick(page, clickCount, chatInfo);
+              break;
+            case 'email':
+              await performEmailClick(page, clickCount);
               break;
             default:
               await performGenericClick(page, clickCount);

@@ -20,7 +20,7 @@ const http = require('http');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const BUILD_VERSION = 'v210-email-clickthrough';
+const BUILD_VERSION = 'v211-shared-copy-files';
 
 // ─── Video Proxy Base URL ───
 const VIDEO_PROXY_BASE_URL = (process.env.VIDEO_PROXY_BASE_URL || '').replace(/\/+$/, '');
@@ -2365,7 +2365,44 @@ async function createSharedVideoCopy(sourceVideo, senderEmail, recipientEmail) {
     ]
   );
 
-  return result.insertId;
+  const newId = result.insertId;
+  try {
+    await copySharedVideoAssets(sourceVideo, recipientUser.id, newId);
+  } catch (err) {
+    console.warn(`[Share] Copied video ${newId} created, but copying its files failed: ${err.message}`);
+  }
+  return newId;
+}
+
+/**
+ * Give a shared copy its OWN files: the video, thumbnail, voiceover, persona photo, saved section
+ * clips (segment_assets — without these the copy can't regenerate individual sections) and uploaded
+ * custom-scene files. Copies go to videos/<recipient>/<newVideoId>/, so the sender regenerating or
+ * deleting their video can't break the copy. Links that aren't in this app's storage are kept as-is.
+ */
+async function copySharedVideoAssets(sourceVideo, recipientUserId, newId) {
+  const storage = require('./src/utils/storage');
+  const J = v => (v == null ? null : (typeof v === 'string' ? JSON.parse(v) : v));
+  const fields = {
+    video_url: sourceVideo.video_url || null,
+    thumbnail_url: sourceVideo.thumbnail_url || null,
+    voiceover_url: sourceVideo.voiceover_url || null,
+    persona_image_url: sourceVideo.persona_image_url || null,
+    segment_assets: J(sourceVideo.segment_assets),
+    narration_script: J(sourceVideo.narration_script),
+  };
+  const urls = [...new Set(storage.extractAssetUrls(fields, { ownOnly: true }))];
+  const map = urls.length ? await storage.copyAssets(urls, `videos/${recipientUserId}/${newId}`) : {};
+  const out = storage.rewriteAssetUrls(fields, map);
+  await query(
+    `UPDATE videos SET video_url = ?, thumbnail_url = ?, voiceover_url = ?, persona_image_url = ?, segment_assets = ?, narration_script = ? WHERE id = ?`,
+    [out.video_url, out.thumbnail_url, out.voiceover_url, out.persona_image_url,
+      out.segment_assets ? JSON.stringify(out.segment_assets) : null,
+      out.narration_script ? JSON.stringify(out.narration_script) : null, newId]
+  );
+  const copied = Object.entries(map).filter(([a, b]) => a !== b).length;
+  console.log(`[Share] Video ${newId}: copied ${copied}/${urls.length} file(s) into the recipient's folder${fields.segment_assets ? ' (section clips included)' : ''}`);
+  return { copied, total: urls.length };
 }
 
 // POST /api/videos/:id/share — share a video with another user
@@ -2474,6 +2511,13 @@ app.post('/api/videos/:id/share/confirm', async (req, res) => {
             copiedId,
           ]
         );
+        // Give the updated copy its own files (incl. section clips) — same as a new share
+        try {
+          const owner = (await query('SELECT user_id FROM videos WHERE id = ?', [copiedId]))[0];
+          if (owner) await copySharedVideoAssets(sourceVideo, owner.user_id, copiedId);
+        } catch (err) {
+          console.warn(`[Share] Re-shared video ${copiedId}: copying its files failed: ${err.message}`);
+        }
       }
 
       await query('UPDATE shared_videos SET created_at = NOW() WHERE id = ?', [existing[0].id]);
